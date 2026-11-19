@@ -60,7 +60,7 @@ public sealed class ThumbnailLoader
         var path = Path.Combine(_paths.CacheDir, "hits", $"{item.Id}_{atMs}.jpg");
         if (File.Exists(path)) return path;
         var tmp = Path.ChangeExtension(path, Guid.NewGuid().ToString("N") + ".jpg");
-        if (await FFmpeg.ExtractFrameAsync(item.FullPath, atMs / 1000.0, tmp, (int)ImageCodec.ThumbSize, ct))
+        if (await FFmpeg.ExtractFrameAsync(await Cloud.MediaFiles.LocalPathAsync(item, ct), atMs / 1000.0, tmp, (int)ImageCodec.ThumbSize, ct))
         {
             File.Move(tmp, path, true);
             return path;

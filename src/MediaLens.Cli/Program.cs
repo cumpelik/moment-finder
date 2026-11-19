@@ -28,6 +28,17 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           reject <detection> <name>        say who is not
           match                            run the identity matching now
           detections <file name part>      what was found on an item
+          cloud list                       clouds and mirrors
+          cloud add-folder <name> <folder> [--password p]
+          cloud add-s3 <name> <bucket> <access key> <secret> [--endpoint url] [--region r] [--provider p] [--password p]
+          cloud add-onedrive <name> [--password p]     (opens the browser to sign in)
+          cloud add-gdrive <name> [--password p]       (opens the browser to sign in)
+          cloud folders <cloud id>         folders in a cloud
+          cloud source <cloud id> <folder> add a cloud folder as a source
+          cloud restore <cloud id> <folder> <local folder>
+          cloud import-index <cloud id>    names, people and buckets from the cloud's index backup
+          mirror add <source id> <cloud id>
+          mirror run [mirror id]
           bucket list
           bucket create <name>
           bucket add <name> <query...>     add search results to a bucket
@@ -239,11 +250,105 @@ switch (args[0])
         return 0;
     }
 
+    case "cloud" when args.Length >= 2:
+        try
+        {
+            return await CloudCommand(args.Skip(1).ToArray());
+        }
+        catch (MediaLens.Cloud.RcloneException e)
+        {
+            return Fail(e.Message);
+        }
+
+    case "mirror" when args.Length >= 2 && args[1] == "add" && args.Length >= 4:
+    {
+        var m = host.Cloud.AddMirror(long.Parse(args[2], CultureInfo.InvariantCulture), long.Parse(args[3], CultureInfo.InvariantCulture));
+        Console.WriteLine($"Mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}");
+        return 0;
+    }
+
+    case "mirror" when args.Length >= 2 && args[1] == "run":
+    {
+        foreach (var m in host.Cloud.Mirrors().Where(m => args.Length < 3 || m.Id == long.Parse(args[2], CultureInfo.InvariantCulture)))
+        {
+            Console.WriteLine($"{m.SourceName} -> {m.CloudName}/{m.Target}");
+            await host.Cloud.MirrorAsync(m.Id, new Progress<MediaLens.Cloud.Rclone.CopyProgress>(p => Console.Write($"\r  {p.Text,-70}")), ct);
+            Console.WriteLine("\r  done" + new string(' ', 70));
+        }
+        return 0;
+    }
+
     case "bucket" when args.Length >= 2:
         return await BucketCommand(args.Skip(1).ToArray());
 
     default:
         return Fail($"Unknown command: {string.Join(' ', args)}");
+}
+
+async Task<int> CloudCommand(string[] a)
+{
+    string? Opt(string name) => a.SkipWhile(x => x != name).Skip(1).FirstOrDefault();
+    var positional = new List<string>();
+    for (var i = 0; i < a.Length; i++)
+    {
+        if (a[i].StartsWith("--")) { i++; continue; }
+        positional.Add(a[i]);
+    }
+    var password = Opt("--password");
+    switch (positional[0])
+    {
+        case "list":
+            foreach (var c in host.Cloud.Clouds())
+                Console.WriteLine($"{c.Id,4}  {c.Name,-20} {c.KindTitle,-12} {(c.Encrypted ? "encrypted" : "plain")}");
+            foreach (var m in host.Cloud.Mirrors())
+                Console.WriteLine($"  mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}  last: {m.LastResult ?? "never"}");
+            return 0;
+        case "add-folder" when positional.Count >= 3:
+        {
+            var c = await host.Cloud.AddFolderAsync(positional[1], Path.GetFullPath(positional[2]), password, ct);
+            Console.WriteLine($"Cloud {c.Id} added");
+            return 0;
+        }
+        case "add-s3" when positional.Count >= 5:
+        {
+            var c = await host.Cloud.AddS3Async(positional[1], new MediaLens.Cloud.S3Settings(Opt("--provider") ?? "AWS", Opt("--endpoint") ?? "",
+                Opt("--region") ?? "", positional[3], positional[4], positional[2]), password, ct);
+            Console.WriteLine($"Cloud {c.Id} added");
+            return 0;
+        }
+        case "add-onedrive" when positional.Count >= 2:
+            Console.WriteLine($"Cloud {(await host.Cloud.AddOneDriveAsync(positional[1], password, ct)).Id} added");
+            return 0;
+        case "add-gdrive" when positional.Count >= 2:
+            Console.WriteLine($"Cloud {(await host.Cloud.AddGoogleDriveAsync(positional[1], password, ct)).Id} added");
+            return 0;
+        case "folders" when positional.Count >= 2:
+            foreach (var f in await host.Cloud.FoldersAsync(long.Parse(positional[1], CultureInfo.InvariantCulture), ct))
+                Console.WriteLine(f);
+            return 0;
+        case "source" when positional.Count >= 3:
+        {
+            var s = host.Cloud.AddCloudSource(long.Parse(positional[1], CultureInfo.InvariantCulture), positional[2]);
+            Console.WriteLine($"Source {s.Id}: {s.Name}. Run 'medialens index'.");
+            return 0;
+        }
+        case "restore" when positional.Count >= 4:
+            await host.Cloud.RestoreAsync(long.Parse(positional[1], CultureInfo.InvariantCulture), positional[2], Path.GetFullPath(positional[3]),
+                new Progress<MediaLens.Cloud.Rclone.CopyProgress>(p => Console.Write($"\r{p.Text,-70}")), ct);
+            Console.WriteLine("\rRestored" + new string(' ', 70));
+            return 0;
+        case "import-index" when positional.Count >= 2:
+        {
+            var file = await host.Cloud.DownloadIndexAsync(long.Parse(positional[1], CultureInfo.InvariantCulture), ct);
+            if (file == null) return Fail("The cloud has no index backup yet (run a mirror first)");
+            var r = new MediaLens.Cloud.IndexImport(host.Db).Import(file);
+            File.Delete(file);
+            Console.WriteLine($"Matched {r.MatchedItems} items: {r.People} new people, {r.Detections} detections, {r.BucketItems} bucket items");
+            return 0;
+        }
+        default:
+            return Fail("Unknown cloud command");
+    }
 }
 
 async Task<int> BucketCommand(string[] a)

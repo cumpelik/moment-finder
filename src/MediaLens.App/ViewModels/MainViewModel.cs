@@ -55,6 +55,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isDownloadingModel;
     [ObservableProperty] private double _downloadProgress;
 
+    [ObservableProperty] private string _mirrorText = "";
     [ObservableProperty] private int _slideSeconds = 5;
     [ObservableProperty] private bool _videoHighlightsOnly;
 
@@ -96,6 +97,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (double.TryParse(host.Db.GetSetting("tile_size"), CultureInfo.InvariantCulture, out var ts)) _tileSize = ts;
 
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
+        host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text);
         host.Indexer.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
         {
             _refreshPending = true;
@@ -112,6 +114,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _starting = false;
         _ = RunSearchAsync(keepSelection: false);
         _host.Indexer.Start(scanNow: true);
+        _host.Mirrors.Start();
         _ = LoadModelAsync();
     }
 
@@ -230,6 +233,34 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         RebuildSidebar();
         SelectedSidebarItem = SidebarItems.OfType<SidebarEntry>().First(e => e.Kind == SidebarKind.Source && e.Id == source.Id);
         _host.Indexer.RequestScan();
+    }
+
+    public CloudViewModel CreateCloudViewModel() => new(_host, () => Dispatcher.UIThread.Post(RebuildSidebar));
+
+    /// <summary>
+    /// macOS: the originals of the Photos app (iCloud Photos with "Download Originals to this Mac") as a
+    /// source. Reading them needs Full Disk Access or the Photos permission for MediaLens.
+    /// </summary>
+    public static string? ApplePhotosOriginals()
+    {
+        if (!OperatingSystem.IsMacOS()) return null;
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Pictures", "Photos Library.photoslibrary", "originals");
+        return Directory.Exists(path) ? path : null;
+    }
+
+    public void AddApplePhotos()
+    {
+        if (ApplePhotosOriginals() is not { } path) return;
+        AddSource(path);
+        RenameSourceToPhotos(path);
+    }
+
+    private void RenameSourceToPhotos(string path)
+    {
+        using var c = _host.Db.Open();
+        Dapper.SqlMapper.Execute(c, "UPDATE source SET name='Apple Photos' WHERE root=@path", new { path });
+        RebuildSidebar();
     }
 
     public void RemoveSource(SidebarEntry entry)

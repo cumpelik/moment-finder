@@ -136,6 +136,27 @@ public sealed class Database
             person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
             PRIMARY KEY(detection_id, person_id));
         """,
+        // 3: clouds (rclone remotes), mirrors of sources to a cloud, sources that live in a cloud
+        """
+        CREATE TABLE cloud(
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            remote TEXT NOT NULL,
+            encrypted INTEGER NOT NULL,
+            created_at INTEGER NOT NULL);
+
+        CREATE TABLE mirror(
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+            cloud_id INTEGER NOT NULL REFERENCES cloud(id) ON DELETE CASCADE,
+            target TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            last_run_at INTEGER,
+            last_result TEXT);
+
+        ALTER TABLE source ADD COLUMN remote TEXT;
+        """,
     ];
 
     private static void Migrate(SqliteConnection c)

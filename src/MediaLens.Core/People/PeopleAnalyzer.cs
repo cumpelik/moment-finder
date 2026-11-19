@@ -33,7 +33,8 @@ public sealed class PeopleAnalyzer
             await AnalyzeVideoAsync(item, ct);
             return;
         }
-        var image = await Task.Run(() => RgbImage.Load(item.FullPath, PhotoSize), ct);
+        var path = await Cloud.MediaFiles.LocalPathAsync(item, ct);
+        var image = await Task.Run(() => RgbImage.Load(path, PhotoSize), ct);
         var found = await Task.Run(() => _model.Analyze(image), ct);
         var items = Frame(found, image, 0, null);
         Save(item.Id, items);
@@ -89,7 +90,7 @@ public sealed class PeopleAnalyzer
         var dir = Path.Combine(_paths.CacheDir, "people-frames", video.Id.ToString(CultureInfo.InvariantCulture));
         try
         {
-            var frames = await FFmpeg.ExtractFramesAsync(video.FullPath, interval, 90, dir, FrameSize, ct, keyframesOnly: false);
+            var frames = await FFmpeg.ExtractFramesAsync(await Cloud.MediaFiles.LocalPathAsync(video, ct), interval, 90, dir, FrameSize, ct, keyframesOnly: false);
             var perFrame = new List<(int TimeMs, RgbImage Image, IReadOnlyList<DetectedObject> Found)>();
             foreach (var frame in frames)
             {

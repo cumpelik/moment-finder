@@ -9,6 +9,8 @@ public enum MediaKind
 public static class SourceKinds
 {
     public const string Local = "local";
+    /// <summary>Files in a cloud: Remote is the rclone path, Root the local cache the files are fetched into.</summary>
+    public const string Cloud = "cloud";
 }
 
 public sealed class Source
@@ -20,6 +22,7 @@ public sealed class Source
     public bool Enabled { get; set; } = true;
     public long AddedAt { get; init; }
     public long? LastScanAt { get; set; }
+    public string? Remote { get; init; }
 }
 
 /// <summary>One photo or video. TakenAt is the wall clock of the camera (EXIF has no time zone), stored as if it were UTC.</summary>
@@ -42,8 +45,11 @@ public sealed class MediaItem
     public int ThumbState { get; init; }
     public int AnalysisVersion { get; init; }
 
-    /// <summary>Filled by the repository from the source root.</summary>
+    /// <summary>Filled by the repository from the source root. For a cloud item, the place in the local cache.</summary>
     public string FullPath { get; set; } = "";
+
+    /// <summary>The rclone path of a cloud item (fetched on demand, see Cloud.MediaFiles); null for local files.</summary>
+    public string? Remote { get; set; }
 
     public string FileName => Path.GetFileName(RelPath);
     public DateTime Taken => DateTime.UnixEpoch.AddMilliseconds(TakenAt);

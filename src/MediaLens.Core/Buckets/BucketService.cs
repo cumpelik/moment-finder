@@ -135,12 +135,12 @@ public sealed class BucketService
                 }
                 else
                 {
-                    await CopyAsync(item.FullPath, target, ct);
+                    await CopyAsync(await Cloud.MediaFiles.LocalPathAsync(item, ct), target, ct);
                     File.SetLastWriteTimeUtc(target, DateTimeOffset.FromUnixTimeMilliseconds(item.Mtime).UtcDateTime);
                     copied++;
                 }
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or Cloud.RcloneException)
             {
                 errors.Add($"{item.FullPath}: {e.Message}");
             }

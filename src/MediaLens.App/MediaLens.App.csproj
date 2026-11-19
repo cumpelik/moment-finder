@@ -5,6 +5,7 @@
     <AssemblyName>MediaLens</AssemblyName>
     <RootNamespace>MediaLens.App</RootNamespace>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon>..\..\build\assets\app.ico</ApplicationIcon>
     <!-- Which libVLC to bundle: by the target runtime, or by the build machine for a plain dotnet run.
          Linux uses the libvlc of the distribution (package libvlc5 / vlc-plugin-base). -->
     <VlcTarget Condition="'$(RuntimeIdentifier)' != '' And $(RuntimeIdentifier.StartsWith('win'))">win</VlcTarget>

@@ -2,6 +2,7 @@ using Dapper;
 using MediaLens.Analysis;
 using MediaLens.Analysis.Siglip;
 using MediaLens.Buckets;
+using MediaLens.Cloud;
 using MediaLens.Data;
 using MediaLens.Analysis.People;
 using MediaLens.Library;
@@ -24,6 +25,8 @@ public sealed class LibraryHost : IDisposable
     public PeopleRepository People { get; }
     public IdentityService Identity { get; }
     public EventBuilder Events { get; }
+    public CloudService Cloud { get; }
+    public MirrorScheduler Mirrors { get; }
     public PeopleModel? PeopleModel { get; private set; }
 
     public SiglipModel? SceneModel { get; private set; }
@@ -36,7 +39,9 @@ public sealed class LibraryHost : IDisposable
         Repo = new MediaRepository(Db);
         Buckets = new BucketService(Db, Repo);
         Search = new SearchService(Repo);
-        Indexer = new Indexer(Paths, Repo);
+        Cloud = new CloudService(Paths, Db, Repo);
+        Indexer = new Indexer(Paths, Repo, Cloud.Rclone);
+        Mirrors = new MirrorScheduler(Cloud, Db);
         Models = new ModelManager(Paths.ModelDir);
         People = new PeopleRepository(Db);
         Identity = new IdentityService(People);
@@ -85,6 +90,7 @@ public sealed class LibraryHost : IDisposable
     public void Dispose()
     {
         Indexer.Dispose();
+        Mirrors.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();
         PeopleModel?.Dispose();

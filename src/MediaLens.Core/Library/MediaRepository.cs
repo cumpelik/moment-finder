@@ -41,14 +41,20 @@ public sealed class MediaRepository
 
     // ---- sources ----
 
-    public Source AddSource(string kind, string root, string name)
+    public Source AddSource(string kind, string root, string name, string? remote = null)
     {
         using var c = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var id = c.ExecuteScalar<long>(
-            "INSERT INTO source(kind,root,name,added_at) VALUES(@kind,@root,@name,@now) RETURNING id",
-            new { kind, root, name, now });
-        return new Source { Id = id, Kind = kind, Root = root, Name = name, AddedAt = now };
+            "INSERT INTO source(kind,root,name,added_at,remote) VALUES(@kind,@root,@name,@now,@remote) RETURNING id",
+            new { kind, root, name, now, remote });
+        return new Source { Id = id, Kind = kind, Root = root, Name = name, AddedAt = now, Remote = remote };
+    }
+
+    public void SetSourceRoot(long id, string root)
+    {
+        using var c = _db.Open();
+        c.Execute("UPDATE source SET root=@root WHERE id=@id", new { id, root });
     }
 
     public List<Source> ListSources()
@@ -127,7 +133,7 @@ public sealed class MediaRepository
 
     public List<MediaItem> Query(MediaFilter filter, int limit = int.MaxValue)
     {
-        var sql = new StringBuilder($"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id");
+        var sql = new StringBuilder($"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id");
         var p = new DynamicParameters();
         if (filter.BucketId is { } bucketId)
         {
@@ -158,7 +164,7 @@ public sealed class MediaRepository
         foreach (var chunk in ids.Distinct().Chunk(500))
         {
             foreach (var r in c.Query<MediaRow>(
-                         $"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id WHERE m.id IN @chunk AND m.missing=0",
+                         $"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id WHERE m.id IN @chunk AND m.missing=0",
                          new { chunk }))
                 result[r.Id] = r.ToItem();
         }
@@ -171,7 +177,7 @@ public sealed class MediaRepository
     {
         using var c = _db.Open();
         return c.Query<MediaRow>(
-                $"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id " +
+                $"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id " +
                 "WHERE m.thumb_state=0 AND m.missing=0 AND s.enabled=1 ORDER BY m.taken_at DESC LIMIT @limit", new { limit })
             .Select(r => r.ToItem()).ToList();
     }
@@ -187,7 +193,7 @@ public sealed class MediaRepository
     {
         using var c = _db.Open();
         return c.Query<MediaRow>(
-                $"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id " +
+                $"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id " +
                 "WHERE m.analysis_version<@version AND m.thumb_state=1 AND m.missing=0 AND s.enabled=1 " +
                 "ORDER BY m.taken_at DESC LIMIT @limit", new { version, limit })
             .Select(r => r.ToItem()).ToList();
@@ -197,7 +203,7 @@ public sealed class MediaRepository
     {
         using var c = _db.Open();
         return c.Query<MediaRow>(
-                $"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id " +
+                $"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id " +
                 "WHERE m.people_version<@version AND m.thumb_state=1 AND m.missing=0 AND s.enabled=1 " +
                 "ORDER BY m.taken_at DESC LIMIT @limit", new { version, limit })
             .Select(r => r.ToItem()).ToList();
@@ -248,6 +254,7 @@ public sealed class MediaRepository
         public int ThumbState { get; init; }
         public int AnalysisVersion { get; init; }
         public string SourceRoot { get; init; } = "";
+        public string? SourceRemote { get; init; }
 
         public MediaItem ToItem() => new()
         {
@@ -255,6 +262,7 @@ public sealed class MediaRepository
             QuickHash = QuickHash, TakenAt = TakenAt, Width = Width, Height = Height, DurationMs = DurationMs,
             Lat = Lat, Lon = Lon, Camera = Camera, ThumbState = ThumbState, AnalysisVersion = AnalysisVersion,
             FullPath = Path.Combine(SourceRoot, RelPath.Replace('/', Path.DirectorySeparatorChar)),
+            Remote = SourceRemote == null ? null : Cloud.CloudService.Join(SourceRemote, RelPath),
         };
     }
 }

@@ -182,6 +182,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnOpenCloud(object? sender, RoutedEventArgs e) => OpenCloud();
+
+    private void OpenCloud()
+    {
+        if (_vm == null) return;
+        new CloudWindow { DataContext = _vm.CreateCloudViewModel() }.Show(this);
+    }
+
     // ---- player ----
 
     private void OpenPlayer(PlayerViewModel player)
@@ -210,7 +218,20 @@ public partial class MainWindow : Window
         if (_vm == null || (sender as Control)?.DataContext is not SidebarHeader header) return;
         if (header.Section == SidebarKind.Source)
         {
-            await AddSourceAsync();
+            var menu = new ContextMenu();
+            var folder = new MenuItem { Header = "Folder..." };
+            folder.Click += async (_, _) => await AddSourceAsync();
+            menu.Items.Add(folder);
+            if (MainViewModel.ApplePhotosOriginals() != null)
+            {
+                var photos = new MenuItem { Header = "Apple Photos library" };
+                photos.Click += (_, _) => _vm.AddApplePhotos();
+                menu.Items.Add(photos);
+            }
+            var cloud = new MenuItem { Header = "Folder in a cloud..." };
+            cloud.Click += (_, _) => OpenCloud();
+            menu.Items.Add(cloud);
+            menu.Open(sender as Control);
         }
         else
         {

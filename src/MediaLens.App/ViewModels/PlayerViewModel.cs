@@ -114,9 +114,16 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
             }
-            _video.Play(item.FullPath, entry.StartMs);
-            _positionTimer.Start();
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
+            if (Cloud.MediaFiles.IsLocal(item))
+            {
+                _video.Play(item.FullPath, entry.StartMs);
+                _positionTimer.Start();
+            }
+            else
+            {
+                _ = PlayFromCloudAsync(entry, version);
+            }
         }
         else
         {
@@ -163,6 +170,23 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
+    private async Task PlayFromCloudAsync(PlaylistEntry entry, int version)
+    {
+        Error = "Downloading from the cloud...";
+        try
+        {
+            var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
+            if (version != _loadVersion || _video == null) return;
+            Error = null;
+            _video.Play(path, entry.StartMs);
+            _positionTimer.Start();
+        }
+        catch (Exception e) when (e is Cloud.RcloneException or IOException)
+        {
+            if (version == _loadVersion) Error = "The video cannot be downloaded: " + e.Message;
+        }
+    }
+
     private async Task ShowPhotoAsync(PlaylistEntry entry, int version)
     {
         var decoded = await DecodeAsync(entry.Item);
@@ -185,11 +209,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         if (_prefetch.Remove(item.Id, out var task)) return task;
         var (w, h) = (ScreenSize.Width, ScreenSize.Height);
-        return Task.Run<DecodedImage?>(() =>
+        return Task.Run<DecodedImage?>(async () =>
         {
             try
             {
-                return ImageCodec.DecodeForDisplay(item.FullPath, w, h);
+                return ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(item, CancellationToken.None), w, h);
             }
             catch (Exception)
             {

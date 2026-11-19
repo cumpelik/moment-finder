@@ -1,0 +1,136 @@
+# Release pipeline of MediaLens (Azure DevOps, YAML) - see build/README.md.
+# Run by hand: Pipelines -> MediaLens release -> Run pipeline -> enter the version.
+# Windows, Linux and macOS build in parallel; each publishes its files as an artifact (installers-windows,
+# installers-linux, installers-macos).
+
+trigger: none
+pr: none
+
+parameters:
+  - name: version
+    displayName: Version (major.minor.patch)
+    type: string
+    # Raise it together with <Version> in Directory.Build.props for every release.
+    default: 0.1.0
+  - name: build
+    displayName: What to build
+    type: string
+    default: All platforms
+    values:
+      - All platforms
+      - Without macOS (Windows and Linux)
+
+name: MediaLens ${{ parameters.version }} ($(Date:yyyyMMdd)$(Rev:.r))
+
+variables:
+  - group: medialens-release
+  # Secure files (Pipelines -> Library -> Secure files): the Developer ID certificate and the App Store Connect API key.
+  - name: MacCertSecureFile
+    value: MediaLens-DeveloperID.p12
+  - name: NotaryKeySecureFile
+    value: MediaLens-AuthKey.p8
+  - name: Version
+    value: ${{ parameters.version }}
+  - name: DOTNET_CLI_TELEMETRY_OPTOUT
+    value: 1
+  - name: DOTNET_NOLOGO
+    value: 1
+
+stages:
+  - stage: Windows
+    dependsOn: []
+    jobs:
+      - job: Windows
+        pool:
+          vmImage: windows-latest
+        steps:
+          - pwsh: |
+              if ('$(Version)' -notmatch '^\d+\.\d+\.\d+$') { throw "The version must be major.minor.patch, e.g. 1.2.0 - not '$(Version)'" }
+            displayName: Check the version
+          - task: UseDotNet@2
+            displayName: .NET SDK 9
+            inputs:
+              packageType: sdk
+              version: 9.x
+          # The Artifact Signing plugin of signtool runs on .NET 8.
+          - task: UseDotNet@2
+            displayName: .NET runtime 8 (for signing)
+            inputs:
+              packageType: runtime
+              version: 8.x
+          - pwsh: build/windows/build.ps1 -Version $(Version)
+            # Signs with Azure Artifact Signing when the variable group has ArtifactSigningAccount (build/README.md, Signing).
+            # An undefined variable arrives as the literal "$(Name)" - build.ps1 takes that as not set.
+            displayName: Build the installer and the ZIP
+            env:
+              ARTIFACT_SIGNING_ENDPOINT: $(ArtifactSigningEndpoint)
+              ARTIFACT_SIGNING_ACCOUNT: $(ArtifactSigningAccount)
+              ARTIFACT_SIGNING_PROFILE: $(ArtifactSigningProfile)
+              AZURE_TENANT_ID: $(ArtifactSigningTenantId)
+              AZURE_CLIENT_ID: $(ArtifactSigningClientId)
+              AZURE_CLIENT_SECRET: $(ArtifactSigningClientSecret)
+          # Only the files right in build/out - the rest is the publish folders and the download cache.
+          - pwsh: Copy-Item build/out/MediaLens-* '$(Build.ArtifactStagingDirectory)'
+            displayName: Collect the files
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: installers-windows
+            displayName: Publish the files
+
+  - stage: Linux
+    dependsOn: []
+    jobs:
+      - job: Linux
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UseDotNet@2
+            displayName: .NET SDK 9
+            inputs:
+              packageType: sdk
+              version: 9.x
+          - bash: bash build/linux/build.sh "$(Version)"
+            displayName: Build the AppImage and the .deb
+          - bash: cp build/out/MediaLens-* "$(Build.ArtifactStagingDirectory)/"
+            displayName: Collect the files
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: installers-linux
+            displayName: Publish the files
+
+  - ${{ if eq(parameters.build, 'All platforms') }}:
+      - stage: macOS
+        dependsOn: []
+        jobs:
+          - job: macOS
+            pool:
+              vmImage: macos-latest
+            timeoutInMinutes: 90 # notarization waits for Apple
+            steps:
+              - task: UseDotNet@2
+                displayName: .NET SDK 9
+                inputs:
+                  packageType: sdk
+                  version: 9.x
+              - task: InstallAppleCertificate@2
+                displayName: Install the Developer ID certificate
+                inputs:
+                  certSecureFile: ${{ variables.MacCertSecureFile }}
+                  certPwd: $(MacCertPassword)
+                  keychain: temp
+              - task: DownloadSecureFile@1
+                name: notaryKey
+                displayName: Download the notarization key
+                inputs:
+                  secureFile: ${{ variables.NotaryKeySecureFile }}
+              - bash: bash build/macos/build.sh "$(Version)"
+                displayName: Build, sign and notarize the .dmg files
+                env:
+                  MAC_SIGN_IDENTITY: $(MacSignIdentity)
+                  NOTARY_KEY_PATH: $(notaryKey.secureFilePath)
+                  NOTARY_KEY_ID: $(NotaryKeyId)
+                  NOTARY_ISSUER_ID: $(NotaryIssuerId)
+              # Only the files right in build/out - CopyFiles would walk the whole folder (the .app bundles).
+              - bash: cp build/out/MediaLens-* "$(Build.ArtifactStagingDirectory)/"
+                displayName: Collect the files
+              - publish: $(Build.ArtifactStagingDirectory)
+                artifact: installers-macos
+                displayName: Publish the files

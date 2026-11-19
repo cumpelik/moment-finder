@@ -49,11 +49,11 @@ public sealed class Indexer : IDisposable
 
     public IndexerStatus Status { get; private set; } = new(IndexerPhase.Idle, "", 0, 0, false);
 
-    public Indexer(AppPaths paths, MediaRepository repo)
+    public Indexer(AppPaths paths, MediaRepository repo, Cloud.Rclone? rclone = null)
     {
         _paths = paths;
         _repo = repo;
-        _scanner = new LibraryScanner(repo);
+        _scanner = new LibraryScanner(repo, rclone);
     }
 
     /// <summary>Turns on the image analysis (after the model is downloaded).</summary>
@@ -124,6 +124,8 @@ public sealed class Indexer : IDisposable
                 if (!await StepAsync(ct))
                 {
                     Report(new IndexerStatus(IndexerPhase.Idle, _paused ? "Paused" : "Up to date", 0, 0, _paused));
+                    // Everything is analyzed: cloud files fetched for it may leave the cache.
+                    Cloud.MediaFiles.TrimCache();
                     await _wake.WaitAsync(ct);
                 }
             }
@@ -234,6 +236,7 @@ public sealed class Indexer : IDisposable
             bool ok;
             try
             {
+                await Cloud.MediaFiles.LocalPathAsync(item, ct);
                 ok = await ImageCodec.CreateThumbnailAsync(item, path, ct);
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -323,7 +326,7 @@ public sealed class Indexer : IDisposable
         try
         {
             var frames = duration > 0
-                ? await FFmpeg.ExtractFramesAsync(video.FullPath, interval, 60, dir, 256, ct)
+                ? await FFmpeg.ExtractFramesAsync(await Cloud.MediaFiles.LocalPathAsync(video, ct), interval, 60, dir, 256, ct)
                 : [];
             if (frames.Length == 0)
             {
