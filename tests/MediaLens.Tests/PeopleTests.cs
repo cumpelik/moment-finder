@@ -90,6 +90,27 @@ public class PeopleTests
         Assert.All(groups, g => Assert.Equal(2, g.Media));
     }
 
+    /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
+    [Fact]
+    public void EmptyLibraryQueries()
+    {
+        using var lib = new TestLibrary();
+        var repo = new PeopleRepository(lib.Db);
+        Assert.Empty(repo.UnnamedClusters());
+        Assert.Empty(repo.Suggestions(10));
+        Assert.Equal(0, repo.SuggestionCount());
+        Assert.Empty(repo.ListPersons());
+        Assert.Empty(repo.FirstAppearance([1]));
+        Assert.Empty(repo.Rejections());
+        Assert.Empty(repo.LoadAll());
+        Assert.Empty(lib.Repo.CountBySource());
+        Assert.Equal(0, lib.Repo.Stats(1).Total);
+        Assert.Empty(new Buckets.BucketService(lib.Db, lib.Repo).List());
+        Assert.Empty(new Cloud.CloudService(lib.Paths, lib.Db, lib.Repo).Mirrors());
+        Assert.Equal(0, new EventBuilder(lib.Db).Rebuild());
+        new IdentityService(repo).Recompute();
+    }
+
     [Fact]
     public void NamesInTheQuery()
     {

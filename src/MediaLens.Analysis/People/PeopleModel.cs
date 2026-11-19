@@ -39,7 +39,6 @@ public sealed class PeopleModel : IPeopleModel, IDisposable
             {
                 if (f.Box.W < MinFace || f.Box.H < MinFace) continue;
                 var aligned = FaceEmbedder.Align(image, f.Landmarks);
-                if (Environment.GetEnvironmentVariable("MEDIALENS_DEBUG_ALIGN") is { } dbg) aligned.SaveJpeg(Path.Combine(dbg, Guid.NewGuid().ToString("N")[..8] + ".jpg"));
                 var side = Math.Max(f.Box.W, f.Box.H) * 1.6f;
                 result.Add(new DetectedObject
                 {

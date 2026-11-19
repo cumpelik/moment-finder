@@ -321,7 +321,13 @@ public sealed class PeopleRepository
             """, new { personId, cluster, kind = (int?)kind, limit }).ToList();
     }
 
-    public sealed record ClusterInfo(long Cluster, long Faces, long Media, long CoverId);
+    public sealed class ClusterInfo
+    {
+        public long Cluster { get; init; }
+        public long Faces { get; init; }
+        public long Media { get; init; }
+        public long CoverId { get; init; }
+    }
 
     /// <summary>Groups of faces nobody named yet, biggest first.</summary>
     public List<ClusterInfo> UnnamedClusters()
