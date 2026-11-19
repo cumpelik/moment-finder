@@ -48,6 +48,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _videoTimeText = "";
     [ObservableProperty] private string? _error;
     [ObservableProperty] private bool _inBucket;
+    [ObservableProperty] private double _contentWidth = 1;
+    [ObservableProperty] private double _contentHeight = 1;
+    [ObservableProperty] private bool _showPeople;
+
+    /// <summary>The people layer must be redrawn (other item, other moment of the video, a new name).</summary>
+    public event Action? PeopleChanged;
+    private List<People.DetectionRow> _detections = [];
+    private Dictionary<long, string> _names = [];
+    private long _peopleTimeBucket = -1;
 
     public event Action? CloseRequested;
     /// <summary>For the view: the video image must be invalidated / replaced.</summary>
@@ -117,6 +126,41 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             _ = ShowPhotoAsync(entry, version);
         }
         Prefetch();
+        LoadPeople();
+    }
+
+    partial void OnShowPeopleChanged(bool value) => LoadPeople();
+
+    private void LoadPeople()
+    {
+        _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
+        _names = ShowPeople ? _main.People.Names() : [];
+        _peopleTimeBucket = -1;
+        PeopleChanged?.Invoke();
+    }
+
+    public sealed record PeopleBox(long DetectionId, double X, double Y, double W, double H, string Label, bool Known, bool IsFace);
+
+    /// <summary>Boxes to draw now, in content pixels; for a video only those near the current time.</summary>
+    public List<PeopleBox> PeopleBoxes()
+    {
+        if (!ShowPeople) return [];
+        var now = IsVideo && _video != null ? _video.TimeMs : 0;
+        return _detections
+            .Where(d => !IsVideo || Math.Abs(d.TimeMs - now) <= 1500)
+            .Select(d => new PeopleBox(d.Id, d.X * ContentWidth, d.Y * ContentHeight, d.W * ContentWidth, d.H * ContentHeight,
+                d.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (d.Confirmed ? "" : "?") :
+                d.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?",
+                d.PersonId != null, d.Kind == Analysis.DetectionKind.Face))
+            .ToList();
+    }
+
+    public IReadOnlyList<string> Names() => _main.People.PersonNames();
+
+    public void NameDetection(long detectionId, string name)
+    {
+        _main.People.NameDetection(detectionId, name);
+        LoadPeople();
     }
 
     private async Task ShowPhotoAsync(PlaylistEntry entry, int version)
@@ -131,6 +175,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         else
         {
             Photo = ToBitmap(decoded);
+            ContentWidth = decoded.Width;
+            ContentHeight = decoded.Height;
         }
         if (AutoPlay) _slideTimer.Start();
     }
@@ -184,6 +230,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (length > 0) VideoLength = length;
         if (time >= 0) VideoPosition = time;
         VideoTimeText = $"{Format.Duration(Math.Max(0, time))} / {Format.Duration(Math.Max(0, length))}";
+        if (ShowPeople && time / 500 != _peopleTimeBucket)
+        {
+            _peopleTimeBucket = time / 500;
+            PeopleChanged?.Invoke();
+        }
         // Highlights: only the part around the match, then the next item.
         if (AutoPlay && _settings.VideoHighlightsOnly && Current.StartMs > 0 && time > Current.StartMs + HighlightMs)
             Next();

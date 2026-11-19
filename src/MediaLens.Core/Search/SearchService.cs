@@ -18,6 +18,12 @@ public sealed class SearchService
 
     public SearchService(MediaRepository repo) => _repo = repo;
 
+    /// <summary>Names the search box recognizes; refreshed when people are named or renamed.</summary>
+    public IReadOnlyList<NamedPerson> People { get; set; } = [];
+
+    /// <summary>For videos found by a person: where the person appears first.</summary>
+    public Func<IReadOnlyList<long>, Dictionary<long, int>>? FirstAppearance { get; set; }
+
     public void AttachSceneModel(ISceneModel model, IVectorIndex index)
     {
         _model = model;
@@ -32,11 +38,14 @@ public sealed class SearchService
     /// </summary>
     public List<SearchHit> Search(string? input, MediaFilter scope)
     {
-        var query = QueryParser.Parse(input);
+        var query = QueryParser.Parse(input, People);
         var filter = QueryParser.ToFilter(query, scope);
         var items = _repo.Query(filter);
         if (string.IsNullOrWhiteSpace(query.Text) || _model is not { } model || _index is not { } index)
-            return items.Select(i => new SearchHit(i, 0, 0)).ToList();
+        {
+            var starts = filter.PersonIds.Count > 0 && FirstAppearance != null ? FirstAppearance(filter.PersonIds) : [];
+            return items.Select(i => new SearchHit(i, 0, i.IsVideo ? starts.GetValueOrDefault(i.Id) : 0)).ToList();
+        }
 
         var byId = items.ToDictionary(i => i.Id);
         var vector = EmbedQuery(model, query.Text);

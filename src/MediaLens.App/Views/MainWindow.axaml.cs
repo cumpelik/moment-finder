@@ -89,8 +89,27 @@ public partial class MainWindow : Window
     {
         if (_vm == null) return;
         // Typing in the search box (or another text field) is not a shortcut.
-        if (e.Source is TextBox || e.Source is NumericUpDown) return;
+        if (e.Source is TextBox || e.Source is NumericUpDown || e.Source is AutoCompleteBox) return;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (_vm.IsReviewMode)
+        {
+            switch (e.Key)
+            {
+                case Key.Y: _vm.People.ReviewYesCommand.Execute(null); break;
+                case Key.N: _vm.People.ReviewNoCommand.Execute(null); break;
+                case Key.S or Key.Right: _vm.People.ReviewSkipCommand.Execute(null); break;
+                case Key.O: _ = ReviewOtherAsync(); break;
+                default: return;
+            }
+            e.Handled = true;
+            return;
+        }
+        if (_vm.ShowPersonFaces && e.Key == Key.Delete)
+        {
+            _vm.People.RejectSelectedCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         TileViewModel? moved = null;
         switch (e.Key)
@@ -218,9 +237,51 @@ public partial class MainWindow : Window
 
     private async void OnRenameEntry(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Bucket } entry) return;
-        var name = await Dialogs.PromptAsync(this, "Rename bucket", "Name", entry.Name);
-        if (!string.IsNullOrWhiteSpace(name)) _vm.RenameBucket(entry, name);
+        if (_vm == null || EntryOf(sender) is not { } entry) return;
+        if (entry.Kind == SidebarKind.Bucket)
+        {
+            var name = await Dialogs.PromptAsync(this, "Rename bucket", "Name", entry.Name);
+            if (!string.IsNullOrWhiteSpace(name)) _vm.RenameBucket(entry, name);
+        }
+        else if (entry.Kind == SidebarKind.Person)
+        {
+            var name = await Dialogs.PromptNameAsync(this, "Rename person", _vm.People.PersonNames(), entry.Name);
+            if (name != null) _vm.RenamePerson(entry, name);
+        }
+    }
+
+    // ---- people ----
+
+    private async void OnNameCluster(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || (sender as Control)?.DataContext is not CropViewModel card) return;
+        var name = await Dialogs.PromptNameAsync(this, "Who is this?", _vm.People.PersonNames());
+        if (name != null) _vm.People.NameCluster(card, name);
+    }
+
+    private void OnIgnoreCluster(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel card) _vm.People.IgnoreCluster(card);
+    }
+
+    private async void OnReviewOther(object? sender, RoutedEventArgs e) => await ReviewOtherAsync();
+
+    private async Task ReviewOtherAsync()
+    {
+        if (_vm == null) return;
+        var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.People.PersonNames());
+        if (name != null) _vm.People.ReviewOther(name);
+    }
+
+    private void OnCropTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is CropViewModel crop) crop.IsSelected = !crop.IsSelected;
+    }
+
+    /// <summary>Double click on a face: the photo it comes from.</summary>
+    private void OnCropDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.OpenMedia(crop.MediaId);
     }
 
     private void OnRescanEntry(object? sender, RoutedEventArgs e) => _vm?.RescanCommand.Execute(null);
@@ -237,6 +298,10 @@ public partial class MainWindow : Window
             case SidebarKind.Bucket when await Dialogs.ConfirmAsync(this, "Delete bucket",
                 $"Delete the bucket \"{entry.Name}\"? Only the bucket goes away, the photos and videos stay."):
                 _vm.DeleteBucket(entry);
+                break;
+            case SidebarKind.Person when await Dialogs.ConfirmAsync(this, "Forget person",
+                $"Forget \"{entry.Name}\"? Their faces become unnamed again; the photos stay."):
+                _vm.DeletePerson(entry);
                 break;
         }
     }

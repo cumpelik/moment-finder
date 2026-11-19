@@ -88,6 +88,54 @@ public sealed class Database
 
         CREATE TABLE setting(key TEXT PRIMARY KEY, value TEXT);
         """,
+        // 2: people. A detection is a face or a whole person in a photo or a video frame; its person_id says
+        // who it is, assign_source how we know (see People.AssignSource), confirmed that the user said so.
+        """
+        CREATE TABLE person(
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL COLLATE NOCASE,
+            created_at INTEGER NOT NULL,
+            cover_detection_id INTEGER,
+            hidden INTEGER NOT NULL DEFAULT 0);
+
+        CREATE TABLE event(
+            id INTEGER PRIMARY KEY,
+            start_at INTEGER NOT NULL,
+            end_at INTEGER NOT NULL,
+            items INTEGER NOT NULL);
+
+        ALTER TABLE media ADD COLUMN event_id INTEGER;
+        ALTER TABLE media ADD COLUMN people_version INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX media_event ON media(event_id);
+
+        CREATE TABLE detection(
+            id INTEGER PRIMARY KEY,
+            media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+            time_ms INTEGER NOT NULL DEFAULT 0,
+            kind INTEGER NOT NULL,
+            x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
+            score REAL NOT NULL,
+            quality REAL NOT NULL,
+            track INTEGER,
+            linked_id INTEGER,
+            embedding BLOB NOT NULL,
+            cluster INTEGER,
+            person_id INTEGER REFERENCES person(id) ON DELETE SET NULL,
+            assign_source INTEGER,
+            confidence REAL,
+            confirmed INTEGER NOT NULL DEFAULT 0,
+            suggest_person_id INTEGER REFERENCES person(id) ON DELETE SET NULL,
+            suggest_score REAL);
+        CREATE INDEX detection_media ON detection(media_id);
+        CREATE INDEX detection_person ON detection(person_id);
+        CREATE INDEX detection_suggest ON detection(suggest_person_id);
+        CREATE INDEX detection_cluster ON detection(cluster);
+
+        CREATE TABLE rejection(
+            detection_id INTEGER NOT NULL REFERENCES detection(id) ON DELETE CASCADE,
+            person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+            PRIMARY KEY(detection_id, person_id));
+        """,
     ];
 
     private static void Migrate(SqliteConnection c)

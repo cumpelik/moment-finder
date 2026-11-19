@@ -26,4 +26,7 @@ public sealed class AppPaths
     }
 
     public string ThumbPath(long mediaId) => Path.Combine(ThumbDir, (mediaId / 1000).ToString(), mediaId + ".jpg");
+
+    /// <summary>The crop of a face or a person, shown in the people screens.</summary>
+    public string PeopleCropPath(long detectionId) => Path.Combine(ThumbDir, "people", (detectionId / 1000).ToString(), detectionId + ".jpg");
 }

@@ -49,6 +49,7 @@ public partial class PlayerWindow : Window
             _vm.ScreenSize = screen.Bounds.Size;
         _vm.CloseRequested += Close;
         _vm.VideoFrameChanged += OnVideoFrame;
+        _vm.PeopleChanged += DrawPeople;
         _vm.Start();
         ShowOverlay();
     }
@@ -60,6 +61,7 @@ public partial class PlayerWindow : Window
         {
             _vm.CloseRequested -= Close;
             _vm.VideoFrameChanged -= OnVideoFrame;
+            _vm.PeopleChanged -= DrawPeople;
         }
         base.OnClosed(e);
     }
@@ -67,8 +69,57 @@ public partial class PlayerWindow : Window
     private void OnVideoFrame()
     {
         if (!ReferenceEquals(VideoImage.Source, _vm?.VideoFrame))
+        {
             VideoImage.Source = _vm?.VideoFrame;
+            if (_vm?.VideoFrame is { } frame)
+            {
+                _vm.ContentWidth = frame.PixelSize.Width;
+                _vm.ContentHeight = frame.PixelSize.Height;
+                DrawPeople();
+            }
+        }
         VideoImage.InvalidateVisual();
+    }
+
+    /// <summary>Boxes around faces and people; a click says who it is (the seed for someone in a helmet).</summary>
+    private void DrawPeople()
+    {
+        PeopleLayer.Children.Clear();
+        if (_vm == null) return;
+        var scale = Math.Max(1, _vm.ContentWidth / 1280);
+        foreach (var box in _vm.PeopleBoxes())
+        {
+            var color = box.Known ? Avalonia.Media.Brushes.LimeGreen : Avalonia.Media.Brushes.Orange;
+            var label = new Border
+            {
+                Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromArgb(200, 0, 0, 0)),
+                Padding = new Thickness(4 * scale, 1 * scale),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+                Child = new TextBlock { Text = box.Label, Foreground = Avalonia.Media.Brushes.White, FontSize = 13 * scale },
+            };
+            var frame = new Border
+            {
+                Width = box.W,
+                Height = box.H,
+                BorderBrush = color,
+                BorderThickness = new Thickness(box.IsFace ? 2 * scale : 3 * scale),
+                Background = Avalonia.Media.Brushes.Transparent,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Child = label,
+            };
+            ToolTip.SetTip(frame, "Click: who is it?");
+            var id = box.DetectionId;
+            frame.PointerPressed += async (_, e) =>
+            {
+                e.Handled = true;
+                var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.Names());
+                if (name != null) _vm.NameDetection(id, name);
+            };
+            Canvas.SetLeft(frame, box.X);
+            Canvas.SetTop(frame, box.Y);
+            PeopleLayer.Children.Add(frame);
+        }
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
@@ -104,6 +155,7 @@ public partial class PlayerWindow : Window
             case Key.Right or Key.PageDown: _vm.Next(); break;
             case Key.Space: _vm.TogglePlay(); ShowOverlay(); break;
             case Key.B: _vm.AddToBucket(); ShowOverlay(); break;
+            case Key.I: _vm.ShowPeople = !_vm.ShowPeople; break;
             case Key.F or Key.F11: ToggleFullScreen(); break;
             case Key.Up: _vm.ChangeVolume(10); break;
             case Key.Down: _vm.ChangeVolume(-10); break;

@@ -44,7 +44,7 @@
                     <DataTemplate DataType="vm:SidebarHeader">
                         <Grid ColumnDefinitions="*,Auto" Margin="0,10,0,0">
                             <TextBlock Classes="heading" Text="{Binding Title}" Margin="0" VerticalAlignment="Center" />
-                            <Button Grid.Column="1" Classes="icon" ToolTip.Tip="{Binding AddToolTip}" Click="OnHeaderAdd">
+                            <Button Grid.Column="1" Classes="icon" ToolTip.Tip="{Binding AddToolTip}" Click="OnHeaderAdd" IsVisible="{Binding CanAdd}">
                                 <mi:MaterialIcon Kind="Plus" />
                             </Button>
                         </Grid>
@@ -52,10 +52,10 @@
                     <DataTemplate DataType="vm:SidebarEntry">
                         <Grid ColumnDefinitions="Auto,*,Auto" Background="Transparent" ToolTip.Tip="{Binding ToolTip}">
                             <Grid.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="Rename..." Click="OnRenameEntry" />
-                                    <MenuItem Header="Scan again" Click="OnRescanEntry" />
-                                    <MenuItem Header="Remove from the library (files stay)" Click="OnRemoveEntry" />
+                                <ContextMenu IsVisible="{Binding HasMenu}">
+                                    <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
+                                    <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
+                                    <MenuItem Header="{Binding RemoveText}" Click="OnRemoveEntry" IsVisible="{Binding CanRemove}" />
                                 </ContextMenu>
                             </Grid.ContextMenu>
                             <mi:MaterialIcon Kind="{Binding Icon}" Margin="0,0,8,0" />
@@ -129,8 +129,16 @@
             </Border>
 
             <!-- Result line; a bucket gets its own actions -->
-            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="12,8,12,4">
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
                 <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsPersonScope}">
+                    <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="FaceRecognition" />
+                            <TextBlock Text="Faces" />
+                        </StackPanel>
+                    </ToggleButton>
+                </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
                     <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
                             ToolTip.Tip="Take the selection out of this bucket (Delete); the files stay">
@@ -150,7 +158,7 @@
 
             <!-- Thumbnails; only the visible ones exist -->
             <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
-                          Padding="10,4,10,10">
+                          Padding="10,4,10,10" IsVisible="{Binding IsGridMode}">
                 <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding Tiles}">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout MinItemWidth="180" MinItemHeight="180"
@@ -179,6 +187,95 @@
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
             </ScrollViewer>
+
+            <!-- Who is this: unnamed groups of faces -->
+            <DockPanel Grid.Row="2" Grid.RowSpan="1" IsVisible="{Binding IsGroupsMode}" Margin="12,8,12,8">
+                <TextBlock DockPanel.Dock="Top" Classes="muted" Text="{Binding People.ClustersSummary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding People.Clusters}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:CropViewModel">
+                                <Border Classes="card" Margin="0,0,10,10">
+                                    <StackPanel Spacing="6" Width="140">
+                                        <Button Padding="0" Click="OnNameCluster" ToolTip.Tip="Who is it?" Background="Transparent">
+                                            <Image Source="{Binding Image}" Width="140" Height="140" Stretch="UniformToFill" />
+                                        </Button>
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="{Binding Caption}" Classes="muted small" VerticalAlignment="Center" />
+                                            <Button Grid.Column="1" Classes="icon" Click="OnIgnoreCluster"
+                                                    ToolTip.Tip="A stranger: never show this group again">
+                                                <mi:MaterialIcon Kind="EyeOffOutline" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+
+            <!-- Review: one question at a time -->
+            <Grid Grid.Row="2" IsVisible="{Binding IsReviewMode}" RowDefinitions="Auto,*,Auto" Margin="20">
+                <StackPanel Spacing="4" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding People.ReviewQuestion}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding People.ReviewDetail}" Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding People.ReviewProgress}" Classes="muted small" HorizontalAlignment="Center" />
+                </StackPanel>
+                <Grid Grid.Row="1" ColumnDefinitions="*,*" Margin="0,16" IsVisible="{Binding People.HasReview}">
+                    <Image Source="{Binding People.ReviewCrop.Image}" Stretch="Uniform" MaxHeight="320" Margin="10" />
+                    <Viewbox Grid.Column="1" Stretch="Uniform" MaxHeight="360" Margin="10">
+                        <Panel Width="{Binding People.ContextWidth}" Height="{Binding People.ContextHeight}">
+                            <Image Source="{Binding People.ReviewContext}" />
+                            <Canvas>
+                                <Rectangle Canvas.Left="{Binding People.BoxLeft}" Canvas.Top="{Binding People.BoxTop}"
+                                           Width="{Binding People.BoxWidth}" Height="{Binding People.BoxHeight}"
+                                           Stroke="#F59E0B" StrokeThickness="3" />
+                            </Canvas>
+                        </Panel>
+                    </Viewbox>
+                </Grid>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" IsVisible="{Binding People.HasReview}">
+                    <Button Classes="accent" Command="{Binding People.ReviewYesCommand}" MinWidth="110" HorizontalContentAlignment="Center">Yes (Y)</Button>
+                    <Button Command="{Binding People.ReviewNoCommand}" MinWidth="110" HorizontalContentAlignment="Center">No (N)</Button>
+                    <Button Click="OnReviewOther" MinWidth="110" HorizontalContentAlignment="Center">Someone else (O)</Button>
+                    <Button Command="{Binding People.ReviewSkipCommand}" MinWidth="110" HorizontalContentAlignment="Center">Skip (S)</Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- One person's faces and figures -->
+            <DockPanel Grid.Row="2" IsVisible="{Binding ShowPersonFaces}" Margin="12,4,12,8">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+                    <TextBlock Classes="muted" Text="{Binding People.PersonSummary}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                        <Button Command="{Binding People.RejectSelectedCommand}">Not this person</Button>
+                        <Button Command="{Binding People.ConfirmSelectedCommand}">Confirm</Button>
+                        <Button Command="{Binding People.SetCoverCommand}">Use as picture</Button>
+                    </StackPanel>
+                </Grid>
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding People.PersonCrops}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:CropViewModel">
+                                <Border Classes="tile" Classes.selected="{Binding IsSelected}" Margin="0,0,6,6" Tapped="OnCropTapped"
+                                        DoubleTapped="OnCropDoubleTapped" ToolTip.Tip="{Binding Caption}">
+                                    <Image Source="{Binding Image}" Width="110" Height="110" Stretch="Uniform" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
 
             <!-- Empty library -->
             <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" IsVisible="{Binding IsLibraryEmpty}">

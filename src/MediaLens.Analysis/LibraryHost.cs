@@ -3,7 +3,9 @@ using MediaLens.Analysis;
 using MediaLens.Analysis.Siglip;
 using MediaLens.Buckets;
 using MediaLens.Data;
+using MediaLens.Analysis.People;
 using MediaLens.Library;
+using MediaLens.People;
 using MediaLens.Search;
 using MediaLens.Vectors;
 
@@ -19,6 +21,10 @@ public sealed class LibraryHost : IDisposable
     public SearchService Search { get; }
     public Indexer Indexer { get; }
     public ModelManager Models { get; }
+    public PeopleRepository People { get; }
+    public IdentityService Identity { get; }
+    public EventBuilder Events { get; }
+    public PeopleModel? PeopleModel { get; private set; }
 
     public SiglipModel? SceneModel { get; private set; }
     public FlatVectorIndex? SceneIndex { get; private set; }
@@ -32,6 +38,27 @@ public sealed class LibraryHost : IDisposable
         Search = new SearchService(Repo);
         Indexer = new Indexer(Paths, Repo);
         Models = new ModelManager(Paths.ModelDir);
+        People = new PeopleRepository(Db);
+        Identity = new IdentityService(People);
+        Events = new EventBuilder(Db);
+        Search.FirstAppearance = ids => People.FirstAppearance(ids);
+        RefreshNames();
+    }
+
+    /// <summary>The search box learns new and renamed people.</summary>
+    public void RefreshNames() =>
+        Search.People = People.ListPersons().Select(p => new NamedPerson(p.Id, p.Name)).ToList();
+
+    public bool PeopleModelInstalled => ModelCatalog.PeopleModels.All(Models.IsInstalled);
+
+    /// <summary>Loads face and person recognition when downloaded.</summary>
+    public bool TryLoadPeopleModel()
+    {
+        if (PeopleModel != null) return true;
+        if (!PeopleModelInstalled) return false;
+        PeopleModel = new PeopleModel(Models.DirOf(ModelCatalog.Faces), Models.DirOf(ModelCatalog.Persons), Models.DirOf(ModelCatalog.Reid));
+        Indexer.AttachPeople(new PeopleAnalyzer(Paths, People, PeopleModel), Identity, Events);
+        return true;
     }
 
     public bool SceneModelInstalled => Models.IsInstalled(ModelCatalog.Siglip2Base);
@@ -60,5 +87,6 @@ public sealed class LibraryHost : IDisposable
         Indexer.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();
+        PeopleModel?.Dispose();
     }
 }

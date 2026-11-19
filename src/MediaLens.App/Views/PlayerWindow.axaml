@@ -10,8 +10,14 @@
         Width="1280" Height="800">
 
     <Grid x:Name="Root" Background="Black" Cursor="None">
-        <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Uniform" IsVisible="{Binding !IsVideo}" />
-        <Image x:Name="VideoImage" Stretch="Uniform" IsVisible="{Binding IsVideo}" />
+        <!-- The picture and the people boxes share one coordinate space (pixels of the picture); the Viewbox fits it to the screen. -->
+        <Viewbox Stretch="Uniform">
+            <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
+                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !IsVideo}" />
+                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding IsVideo}" />
+                <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
+            </Panel>
+        </Viewbox>
         <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                    Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
 
@@ -46,6 +52,10 @@
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
                         <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,12,0" />
+                        <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show people (I): click a box to say who it is"
+                                      Background="Transparent" BorderThickness="0" Padding="6">
+                            <mi:MaterialIcon Kind="AccountBoxOutline" Width="22" Height="22" Foreground="White" />
+                        </ToggleButton>
                         <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
                             <Panel>
                                 <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />

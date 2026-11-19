@@ -27,6 +27,34 @@ public static class Dialogs
         return result;
     }
 
+    /// <summary>A name, offering the people already known as you type.</summary>
+    public static async Task<string?> PromptNameAsync(Window owner, string title, IEnumerable<string> names, string initial = "")
+    {
+        var box = new AutoCompleteBox
+        {
+            ItemsSource = names.ToList(),
+            Text = initial,
+            FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
+            MinimumPrefixLength = 1,
+            PlaceholderText = "Name",
+        };
+        string? result = null;
+        var dialog = Build(title, new StackPanel
+        {
+            Spacing = 8,
+            Children = { new TextBlock { Text = "Who is it? An existing name adds to that person.", TextWrapping = Avalonia.Media.TextWrapping.Wrap }, box },
+        }, out var ok, out var cancel, "OK");
+        ok.Click += (_, _) => { result = box.Text; dialog.Close(); };
+        cancel.Click += (_, _) => dialog.Close();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter && !box.IsDropDownOpen) { result = box.Text; dialog.Close(); }
+        };
+        dialog.Opened += (_, _) => box.Focus();
+        await dialog.ShowDialog(owner);
+        return string.IsNullOrWhiteSpace(result) ? null : result.Trim();
+    }
+
     public static async Task<bool> ConfirmAsync(Window owner, string title, string message)
     {
         var confirmed = false;

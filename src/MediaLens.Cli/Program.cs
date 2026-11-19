@@ -21,6 +21,13 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           search <query...>                e.g. search lyžař 2023, search video moře
           rank <text> <image...>           similarity of images to a text (model check)
           models [download]                state of the AI models / download them
+          persons                          named people
+          clusters                         unnamed groups of faces
+          name <cluster> <name>            name an unnamed group
+          confirm <detection> <name>       say who is on one detection (face or body)
+          reject <detection> <name>        say who is not
+          match                            run the identity matching now
+          detections <file name part>      what was found on an item
           bucket list
           bucket create <name>
           bucket add <name> <query...>     add search results to a bucket
@@ -61,6 +68,8 @@ switch (args[0])
             Console.WriteLine("Search model not downloaded ('medialens models download'), only thumbnails will be made.");
         else
             Console.WriteLine($"Search model on {host.SceneModel!.Device}");
+        if (host.TryLoadPeopleModel())
+            Console.WriteLine($"People model on {host.PeopleModel!.Device}");
         var sw = Stopwatch.StartNew();
         var last = "";
         host.Indexer.StatusChanged += st =>
@@ -109,14 +118,124 @@ switch (args[0])
 
     case "models":
     {
-        var m = ModelCatalog.Siglip2Base;
-        if (args.Length >= 2 && args[1] == "download")
+        foreach (var m in ModelCatalog.All)
         {
-            await host.Models.DownloadAsync(m, new Progress<(long Done, long Total)>(p =>
-                Console.Write($"\r{m.Title}: {p.Done / 1048576} / {p.Total / 1048576} MB   ")), ct);
-            Console.WriteLine();
+            if (args.Length >= 2 && args[1] == "download")
+            {
+                await host.Models.DownloadAsync(m, new Progress<(long Done, long Total)>(p =>
+                    Console.Write($"\r{m.Title}: {p.Done / 1048576} / {p.Total / 1048576} MB   ")), ct);
+                Console.WriteLine();
+            }
+            Console.WriteLine($"{m.Title} [{m.License}]: {(host.Models.IsInstalled(m) ? "installed" : $"not downloaded ({m.TotalSize / 1048576} MB)")}");
         }
-        Console.WriteLine($"{m.Title} [{m.License}]: {(host.Models.IsInstalled(m) ? "installed" : $"not downloaded ({m.TotalSize / 1048576} MB)")}");
+        return 0;
+    }
+
+    case "persons":
+        foreach (var p in host.People.ListPersons(true))
+            Console.WriteLine($"{p.Id,4}  {p.Name,-25} {p.MediaCount} items{(p.Hidden ? " (hidden)" : "")}");
+        Console.WriteLine($"{host.People.SuggestionCount()} suggestions to review");
+        return 0;
+
+    case "clusters":
+        foreach (var c in host.People.UnnamedClusters())
+        {
+            var files = host.Repo.Get(host.People.Detections(cluster: c.Cluster).Select(d => d.MediaId)).Values.Select(m => m.FileName).Distinct();
+            Console.WriteLine($"{c.Cluster,6}  {c.Media} items: {string.Join(", ", files.Take(8))}");
+        }
+        return 0;
+
+    case "name" when args.Length >= 3:
+    {
+        var person = host.People.FindOrCreatePerson(string.Join(' ', args.Skip(2)));
+        host.People.Confirm(host.People.ClusterDetectionIds(long.Parse(args[1], CultureInfo.InvariantCulture)), person.Id);
+        PrintMatch(host.Identity.Recompute());
+        return 0;
+    }
+
+    case "confirm" or "reject" when args.Length >= 3:
+    {
+        var person = host.People.FindOrCreatePerson(string.Join(' ', args.Skip(2)));
+        var id = long.Parse(args[1], CultureInfo.InvariantCulture);
+        if (args[0] == "confirm") host.People.Confirm([id], person.Id);
+        else host.People.Reject([id], person.Id);
+        PrintMatch(host.Identity.Recompute());
+        return 0;
+    }
+
+    case "match":
+        host.Events.Rebuild();
+        PrintMatch(host.Identity.Recompute());
+        return 0;
+
+    case "detections" when args.Length >= 2:
+    {
+        var persons = host.People.ListPersons(true).ToDictionary(p => p.Id, p => p.Name);
+        foreach (var item in host.Repo.Query(new MediaFilter()).Where(m => m.FileName.Contains(args[1], StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.WriteLine(item.FileName);
+            foreach (var d in host.People.DetectionsOfMedia(item.Id))
+                Console.WriteLine($"  {d.Id,6} {d.Kind,-4} t{d.TimeMs,6} q{d.Quality:0.00} track {d.Track?.ToString() ?? "-",5} link {d.LinkedId?.ToString() ?? "-",5} [{d.X:0.00} {d.Y:0.00} {d.W:0.00} {d.H:0.00}] " +
+                                  $"{(d.PersonId is { } p ? persons[p] : "?"),-15} {d.AssignSource} {d.Confidence:0.00}" +
+                                  (d.SuggestPersonId is { } s ? $"  maybe {persons[s]} {d.SuggestScore:0.00}" : "") +
+                                  (d.Cluster is { } cl ? $"  cluster {cl}" : ""));
+        }
+        return 0;
+    }
+
+    case "people" when args.Length >= 2:
+    {
+        var host2 = host;
+        var pm = new MediaLens.Analysis.People.PeopleModel(host2.Models.DirOf(ModelCatalog.Faces), host2.Models.DirOf(ModelCatalog.Persons), host2.Models.DirOf(ModelCatalog.Reid));
+        Console.WriteLine($"People model on {pm.Device}");
+        var outDir = args.Length >= 3 ? args[2] : null;
+        foreach (var file in Directory.Exists(args[1]) ? Directory.GetFiles(args[1]).Order().ToArray() : [args[1]])
+        {
+            var img = MediaLens.Media.RgbImage.Load(file, 1600);
+            var sw = Stopwatch.StartNew();
+            var found = pm.Analyze(img);
+            Console.WriteLine($"{Path.GetFileName(file)} {img.Width}x{img.Height} {sw.ElapsedMilliseconds} ms: " +
+                string.Join(", ", found.Select(d => $"{d.Kind} {d.Box.W:0}x{d.Box.H:0} s{d.Score:0.00} q{d.Quality:0.00}")));
+            if (outDir != null)
+                for (var i = 0; i < found.Count; i++)
+                    found[i].Crop!.SaveJpeg(Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(file)}_{i}_{found[i].Kind}.jpg"));
+        }
+        return 0;
+    }
+
+    case "facesim" when args.Length >= 2:
+    {
+        // Best face per file, then the similarity of files named alike (same prefix before the last _) vs others.
+        var pm = new MediaLens.Analysis.People.PeopleModel(host.Models.DirOf(ModelCatalog.Faces), host.Models.DirOf(ModelCatalog.Persons), host.Models.DirOf(ModelCatalog.Reid));
+        var faces = new List<(string Name, float[] E)>();
+        foreach (var file in Directory.GetFiles(args[1]).Order())
+        {
+            var best = pm.Analyze(MediaLens.Media.RgbImage.Load(file, 1600)).Where(d => d.Kind == MediaLens.Analysis.DetectionKind.Face)
+                .OrderByDescending(d => d.Box.W * d.Quality).FirstOrDefault();
+            if (best != null) faces.Add((Path.GetFileNameWithoutExtension(file), best.Embedding));
+        }
+        string Who(string n) => n[..n.LastIndexOf('_')];
+        var same = new List<float>(); var other = new List<float>();
+        for (var i = 0; i < faces.Count; i++)
+        for (var j = i + 1; j < faces.Count; j++)
+        {
+            var sim = System.Numerics.Tensors.TensorPrimitives.Dot(faces[i].E, faces[j].E);
+            (Who(faces[i].Name) == Who(faces[j].Name) ? same : other).Add(sim);
+        }
+        Console.WriteLine($"faces {faces.Count}; same person: n={same.Count} min {same.Min():0.00} median {same.Order().ElementAt(same.Count / 2):0.00}; " +
+                          $"different: n={other.Count} max {other.Max():0.00} median {other.Order().ElementAt(other.Count / 2):0.00}");
+        foreach (var t in new[] { 0.3f, 0.35f, 0.4f, 0.45f, 0.5f, 0.55f })
+            Console.WriteLine($"  threshold {t:0.00}: same above {same.Count(x => x >= t) * 100 / same.Count}%, different above {other.Count(x => x >= t) * 100.0 / other.Count:0.0}%");
+        return 0;
+    }
+
+    case "modelinfo" when args.Length >= 2:
+    {
+        using var session = new Microsoft.ML.OnnxRuntime.InferenceSession(args[1]);
+        foreach (var (name, meta) in session.InputMetadata)
+            Console.WriteLine($"in  {name} {meta.ElementDataType} [{string.Join(',', meta.Dimensions)}]");
+        foreach (var (name, meta) in session.OutputMetadata)
+            Console.WriteLine($"out {name} {meta.ElementDataType} [{string.Join(',', meta.Dimensions)}]");
         return 0;
     }
 
@@ -162,10 +281,13 @@ async Task<int> BucketCommand(string[] a)
     }
 }
 
+void PrintMatch(MediaLens.People.IdentityService.Result r) =>
+    Console.WriteLine($"{r.Faces} faces, {r.Bodies} bodies: {r.Assigned} recognized, {r.Suggestions} suggestions, {r.Clusters} unnamed groups");
+
 void PrintStats()
 {
     var s = host.Repo.Stats(Indexer.AnalysisVersion);
-    Console.WriteLine($"{s.Total} items ({s.Photos} photos, {s.Videos} videos), thumbnails {s.Thumbnailed}, analyzed {s.Analyzed}");
+    Console.WriteLine($"{s.Total} items ({s.Photos} photos, {s.Videos} videos), thumbnails {s.Thumbnailed}, analyzed {s.Analyzed}, people {s.PeopleAnalyzed}");
 }
 
 static int Fail(string message)

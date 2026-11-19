@@ -1,5 +1,6 @@
 using MediaLens.Analysis;
 using MediaLens.Media;
+using MediaLens.People;
 using MediaLens.Vectors;
 
 namespace MediaLens.Library;
@@ -10,6 +11,7 @@ public enum IndexerPhase
     Scanning,
     Thumbnails,
     Analysis,
+    People,
 }
 
 public sealed record IndexerStatus(IndexerPhase Phase, string Message, int Done, int Total, bool Paused);
@@ -22,6 +24,7 @@ public sealed class Indexer : IDisposable
 {
     /// <summary>Raised when the pipeline changes so old results must be computed again.</summary>
     public const int AnalysisVersion = 1;
+    public const int PeopleVersion = 1;
 
     private readonly AppPaths _paths;
     private readonly MediaRepository _repo;
@@ -34,6 +37,11 @@ public sealed class Indexer : IDisposable
 
     private ISceneModel? _sceneModel;
     private IVectorIndex? _sceneIndex;
+    private PeopleAnalyzer? _people;
+    private IdentityService? _identity;
+    private EventBuilder? _events;
+    private bool _identityDirty;
+    private int _sinceIdentity;
 
     public event Action<IndexerStatus>? StatusChanged;
     /// <summary>New items in the index or new thumbnails: the grid can refresh.</summary>
@@ -53,6 +61,24 @@ public sealed class Indexer : IDisposable
     {
         _sceneModel = model;
         _sceneIndex = index;
+        _wake.Release();
+    }
+
+    /// <summary>Turns on the people analysis (faces, bodies) and the identity matching.</summary>
+    public void AttachPeople(PeopleAnalyzer analyzer, IdentityService identity, EventBuilder events)
+    {
+        _people = analyzer;
+        _identity = identity;
+        _events = events;
+        events.Rebuild();
+        _identityDirty = true;
+        _wake.Release();
+    }
+
+    /// <summary>After the user named or corrected someone: match everything again in the background.</summary>
+    public void RequestIdentity()
+    {
+        _identityDirty = true;
         _wake.Release();
     }
 
@@ -123,7 +149,17 @@ public sealed class Indexer : IDisposable
             await ScanAllAsync(ct);
             return true;
         }
-        return await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct);
+        if (await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct))
+            return true;
+        if (_identityDirty && _identity != null)
+        {
+            _identityDirty = false;
+            _sinceIdentity = 0;
+            Report(new IndexerStatus(IndexerPhase.People, "Matching people", 0, 0, false));
+            await Task.Run(() => _identity.Recompute(), ct);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>For the command line: does all the work in the calling task (do not combine with Start).</summary>
@@ -134,6 +170,22 @@ public sealed class Indexer : IDisposable
     }
 
     private async Task ScanAllAsync(CancellationToken ct)
+    {
+        try
+        {
+            await ScanSourcesAsync(ct);
+        }
+        finally
+        {
+            if (_events != null)
+            {
+                _events.Rebuild();
+                _identityDirty = true;
+            }
+        }
+    }
+
+    private async Task ScanSourcesAsync(CancellationToken ct)
     {
         foreach (var source in _repo.ListSources().Where(s => s.Enabled))
         {
@@ -225,6 +277,39 @@ public sealed class Indexer : IDisposable
             await AnalyzeVideoAsync(video, model, index, ct);
             _repo.SetAnalysisVersion(video.Id, AnalysisVersion);
             Report(new IndexerStatus(IndexerPhase.Analysis, $"Analyzing ({device})", ++done, (int)stats.Total, false));
+        }
+        return true;
+    }
+
+    private async Task<bool> PeopleBatchAsync(CancellationToken ct)
+    {
+        if (_people is not { } people) return false;
+        var batch = _repo.PendingPeople(PeopleVersion, 8);
+        if (batch.Count == 0) return false;
+        var stats = _repo.Stats(AnalysisVersion);
+        var done = (int)stats.PeopleAnalyzed;
+        foreach (var item in batch)
+        {
+            if (_paused) break;
+            try
+            {
+                await people.AnalyzeAsync(item, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // Unreadable file: it stays without people, the rest goes on.
+            }
+            _repo.SetPeopleVersion(item.Id, PeopleVersion);
+            Report(new IndexerStatus(IndexerPhase.People, $"Looking for people ({people.Model.Device})", ++done, (int)stats.Total, false));
+            // Match from time to time, so names spread while a large library is still being analyzed.
+            if (++_sinceIdentity >= 300) _identityDirty = true;
+        }
+        _identityDirty = true;
+        if (_sinceIdentity >= 300 && _identity != null)
+        {
+            _sinceIdentity = 0;
+            _identityDirty = false;
+            await Task.Run(() => _identity.Recompute(), ct);
         }
         return true;
     }

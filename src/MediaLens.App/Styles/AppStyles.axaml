@@ -72,6 +72,12 @@
         <Setter Property="FontSize" Value="11" />
     </Style>
 
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{DynamicResource TileBackgroundBrush}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="8" />
+    </Style>
+
     <!-- Player overlay -->
     <Style Selector="Border.overlay">
         <Setter Property="Background" Value="#C0000000" />

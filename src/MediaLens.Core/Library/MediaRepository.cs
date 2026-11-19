@@ -13,6 +13,8 @@ public sealed record MediaFilter
     /// <summary>Exclusive, TakenAt milliseconds.</summary>
     public long? To { get; init; }
     public long? BucketId { get; init; }
+    /// <summary>All of these people are on the item.</summary>
+    public IReadOnlyList<long> PersonIds { get; init; } = [];
 }
 
 /// <summary>What the scanner found on disk for one file.</summary>
@@ -137,6 +139,11 @@ public sealed class MediaRepository
         if (filter.Kind is { } kind) { sql.Append(" AND m.kind=@kind"); p.Add("kind", (int)kind); }
         if (filter.From is { } from) { sql.Append(" AND m.taken_at>=@from"); p.Add("from", from); }
         if (filter.To is { } to) { sql.Append(" AND m.taken_at<@to"); p.Add("to", to); }
+        for (var i = 0; i < filter.PersonIds.Count; i++)
+        {
+            sql.Append($" AND m.id IN (SELECT media_id FROM detection WHERE person_id=@person{i})");
+            p.Add("person" + i, filter.PersonIds[i]);
+        }
         sql.Append(filter.BucketId is null ? " ORDER BY m.taken_at DESC, m.id DESC" : " ORDER BY b.position, b.added_at");
         if (limit != int.MaxValue) { sql.Append(" LIMIT @limit"); p.Add("limit", limit); }
 
@@ -186,6 +193,22 @@ public sealed class MediaRepository
             .Select(r => r.ToItem()).ToList();
     }
 
+    public List<MediaItem> PendingPeople(int version, int limit)
+    {
+        using var c = _db.Open();
+        return c.Query<MediaRow>(
+                $"SELECT {MediaColumns}, s.root AS SourceRoot FROM media m JOIN source s ON s.id=m.source_id " +
+                "WHERE m.people_version<@version AND m.thumb_state=1 AND m.missing=0 AND s.enabled=1 " +
+                "ORDER BY m.taken_at DESC LIMIT @limit", new { version, limit })
+            .Select(r => r.ToItem()).ToList();
+    }
+
+    public void SetPeopleVersion(long id, int version)
+    {
+        using var c = _db.Open();
+        c.Execute("UPDATE media SET people_version=@version WHERE id=@id", new { id, version });
+    }
+
     public void SetAnalysisVersion(long id, int version)
     {
         using var c = _db.Open();
@@ -200,9 +223,10 @@ public sealed class MediaRepository
                    COALESCE(SUM(m.kind=1),0) AS Photos,
                    COALESCE(SUM(m.kind=2),0) AS Videos,
                    COALESCE(SUM(m.thumb_state<>0),0) AS Thumbnailed,
-                   COALESCE(SUM(m.analysis_version>=@analysisVersion),0) AS Analyzed
+                   COALESCE(SUM(m.analysis_version>=@analysisVersion),0) AS Analyzed,
+                   COALESCE(SUM(m.people_version>=@peopleVersion),0) AS PeopleAnalyzed
             FROM media m JOIN source s ON s.id=m.source_id WHERE m.missing=0 AND s.enabled=1
-            """, new { analysisVersion });
+            """, new { analysisVersion, peopleVersion = Indexer.PeopleVersion });
     }
 
     private sealed class MediaRow
@@ -242,4 +266,5 @@ public sealed class LibraryStats
     public long Videos { get; init; }
     public long Thumbnailed { get; init; }
     public long Analyzed { get; init; }
+    public long PeopleAnalyzed { get; init; }
 }

@@ -23,6 +23,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _starting = true;
 
     public ThumbnailLoader Thumbnails { get; }
+    public PeopleViewModel People { get; }
+
+    /// <summary>What the main area shows: the grid of photos, or one of the people screens.</summary>
+    public bool IsGridMode => CurrentScope?.Kind is not (SidebarKind.Groups or SidebarKind.Review) && !ShowPersonFaces;
+    public bool IsGroupsMode => CurrentScope?.Kind == SidebarKind.Groups;
+    public bool IsReviewMode => CurrentScope?.Kind == SidebarKind.Review;
+    public bool IsPersonScope => CurrentScope?.Kind == SidebarKind.Person;
+    public bool IsPeopleScreen => IsGroupsMode || IsReviewMode;
+
+    /// <summary>In a person's scope: the faces and figures instead of the photos.</summary>
+    [ObservableProperty] private bool _showPersonFaces;
 
     public ObservableCollection<object> SidebarItems { get; } = [];
     public ObservableCollection<Bucket> Buckets { get; } = [];
@@ -56,6 +67,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         _host = host;
         Thumbnails = new ThumbnailLoader(host.Indexer, host.Paths);
+        People = new PeopleViewModel(host, () => Dispatcher.UIThread.Post(RebuildSidebar));
+        host.Identity.Changed += () => Dispatcher.UIThread.Post(() =>
+        {
+            RebuildSidebar();
+            if (IsPersonScope && !ShowPersonFaces) _ = RunSearchAsync(keepSelection: true);
+            if (IsPersonScope && ShowPersonFaces && CurrentScope is { } p) People.LoadPerson(p.Id);
+            if (IsGroupsMode) People.LoadClusters();
+        });
         _searchDebounce = new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) =>
         {
             _searchDebounce!.Stop();
@@ -68,7 +87,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _refreshPending = false;
             RefreshSidebarCounts();
             // A text search is not repeated by itself: its results would jump around while the user looks at them.
-            if (string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText).Text))
+            if (string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text))
                 _ = RunSearchAsync(keepSelection: true);
         });
 
@@ -114,6 +133,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         foreach (var s in sources)
             SidebarItems.Add(new SidebarEntry(SidebarKind.Source, s.Id, s.Name, counts.GetValueOrDefault(s.Id).ToString("N0"), s.Root));
         IsLibraryEmpty = sources.Count == 0;
+        var persons = _host.People.ListPersons();
+        var groups = _host.People.UnnamedClusters().Count;
+        var suggestions = _host.People.SuggestionCount();
+        if (persons.Count > 0 || groups > 0 || suggestions > 0 || _host.PeopleModel != null)
+        {
+            SidebarItems.Add(new SidebarHeader("PEOPLE", "", SidebarKind.Person));
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Groups, 0, "Who is this?", groups.ToString("N0"), "Groups of faces nobody named yet"));
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Review, 0, "Review suggestions", suggestions.ToString("N0"),
+                "The analysis is not sure: confirm or reject, one key per answer"));
+            foreach (var p in persons)
+                SidebarItems.Add(new SidebarEntry(SidebarKind.Person, p.Id, p.Name, p.MediaCount.ToString("N0"), p.Name));
+        }
         SidebarItems.Add(new SidebarHeader("BUCKETS", "New bucket", SidebarKind.Bucket));
         Buckets.Clear();
         foreach (var b in _host.Buckets.List())
@@ -148,7 +179,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var same = _scope != null && _scope.Kind == entry.Kind && _scope.Id == entry.Id;
         _scope = entry;
         OnPropertyChanged(nameof(IsBucketScope));
+        OnPropertyChanged(nameof(IsPersonScope));
+        if (!same) ShowPersonFaces = false;
+        OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(IsGroupsMode));
+        OnPropertyChanged(nameof(IsReviewMode));
+        OnPropertyChanged(nameof(IsPeopleScreen));
         if (_starting || same) return;
+        if (entry.Kind == SidebarKind.Groups)
+        {
+            People.LoadClusters();
+            return;
+        }
+        if (entry.Kind == SidebarKind.Review)
+        {
+            People.LoadReview();
+            return;
+        }
         // A bucket opens whole and in its own order; a search left from before would hide part of it.
         if (entry.Kind == SidebarKind.Bucket && SearchText.Length > 0)
         {
@@ -170,6 +217,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         { Kind: SidebarKind.Source } e => new MediaFilter { SourceId = e.Id },
         { Kind: SidebarKind.Bucket } e => new MediaFilter { BucketId = e.Id },
+        { Kind: SidebarKind.Person } e => new MediaFilter { PersonIds = [e.Id] },
         _ => new MediaFilter(),
     };
 
@@ -195,6 +243,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void Rescan() => _host.Indexer.RequestScan();
+
+    partial void OnShowPersonFacesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsGridMode));
+        if (value && CurrentScope is { Kind: SidebarKind.Person } p) People.LoadPerson(p.Id);
+    }
+
+    public void RenamePerson(SidebarEntry entry, string name) => People.RenamePerson(entry.Id, name);
+
+    public void DeletePerson(SidebarEntry entry)
+    {
+        People.DeletePerson(entry.Id);
+        SelectedSidebarItem = SidebarItems.OfType<SidebarEntry>().First();
+    }
 
     public Bucket CreateBucket(string name)
     {
@@ -324,7 +386,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var cts = _searchCts = new CancellationTokenSource();
         var text = SearchText;
         var scope = ScopeFilter();
-        var hasText = !string.IsNullOrWhiteSpace(QueryParser.Parse(text).Text);
+        var hasText = !string.IsNullOrWhiteSpace(QueryParser.Parse(text, _host.Search.People).Text);
         if (hasText) ResultSummary = "Searching...";
         List<SearchHit> hits;
         try
@@ -417,6 +479,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PlayerRequested?.Invoke(CreatePlayer(Tiles.ToList(), index, autoPlay: false));
     }
 
+    /// <summary>Opens one item by id (from a face crop).</summary>
+    public void OpenMedia(long mediaId)
+    {
+        if (_host.Repo.Get(mediaId) is not { } item) return;
+        var tile = Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
+        PlayerRequested?.Invoke(CreatePlayer([tile], 0, autoPlay: false));
+    }
+
     /// <summary>Plays the selection when there is more than one selected item, otherwise the whole result.</summary>
     [RelayCommand]
     private void PlayAll() => StartSlideshow(shuffle: false);
@@ -456,25 +526,31 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private async Task LoadModelAsync()
     {
-        var model = ModelCatalog.Siglip2Base;
-        if (!_host.SceneModelInstalled)
+        var missing = ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)).ToList();
+        if (missing.Count > 0)
         {
-            ModelText = $"Search by description is off: the AI model is not downloaded yet ({model.TotalSize / 1048576} MB, once, then everything runs offline).";
+            ModelText = $"Some AI features are off: models not downloaded yet ({missing.Sum(m => m.TotalSize) / 1048576} MB, once, then everything runs offline).";
             CanDownloadModel = true;
-            return;
         }
-        ModelText = "Loading the AI model...";
+        if (missing.Count == ModelCatalog.All.Count) return;
+        ModelText = "Loading the AI models...";
         try
         {
-            await Task.Run(_host.TryLoadSceneModel);
-            ModelText = $"AI search ready ({_host.SceneModel!.Device})";
-            CanDownloadModel = false;
-            if (!string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText).Text))
+            var scene = await Task.Run(_host.TryLoadSceneModel);
+            var people = await Task.Run(_host.TryLoadPeopleModel);
+            var parts = new List<string>();
+            if (scene) parts.Add("search");
+            if (people) parts.Add("people");
+            var device = _host.SceneModel?.Device ?? _host.PeopleModel?.Device;
+            ModelText = $"AI ready: {string.Join(", ", parts)} ({device})" + (missing.Count > 0 ? ", more after the download" : "");
+            CanDownloadModel = missing.Count > 0;
+            if (people) RebuildSidebar();
+            if (!string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text))
                 await RunSearchAsync(keepSelection: false);
         }
         catch (Exception e)
         {
-            ModelText = "The AI model cannot start: " + e.Message;
+            ModelText = "The AI models cannot start: " + e.Message;
         }
     }
 
@@ -486,16 +562,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _downloadCts?.Cancel();
             return;
         }
-        var model = ModelCatalog.Siglip2Base;
         _downloadCts = new CancellationTokenSource();
         IsDownloadingModel = true;
         try
         {
-            await _host.Models.DownloadAsync(model, new Progress<(long Done, long Total)>(p =>
+            foreach (var model in ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)))
             {
-                DownloadProgress = 100.0 * p.Done / p.Total;
-                ModelText = $"Downloading the AI model: {p.Done / 1048576} / {p.Total / 1048576} MB";
-            }), _downloadCts.Token);
+                await _host.Models.DownloadAsync(model, new Progress<(long Done, long Total)>(p =>
+                {
+                    DownloadProgress = 100.0 * p.Done / p.Total;
+                    ModelText = $"Downloading {model.Title}: {p.Done / 1048576} / {p.Total / 1048576} MB";
+                }), _downloadCts.Token);
+            }
             await LoadModelAsync();
         }
         catch (OperationCanceledException)
