@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+        xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
+        x:Class="MediaLens.App.Views.PlayerWindow"
+        x:DataType="vm:PlayerViewModel"
+        Title="{Binding Title}"
+        Background="Black"
+        WindowState="FullScreen"
+        Width="1280" Height="800">
+
+    <Grid x:Name="Root" Background="Black" Cursor="None">
+        <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Uniform" IsVisible="{Binding !IsVideo}" />
+        <Image x:Name="VideoImage" Stretch="Uniform" IsVisible="{Binding IsVideo}" />
+        <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
+
+        <Border x:Name="Overlay" Classes="overlay" VerticalAlignment="Bottom" Opacity="0">
+            <Border.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.25" />
+                </Transitions>
+            </Border.Transitions>
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsVideo}">
+                    <Slider x:Name="SeekBar" Minimum="0" Maximum="{Binding VideoLength}" Value="{Binding VideoPosition, Mode=OneWay}"
+                            VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding VideoTimeText}" VerticalAlignment="Center" Margin="12,0,0,0"
+                               FontFeatures="tnum" />
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto,*">
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                        <Button Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
+                            <mi:MaterialIcon Kind="SkipPrevious" />
+                        </Button>
+                        <Button Command="{Binding TogglePlayCommand}" ToolTip.Tip="Pause / play (Space)">
+                            <mi:MaterialIcon Kind="PlayPause" />
+                        </Button>
+                        <Button Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
+                            <mi:MaterialIcon Kind="SkipNext" />
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,12,0" />
+                        <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
+                            <Panel>
+                                <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />
+                                <mi:MaterialIcon Kind="Basket" IsVisible="{Binding InBucket}" Foreground="{DynamicResource BucketBadgeBrush}" />
+                            </Panel>
+                        </Button>
+                        <Button Command="{Binding CloseCommand}" ToolTip.Tip="Close (Esc)">
+                            <mi:MaterialIcon Kind="Close" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

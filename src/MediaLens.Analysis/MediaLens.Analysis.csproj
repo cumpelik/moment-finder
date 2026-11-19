@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MediaLens.Analysis</RootNamespace>
+    <!-- Which ONNX Runtime build: Windows gets DirectML (any GPU), Linux can opt into CUDA with -p:OrtCuda=true,
+         everything else the default package (CPU; on macOS it contains CoreML). -->
+    <OrtTargetsWindows Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier.StartsWith('win'))</OrtTargetsWindows>
+    <OrtTargetsWindows Condition="'$(RuntimeIdentifier)' == ''">$([MSBuild]::IsOSPlatform('Windows'))</OrtTargetsWindows>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MediaLens.Core\MediaLens.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.1" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(OrtTargetsWindows)' == 'true'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OrtTargetsWindows)' != 'true' And '$(OrtCuda)' == 'true'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu.Linux" Version="1.24.4" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OrtTargetsWindows)' != 'true' And '$(OrtCuda)' != 'true'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(OrtTargetsWindows)' == 'true'">
+    <DefineConstants>$(DefineConstants);ORT_DIRECTML</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(OrtCuda)' == 'true'">
+    <DefineConstants>$(DefineConstants);ORT_CUDA</DefineConstants>
+  </PropertyGroup>
+
+</Project>

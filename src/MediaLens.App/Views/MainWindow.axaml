@@ -1,0 +1,196 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+        xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
+        xmlns:b="clr-namespace:MediaLens.Buckets;assembly=MediaLens.Core"
+        x:Class="MediaLens.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="MediaLens"
+        Width="1400" Height="900" MinWidth="800" MinHeight="500"
+        WindowStartupLocation="CenterScreen">
+
+    <DockPanel>
+        <!-- Status bar: background work and the AI model -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource ToolbarBackgroundBrush}"
+                BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+                <Button Grid.Column="0" Classes="icon" Command="{Binding TogglePauseCommand}"
+                        ToolTip.Tip="Pause / continue the background work">
+                    <Panel>
+                        <mi:MaterialIcon Kind="Pause" IsVisible="{Binding !IndexerPaused}" />
+                        <mi:MaterialIcon Kind="Play" IsVisible="{Binding IndexerPaused}" />
+                    </Panel>
+                </Button>
+                <TextBlock Grid.Column="1" Classes="muted small" Text="{Binding IndexerText}" VerticalAlignment="Center" Margin="4,0,10,0" />
+                <ProgressBar Grid.Column="2" Width="160" Value="{Binding IndexerProgress}" IsVisible="{Binding IndexerBusy}"
+                             VerticalAlignment="Center" />
+                <TextBlock Grid.Column="4" Classes="muted small" Text="{Binding ModelText}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" Margin="10,0" />
+                <Button Grid.Column="5" Command="{Binding DownloadModelCommand}" IsVisible="{Binding CanDownloadModel}">
+                    <Panel>
+                        <TextBlock Text="Download" IsVisible="{Binding !IsDownloadingModel}" />
+                        <TextBlock Text="Stop" IsVisible="{Binding IsDownloadingModel}" />
+                    </Panel>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Sidebar -->
+        <Border DockPanel.Dock="Left" Width="250" Background="{DynamicResource SidebarBackgroundBrush}"
+                BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0">
+            <ListBox x:Name="Sidebar" Classes="sidebar" ItemsSource="{Binding SidebarItems}"
+                     SelectedItem="{Binding SelectedSidebarItem}" Margin="0,8">
+                <ListBox.DataTemplates>
+                    <DataTemplate DataType="vm:SidebarHeader">
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+                            <TextBlock Classes="heading" Text="{Binding Title}" Margin="0" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Classes="icon" ToolTip.Tip="{Binding AddToolTip}" Click="OnHeaderAdd">
+                                <mi:MaterialIcon Kind="Plus" />
+                            </Button>
+                        </Grid>
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:SidebarEntry">
+                        <Grid ColumnDefinitions="Auto,*,Auto" Background="Transparent" ToolTip.Tip="{Binding ToolTip}">
+                            <Grid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Rename..." Click="OnRenameEntry" />
+                                    <MenuItem Header="Scan again" Click="OnRescanEntry" />
+                                    <MenuItem Header="Remove from the library (files stay)" Click="OnRemoveEntry" />
+                                </ContextMenu>
+                            </Grid.ContextMenu>
+                            <mi:MaterialIcon Kind="{Binding Icon}" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Count}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.DataTemplates>
+            </ListBox>
+        </Border>
+
+        <Grid RowDefinitions="Auto,Auto,*">
+            <!-- Toolbar -->
+            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" Padding="10,8"
+                    BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto">
+                    <TextBox x:Name="SearchBox" Grid.Column="0" Text="{Binding SearchText}" MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                             PlaceholderText="Search: skier, beach at sunset 2023, video birthday..." KeyDown="OnSearchKeyDown">
+                        <TextBox.InnerLeftContent>
+                            <mi:MaterialIcon Kind="Magnify" Margin="8,0,0,0" Classes="muted" />
+                        </TextBox.InnerLeftContent>
+                    </TextBox>
+                    <Button Grid.Column="1" Classes="toolbar" Command="{Binding PlayAllCommand}" Margin="12,0,0,0"
+                            ToolTip.Tip="Play all (P): the selection, or the whole result">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="PlayCircleOutline" />
+                            <TextBlock Text="Play all" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="2" Classes="toolbar" Command="{Binding ShuffleCommand}" ToolTip.Tip="Shuffle (S)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="ShuffleVariant" />
+                            <TextBlock Text="Shuffle" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="3" Classes="toolbar" ToolTip.Tip="Slideshow settings">
+                        <mi:MaterialIcon Kind="CogOutline" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Spacing="10" Width="260">
+                                    <TextBlock Text="Photo duration in a slideshow (seconds)" />
+                                    <NumericUpDown Value="{Binding SlideSeconds}" Minimum="1" Maximum="60" Increment="1" FormatString="0" />
+                                    <CheckBox IsChecked="{Binding VideoHighlightsOnly}">
+                                        <TextBlock TextWrapping="Wrap" Text="Videos found by a search: play only the matching part" />
+                                    </CheckBox>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                    <Rectangle Grid.Column="4" Width="1" Fill="{DynamicResource AppBorderBrush}" Margin="10,4" />
+                    <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6">
+                        <mi:MaterialIcon Kind="BasketOutline" Classes="muted" />
+                        <ComboBox ItemsSource="{Binding Buckets}" SelectedItem="{Binding ActiveBucket}" MinWidth="150"
+                                  PlaceholderText="Bucket" ToolTip.Tip="Where B puts the selected items">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate DataType="b:Bucket">
+                                    <TextBlock Text="{Binding Name}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Classes="toolbar" Command="{Binding AddSelectionToBucketCommand}" ToolTip.Tip="Add the selection to the bucket (B)">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <mi:MaterialIcon Kind="BasketPlusOutline" />
+                                <TextBlock Text="Add" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <Slider Grid.Column="6" Minimum="100" Maximum="360" Value="{Binding TileSize}" Width="110" Margin="12,0,0,0"
+                            VerticalAlignment="Center" ToolTip.Tip="Thumbnail size" />
+                </Grid>
+            </Border>
+
+            <!-- Result line; a bucket gets its own actions -->
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="12,8,12,4">
+                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
+                    <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
+                            ToolTip.Tip="Take the selection out of this bucket (Delete); the files stay">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="BasketMinusOutline" />
+                            <TextBlock Text="Remove from bucket" />
+                        </StackPanel>
+                    </Button>
+                    <Button Click="OnExportBucket" ToolTip.Tip="Copy the originals to a folder, numbered in the bucket order">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="FolderArrowRightOutline" />
+                            <TextBlock Text="Copy to folder..." />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Thumbnails; only the visible ones exist -->
+            <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
+                          Padding="10,4,10,10">
+                <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding Tiles}">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout MinItemWidth="180" MinItemHeight="180"
+                                           MinRowSpacing="6" MinColumnSpacing="6" ItemsStretch="Fill" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate DataType="vm:TileViewModel">
+                            <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
+                                <Grid>
+                                    <Image Source="{Binding Thumb}" Stretch="UniformToFill" />
+                                    <Border Classes="badge" IsVisible="{Binding IsVideo}"
+                                            HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                                        <StackPanel Orientation="Horizontal" Spacing="3">
+                                            <mi:MaterialIcon Kind="Play" Width="12" Height="12" Foreground="White" />
+                                            <TextBlock Text="{Binding DurationText}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border IsVisible="{Binding InBucket}" Background="{DynamicResource BucketBadgeBrush}"
+                                            CornerRadius="11" Width="22" Height="22" Margin="6"
+                                            HorizontalAlignment="Right" VerticalAlignment="Top" ToolTip.Tip="In the bucket">
+                                        <mi:MaterialIcon Kind="Basket" Width="13" Height="13" Foreground="Black" HorizontalAlignment="Center" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </ScrollViewer>
+
+            <!-- Empty library -->
+            <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" IsVisible="{Binding IsLibraryEmpty}">
+                <mi:MaterialIcon Kind="ImageSearchOutline" Width="56" Height="56" Classes="muted" />
+                <TextBlock Text="Add a folder with your photos and videos" FontSize="16" HorizontalAlignment="Center" />
+                <Button HorizontalAlignment="Center" Click="OnAddSource">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <mi:MaterialIcon Kind="FolderPlusOutline" />
+                        <TextBlock Text="Add folder..." />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

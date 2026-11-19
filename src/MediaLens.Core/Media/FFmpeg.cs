@@ -1,0 +1,216 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+
+namespace MediaLens.Media;
+
+/// <summary>
+/// ffmpeg / ffprobe as external processes. The installers ship them next to the application (tools/);
+/// a development build falls back to the PATH.
+/// </summary>
+public static class FFmpeg
+{
+    private static readonly Lazy<string?> FfmpegPath = new(() => Locate("ffmpeg"));
+    private static readonly Lazy<string?> FfprobePath = new(() => Locate("ffprobe"));
+
+    public static bool IsAvailable => FfmpegPath.Value != null && FfprobePath.Value != null;
+
+    private static string? Locate(string name)
+    {
+        var exe = OperatingSystem.IsWindows() ? name + ".exe" : name;
+        var dirs = new List<string?>
+        {
+            Environment.GetEnvironmentVariable("MEDIALENS_FFMPEG"),
+            Path.Combine(AppContext.BaseDirectory, "tools"),
+            AppContext.BaseDirectory,
+        };
+        dirs.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator));
+        if (OperatingSystem.IsMacOS())
+            dirs.AddRange(["/opt/homebrew/bin", "/usr/local/bin"]);
+        foreach (var dir in dirs)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            var path = Path.Combine(dir, exe);
+            if (File.Exists(path)) return path;
+        }
+        return null;
+    }
+
+    public sealed record ProbeResult(long? DurationMs, int? Width, int? Height, DateTime? CreationTime, double? Lat, double? Lon, string? Camera);
+
+    public static async Task<ProbeResult?> ProbeAsync(string file, CancellationToken ct = default)
+    {
+        if (FfprobePath.Value is not { } ffprobe) return null;
+        var (code, stdout, _) = await RunAsync(ffprobe,
+            ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", file], ct);
+        if (code != 0) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            var root = doc.RootElement;
+            long? duration = null;
+            DateTime? created = null;
+            string? location = null, make = null, model = null;
+            if (root.TryGetProperty("format", out var format))
+            {
+                if (format.TryGetProperty("duration", out var d) && double.TryParse(d.GetString(), CultureInfo.InvariantCulture, out var secs))
+                    duration = (long)(secs * 1000);
+                if (format.TryGetProperty("tags", out var tags))
+                {
+                    foreach (var tag in tags.EnumerateObject())
+                    {
+                        var value = tag.Value.GetString();
+                        switch (tag.Name.ToLowerInvariant())
+                        {
+                            case "com.apple.quicktime.creationdate":
+                                // Local time with offset (iPhone) - the wall clock is what EXIF photos have too.
+                                if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto))
+                                    created = dto.DateTime;
+                                break;
+                            case "creation_time" when created == null:
+                                // UTC; shown as the local time of this computer, which is right for most home videos.
+                                if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var utc))
+                                    created = utc.ToLocalTime();
+                                break;
+                            case "com.apple.quicktime.location.iso6709":
+                            case "location":
+                                location ??= value;
+                                break;
+                            case "com.apple.quicktime.make":
+                                make = value;
+                                break;
+                            case "com.apple.quicktime.model":
+                                model = value;
+                                break;
+                        }
+                    }
+                }
+            }
+
+            int? width = null, height = null;
+            if (root.TryGetProperty("streams", out var streams))
+            {
+                foreach (var s in streams.EnumerateArray())
+                {
+                    if (s.GetProperty("codec_type").GetString() != "video") continue;
+                    if (s.TryGetProperty("disposition", out var disp) && disp.TryGetProperty("attached_pic", out var ap) && ap.GetInt32() == 1)
+                        continue;
+                    width = s.TryGetProperty("width", out var w) ? w.GetInt32() : null;
+                    height = s.TryGetProperty("height", out var h) ? h.GetInt32() : null;
+                    if (IsRotatedSideways(s) && width != null)
+                        (width, height) = (height, width);
+                    break;
+                }
+            }
+
+            var (lat, lon) = ParseIso6709(location);
+            var camera = string.Join(' ', new[] { make, model }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            return new ProbeResult(duration, width, height, created, lat, lon, camera.Length > 0 ? camera : null);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsRotatedSideways(JsonElement stream)
+    {
+        if (stream.TryGetProperty("tags", out var tags) && tags.TryGetProperty("rotate", out var r) &&
+            int.TryParse(r.GetString(), out var deg))
+            return Math.Abs(deg) % 180 == 90;
+        if (stream.TryGetProperty("side_data_list", out var sdl))
+        {
+            foreach (var sd in sdl.EnumerateArray())
+            {
+                if (sd.TryGetProperty("rotation", out var rot) && rot.TryGetDouble(out var d))
+                    return Math.Abs((int)d) % 180 == 90;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>"+50.0755+014.4378+235.000/" -> (50.0755, 14.4378)</summary>
+    internal static (double?, double?) ParseIso6709(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return (null, null);
+        var parts = new List<string>();
+        var current = new StringBuilder();
+        foreach (var ch in s)
+        {
+            if ((ch == '+' || ch == '-') && current.Length > 0)
+            {
+                parts.Add(current.ToString());
+                current.Clear();
+            }
+            if (ch == '/') break;
+            current.Append(ch);
+        }
+        if (current.Length > 0) parts.Add(current.ToString());
+        if (parts.Count >= 2 &&
+            double.TryParse(parts[0], CultureInfo.InvariantCulture, out var lat) &&
+            double.TryParse(parts[1], CultureInfo.InvariantCulture, out var lon))
+            return (lat, lon);
+        return (null, null);
+    }
+
+    /// <summary>One frame scaled to fit maxSize, as JPEG. ffmpeg applies the rotation of phone videos itself.</summary>
+    public static async Task<bool> ExtractFrameAsync(string file, double atSeconds, string outJpeg, int maxSize, CancellationToken ct = default)
+    {
+        if (FfmpegPath.Value is not { } ffmpeg) return false;
+        Directory.CreateDirectory(Path.GetDirectoryName(outJpeg)!);
+        var (code, _, _) = await RunAsync(ffmpeg,
+        [
+            "-v", "error", "-y", "-ss", atSeconds.ToString("0.###", CultureInfo.InvariantCulture), "-i", file,
+            "-frames:v", "1", "-vf", $"scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease", "-q:v", "3", outJpeg,
+        ], ct);
+        return code == 0 && File.Exists(outJpeg);
+    }
+
+    /// <summary>
+    /// Frames every intervalSeconds (keyframes only - fast even for long videos), named 0001.jpg, 0002.jpg...
+    /// Frame n is at about (n-1) * intervalSeconds.
+    /// </summary>
+    public static async Task<string[]> ExtractFramesAsync(string file, double intervalSeconds, int maxFrames, string outDir, int maxSize, CancellationToken ct = default)
+    {
+        if (FfmpegPath.Value is not { } ffmpeg) return [];
+        Directory.CreateDirectory(outDir);
+        var fps = (1.0 / intervalSeconds).ToString("0.######", CultureInfo.InvariantCulture);
+        await RunAsync(ffmpeg,
+        [
+            "-v", "error", "-y", "-skip_frame", "nokey", "-i", file,
+            "-vf", $"fps={fps},scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease",
+            "-frames:v", maxFrames.ToString(CultureInfo.InvariantCulture), "-q:v", "3",
+            Path.Combine(outDir, "%04d.jpg"),
+        ], ct);
+        return Directory.GetFiles(outDir, "*.jpg").Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private static async Task<(int Code, string StdOut, string StdErr)> RunAsync(string exe, IEnumerable<string> args, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(exe)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException($"Cannot start {exe}");
+        p.StandardInput.Close();
+        var stdout = p.StandardOutput.ReadToEndAsync(ct);
+        var stderr = p.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await p.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { p.Kill(true); } catch (InvalidOperationException) { }
+            throw;
+        }
+        return (p.ExitCode, await stdout, await stderr);
+    }
+}
