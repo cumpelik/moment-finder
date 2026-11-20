@@ -60,8 +60,9 @@
             </Grid>
         </Border>
 
-        <!-- Sidebar -->
-        <Border DockPanel.Dock="Left" Width="250" Background="{DynamicResource SidebarBackgroundBrush}"
+        <!-- Sidebar | splitter | content; the sidebar can be hidden and its width is dragged -->
+        <Grid x:Name="MainSplit" ColumnDefinitions="250,Auto,*">
+        <Border Grid.Column="0" Background="{DynamicResource SidebarBackgroundBrush}" IsVisible="{Binding SidebarVisible}"
                 BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0">
             <ListBox x:Name="Sidebar" Classes="sidebar" ItemsSource="{Binding SidebarItems}"
                      SelectedItem="{Binding SelectedSidebarItem}" Margin="0,8">
@@ -92,13 +93,20 @@
             </ListBox>
         </Border>
 
-        <Grid RowDefinitions="Auto,Auto,*">
+        <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="4" ResizeDirection="Columns" Background="Transparent"
+                      IsVisible="{Binding SidebarVisible}" />
+
+        <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*">
             <!-- Toolbar -->
             <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" Padding="10,8"
                     BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                    <Grid Grid.Column="0" ColumnDefinitions="*,Auto" MaxWidth="760" HorizontalAlignment="Stretch">
-                    <TextBox x:Name="SearchBox" Text="{Binding SearchText}" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                    <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" MaxWidth="800" HorizontalAlignment="Stretch">
+                    <Button Grid.Column="0" Classes="toolbar" Command="{Binding ToggleSidebarCommand}" Margin="0,0,8,0" VerticalAlignment="Center"
+                            ToolTip.Tip="Show / hide the left panel">
+                        <mi:MaterialIcon Kind="DockLeft" />
+                    </Button>
+                    <TextBox x:Name="SearchBox" Grid.Column="1" Text="{Binding SearchText}" HorizontalAlignment="Stretch" VerticalAlignment="Center"
                              PlaceholderText="Search: skier, beach at sunset 2023, video birthday..." KeyDown="OnSearchKeyDown">
                         <TextBox.InnerLeftContent>
                             <mi:MaterialIcon Kind="Magnify" Margin="8,0,0,0" Classes="muted" />
@@ -106,7 +114,7 @@
                     </TextBox>
                     <!-- When: years, months of the year, or any days -->
                     <!-- A fixed width: the panel below must not move while months are clicked -->
-                    <Button Grid.Column="1" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <Button Grid.Column="2" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
                             Width="215" HorizontalContentAlignment="Left" ToolTip.Tip="Only photos and videos from a time span">
                         <DockPanel>
                             <mi:MaterialIcon Kind="CalendarMonthOutline" Margin="0,0,6,0" />
@@ -261,13 +269,21 @@
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
                     <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
                               ToolTip.Tip="Show the results in groups: by day, month, year or person" />
-                    <ToggleButton IsChecked="{Binding OpenInPanel}" VerticalAlignment="Center"
-                                  ToolTip.Tip="On: a click shows the photo or video in a panel under the thumbnails. Off: it opens full screen.">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <mi:MaterialIcon Kind="ViewSplitHorizontal" />
-                            <TextBlock Text="Show below" />
-                        </StackPanel>
-                    </ToggleButton>
+                    <!-- Where a clicked photo or video shows -->
+                    <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" Margin="6,0,0,0">
+                        <Button Classes="segment" Classes.selected="{Binding IsPreviewWindow}" Command="{Binding SetPreviewModeCommand}"
+                                CommandParameter="{x:Static vm:PreviewMode.Window}" ToolTip.Tip="A click opens the photo or video full screen">
+                            <mi:MaterialIcon Kind="Fullscreen" />
+                        </Button>
+                        <Button Classes="segment" Classes.selected="{Binding IsPreviewBelow}" Command="{Binding SetPreviewModeCommand}"
+                                CommandParameter="{x:Static vm:PreviewMode.Below}" ToolTip.Tip="A click shows the photo or video under the thumbnails">
+                            <mi:MaterialIcon Kind="DockBottom" />
+                        </Button>
+                        <Button Classes="segment" Classes.selected="{Binding IsPreviewRight}" Command="{Binding SetPreviewModeCommand}"
+                                CommandParameter="{x:Static vm:PreviewMode.Right}" ToolTip.Tip="A click shows the photo or video right of the thumbnails">
+                            <mi:MaterialIcon Kind="DockRight" />
+                        </Button>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
                     <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
@@ -288,7 +304,8 @@
             </StackPanel>
 
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->
-            <Grid x:Name="BrowseArea" Grid.Row="2" RowDefinitions="3*,Auto,0" IsVisible="{Binding IsGridMode}">
+            <!-- Thumbnails, and the viewer under or right of them; the code arranges the rows and columns by the mode -->
+            <Grid x:Name="BrowseArea" Grid.Row="2" RowDefinitions="*,Auto,0" ColumnDefinitions="*,Auto,0" IsVisible="{Binding IsGridMode}">
             <ScrollViewer x:Name="GridScroll" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10">
                 <Panel>
@@ -311,9 +328,9 @@
                 </Panel>
             </ScrollViewer>
             <!-- The panel under the thumbnails: the clicked photo or video -->
-            <GridSplitter Grid.Row="1" Height="6" ResizeDirection="Rows" Background="{DynamicResource AppBorderBrush}"
+            <GridSplitter x:Name="PreviewSplitter" Grid.Row="1" Height="6" ResizeDirection="Rows" Background="{DynamicResource AppBorderBrush}"
                           IsVisible="{Binding ShowPreviewPanel}" />
-            <Panel Grid.Row="2" Background="Black" IsVisible="{Binding ShowPreviewPanel}">
+            <Panel x:Name="PreviewHost" Grid.Row="2" Background="Black" IsVisible="{Binding ShowPreviewPanel}">
                 <TextBlock Text="Click a photo or video to see it here." Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 <!-- No inherited DataContext: its bindings are for a PlayerViewModel, set when something is shown -->
                 <views:PlayerView x:Name="Preview" IsVisible="False" DataContext="{x:Null}" />
@@ -452,6 +469,7 @@
                     </StackPanel>
                 </Button>
             </StackPanel>
+        </Grid>
         </Grid>
     </DockPanel>
 </Window>

@@ -46,6 +46,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>The choices of what the videos play; the view shows them only when there is more than "whole".</summary>
     public IReadOnlyList<MomentChoice> MomentChoices { get; }
     public bool HasMomentChoices => MomentChoices.Count > 1;
+    /// <summary>The choice is about videos: not shown with a photo.</summary>
+    public bool ShowMomentChoices => HasMomentChoices && IsVideo;
+    /// <summary>A video plays or the slideshow runs: the button shows pause, otherwise play.</summary>
+    [ObservableProperty] private bool _isRunning;
+    /// <summary>A message in the middle of the picture, e.g. that the person's moments are over.</summary>
+    [ObservableProperty] private string _notice = "";
     [ObservableProperty] private MomentChoice _momentChoice;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMuted))] private int _volume;
     public bool IsMuted => Volume == 0;
@@ -58,7 +64,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>"Greta: 2 / 3" while only the moments of a video play.</summary>
     [ObservableProperty] private string _momentText = "";
     [ObservableProperty] private Bitmap? _photo;
-    [ObservableProperty] private bool _isVideo;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowMomentChoices))] private bool _isVideo;
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string _detail = "";
     [ObservableProperty] private string _positionText = "";
@@ -124,6 +130,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
         _moment = 0;
         _insideMoment = false;
+        Notice = "";
         if (item.IsVideo)
         {
             Photo = null;
@@ -164,6 +171,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         else
         {
             IsVideo = false;
+            IsRunning = AutoPlay;
             MomentText = "";
             _positionTimer.Stop();
             _video?.Stop();
@@ -369,6 +377,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var time = _video.TimeMs;
         if (length > 0) VideoLength = length;
         if (time >= 0) VideoPosition = time;
+        IsRunning = _video.IsPlaying;
         VideoTimeText = $"{Format.Duration(Math.Max(0, time))} / {Format.Duration(Math.Max(0, length))}";
         if (ShowPeople && time / 500 != _peopleTimeBucket)
         {
@@ -392,7 +401,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             MomentText = MomentLabel();
         }
         else if (AutoPlay) Next();
-        else _video.Pause();
+        else
+        {
+            // Browsing: stop here, and say why the video stands still.
+            _video.Pause();
+            IsRunning = false;
+            Notice = MomentChoice.Kind == MomentKind.Person
+                ? $"{MomentChoice.Label.Replace("Only ", "")} is not in the rest of this video. Space plays on, the right arrow goes to the next one."
+                : "The matching part is over. Space plays on, the right arrow goes to the next one.";
+        }
     }
 
     /// <summary>The moments to play of the current video by the choice; null plays it whole.</summary>
@@ -504,9 +521,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (IsVideo && _video != null)
         {
             _video.TogglePause();
+            IsRunning = !IsRunning;
+            Notice = "";
             return;
         }
         AutoPlay = !AutoPlay;
+        IsRunning = AutoPlay;
         PositionText = PositionLabel();
         if (AutoPlay) _slideTimer.Start();
         else _slideTimer.Stop();

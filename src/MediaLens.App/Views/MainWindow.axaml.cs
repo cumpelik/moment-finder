@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MediaLens.App.ViewModels;
 
@@ -27,6 +28,11 @@ public partial class MainWindow : Window
         GroupRepeater.DoubleTapped += OnTileDoubleTapped;
         Preview.FullScreenRequested += OnPanelFullScreen;
         Preview.KeyboardWanted += () => GridScroll.Focus();
+        PreviewSplitter.DragCompleted += OnPreviewSplitterDragged;
+        SidebarSplitter.DragCompleted += (_, _) =>
+        {
+            if (_vm?.SidebarVisible == true) _vm.SaveSize("sidebar_width", MainSplit.ColumnDefinitions[0].ActualWidth);
+        };
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
     }
 
@@ -45,13 +51,16 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.ResultsReset += OnResultsReset;
         ApplyTileSize();
-        ApplyPreviewPanel();
+        ApplySidebar();
+        // After the first layout, so one row of thumbnails can be measured.
+        Avalonia.Threading.Dispatcher.UIThread.Post(ApplyPreviewPanel, DispatcherPriority.Loaded);
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.TileSize)) ApplyTileSize();
-        if (e.PropertyName == nameof(MainViewModel.ShowPreviewPanel)) ApplyPreviewPanel();
+        if (e.PropertyName is nameof(MainViewModel.ShowPreviewPanel) or nameof(MainViewModel.PreviewMode)) ApplyPreviewPanel();
+        if (e.PropertyName == nameof(MainViewModel.SidebarVisible)) ApplySidebar();
     }
 
     private void OnResultsReset()
@@ -317,14 +326,83 @@ public partial class MainWindow : Window
         BringIntoView(tile);
     }
 
-    /// <summary>The panel takes the lower part of the browsing area; the splitter between them moves.</summary>
+    /// <summary>
+    /// Below: one row of thumbnails, the viewer takes the rest. Right: one column of thumbnails. The splitter
+    /// changes it and the size the user dragged is kept.
+    /// </summary>
     private void ApplyPreviewPanel()
     {
-        var show = _vm?.ShowPreviewPanel == true;
-        BrowseArea.RowDefinitions[0].Height = new GridLength(show ? 1 : 3, GridUnitType.Star);
-        BrowseArea.RowDefinitions[2].Height = show ? new GridLength(1.4, GridUnitType.Star) : new GridLength(0);
-        if (!show) ClosePanelPlayer();
-        else if (_vm?.AnchorTile is { } tile) ShowInPanel(tile);
+        if (_vm == null) return;
+        var mode = _vm.ShowPreviewPanel ? _vm.PreviewMode : PreviewMode.Window;
+        var rows = BrowseArea.RowDefinitions;
+        var cols = BrowseArea.ColumnDefinitions;
+        var star = new GridLength(1, GridUnitType.Star);
+        var none = new GridLength(0);
+        switch (mode)
+        {
+            case PreviewMode.Below:
+                rows[0].Height = new GridLength(_vm.SavedSize("preview_below_size") ?? OneRowHeight());
+                rows[2].Height = star;
+                cols[0].Width = star;
+                cols[2].Width = none;
+                Place(PreviewSplitter, 1, 0);
+                Place(PreviewHost, 2, 0);
+                PreviewSplitter.ResizeDirection = GridResizeDirection.Rows;
+                (PreviewSplitter.Width, PreviewSplitter.Height) = (double.NaN, 6);
+                break;
+            case PreviewMode.Right:
+                cols[0].Width = new GridLength(_vm.SavedSize("preview_right_size") ?? OneColumnWidth());
+                cols[2].Width = star;
+                rows[0].Height = star;
+                rows[2].Height = none;
+                Place(PreviewSplitter, 0, 1);
+                Place(PreviewHost, 0, 2);
+                PreviewSplitter.ResizeDirection = GridResizeDirection.Columns;
+                (PreviewSplitter.Width, PreviewSplitter.Height) = (6, double.NaN);
+                break;
+            default:
+                rows[0].Height = star;
+                rows[2].Height = none;
+                cols[0].Width = star;
+                cols[2].Width = none;
+                ClosePanelPlayer();
+                return;
+        }
+        if (_vm.AnchorTile is { } tile)
+        {
+            ShowInPanel(tile);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => BringIntoView(tile), DispatcherPriority.Background);
+        }
+    }
+
+    private static void Place(Control c, int row, int column)
+    {
+        Grid.SetRow(c, row);
+        Grid.SetColumn(c, column);
+    }
+
+    /// <summary>The height of one row of thumbnails as laid out now (with a group title when grouped).</summary>
+    private double OneRowHeight()
+    {
+        var tile = Repeater.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("tile"))?.Bounds.Height
+                   ?? GroupRepeater.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("tile"))?.Bounds.Height;
+        var height = (tile is > 0 ? tile.Value : _vm!.TileSize) + GridScroll.Padding.Top + GridScroll.Padding.Bottom + 4;
+        return _vm!.IsGrouped ? height + 44 : height;
+    }
+
+    private double OneColumnWidth() => _vm!.TileSize + GridScroll.Padding.Left + GridScroll.Padding.Right + 16;
+
+    private void OnPreviewSplitterDragged(object? sender, VectorEventArgs e)
+    {
+        if (_vm == null) return;
+        if (_vm.PreviewMode == PreviewMode.Below) _vm.SaveSize("preview_below_size", BrowseArea.RowDefinitions[0].ActualHeight);
+        if (_vm.PreviewMode == PreviewMode.Right) _vm.SaveSize("preview_right_size", BrowseArea.ColumnDefinitions[0].ActualWidth);
+    }
+
+    private void ApplySidebar()
+    {
+        if (_vm == null) return;
+        MainSplit.ColumnDefinitions[0].Width = _vm.SidebarVisible ? new GridLength(_vm.SavedSize("sidebar_width") ?? 250) : new GridLength(0);
     }
 
     /// <summary>The panel's full screen button: the same item in the full screen viewer.</summary>

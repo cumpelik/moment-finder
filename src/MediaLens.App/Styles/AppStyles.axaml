@@ -65,6 +65,16 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
+    <!-- One of a few buttons of which one is on (where the viewer shows) -->
+    <Style Selector="Button.segment">
+        <Setter Property="Padding" Value="8,5" />
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.segment.selected /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
     <!-- A toolbar button whose filter is on -->
     <Style Selector="Button.toolbar.active">
         <Setter Property="Foreground" Value="{DynamicResource SelectionBrush}" />

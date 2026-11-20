@@ -10,6 +10,8 @@ namespace MediaLens.App.ViewModels;
 
 public enum GroupMode { None, Day, Month, Year, Person }
 
+public enum PreviewMode { Window, Below, Right }
+
 public sealed record GroupOption(GroupMode Mode, string Label)
 {
     public override string ToString() => Label;

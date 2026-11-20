@@ -105,7 +105,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (int.TryParse(host.Db.GetSetting("slide_seconds"), CultureInfo.InvariantCulture, out var s)) _slideSeconds = s;
         // Videos found by a person or a description start on those moments unless the user chose whole videos.
         _videoHighlightsOnly = host.Db.GetSetting("video_highlights") != "0";
-        _openInPanel = host.Db.GetSetting("open_in_panel") == "1";
+        _previewMode = host.Db.GetSetting("open_in") switch
+        {
+            "below" => PreviewMode.Below,
+            "right" => PreviewMode.Right,
+            _ => host.Db.GetSetting("open_in_panel") == "1" ? PreviewMode.Below : PreviewMode.Window,
+        };
+        _sidebarVisible = host.Db.GetSetting("sidebar_hidden") != "1";
         if (double.TryParse(host.Db.GetSetting("tile_size"), CultureInfo.InvariantCulture, out var ts)) _tileSize = ts;
         LoadBrowseSettings();
 
@@ -609,14 +615,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The viewer remembers whether the user wants whole videos or only the found moments.</summary>
     public void RememberMoments(bool onlyMoments) => VideoHighlightsOnly = onlyMoments;
 
-    /// <summary>Photos and videos open in a panel under the thumbnails instead of a full screen window.</summary>
-    [ObservableProperty] private bool _openInPanel;
+    /// <summary>Where a clicked photo or video shows: full screen, or a panel under or right of the thumbnails.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(OpenInPanel), nameof(ShowPreviewPanel), nameof(IsPreviewWindow), nameof(IsPreviewBelow), nameof(IsPreviewRight))]
+    private PreviewMode _previewMode;
 
-    partial void OnOpenInPanelChanged(bool value)
-    {
-        _host.Db.SetSetting("open_in_panel", value ? "1" : "0");
-        OnPropertyChanged(nameof(ShowPreviewPanel));
-    }
+    public bool OpenInPanel => PreviewMode != PreviewMode.Window;
+    public bool IsPreviewWindow => PreviewMode == PreviewMode.Window;
+    public bool IsPreviewBelow => PreviewMode == PreviewMode.Below;
+    public bool IsPreviewRight => PreviewMode == PreviewMode.Right;
+
+    partial void OnPreviewModeChanged(PreviewMode value) => _host.Db.SetSetting("open_in", value.ToString().ToLowerInvariant());
+
+    [RelayCommand]
+    private void SetPreviewMode(PreviewMode mode) => PreviewMode = mode;
+
+    /// <summary>The left panel can be hidden for more room; its width is the user's.</summary>
+    [ObservableProperty] private bool _sidebarVisible;
+
+    partial void OnSidebarVisibleChanged(bool value) => _host.Db.SetSetting("sidebar_hidden", value ? "0" : "1");
+
+    [RelayCommand]
+    private void ToggleSidebar() => SidebarVisible = !SidebarVisible;
+
+    /// <summary>Sizes the user dragged (panels, sidebar), kept for the next start.</summary>
+    public double? SavedSize(string key) =>
+        double.TryParse(_host.Db.GetSetting(key), CultureInfo.InvariantCulture, out var v) && v > 0 ? v : null;
+
+    public void SaveSize(string key, double value) => _host.Db.SetSetting(key, value.ToString("0", CultureInfo.InvariantCulture));
 
     /// <summary>The panel shows this item of the results; arrows and clicks in the grid move it.</summary>
     public PlayerViewModel CreatePreview(int index) => CreatePlayer(Tiles.ToList(), index, autoPlay: false);

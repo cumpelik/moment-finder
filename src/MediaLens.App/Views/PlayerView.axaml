@@ -18,6 +18,11 @@
                 Background="#CC000000" IsVisible="{Binding ShowPeople}" IsHitTestVisible="False">
             <TextBlock Text="{Binding PeopleHint}" Foreground="White" FontSize="15" />
         </Border>
+        <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="18,12" CornerRadius="8" MaxWidth="560"
+                Background="#CC000000" IsHitTestVisible="False"
+                IsVisible="{Binding Notice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding Notice}" Foreground="White" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" />
+        </Border>
         <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                    Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
 
@@ -46,14 +51,17 @@
                         <Button Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
                             <mi:MaterialIcon Kind="SkipPrevious" />
                         </Button>
-                        <Button Command="{Binding TogglePlayCommand}" ToolTip.Tip="Pause / play (Space)">
-                            <mi:MaterialIcon Kind="PlayPause" />
+                        <Button Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / pause; with photos a slideshow (Space)">
+                            <Panel>
+                                <mi:MaterialIcon Kind="Play" IsVisible="{Binding !IsRunning}" />
+                                <mi:MaterialIcon Kind="Pause" IsVisible="{Binding IsRunning}" />
+                            </Panel>
                         </Button>
                         <Button Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
                             <mi:MaterialIcon Kind="SkipNext" />
                         </Button>
                         <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="6,0,12,0" />
-                        <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding HasMomentChoices}"
+                        <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding ShowMomentChoices}"
                                   VerticalAlignment="Center" MinWidth="150" Margin="0,0,4,0" Focusable="False"
                                   ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
                         <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,8,0">
