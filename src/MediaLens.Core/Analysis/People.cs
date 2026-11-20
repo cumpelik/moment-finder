@@ -39,6 +39,11 @@ public sealed class DetectedObject
     /// <summary>L2 normalized, 512 values (ArcFace for faces, OSNet re-identification for bodies).</summary>
     public float[] Embedding { get; init; } = [];
     public RgbImage? Crop { get; init; }
+    /// <summary>
+    /// Found with low confidence (a person lying in the snow, half hidden): in a video only kept when it continues
+    /// a person seen before, never a person of its own.
+    /// </summary>
+    public bool Weak { get; init; }
 }
 
 /// <summary>Faces and people in an image: the input of the identity matching.</summary>
@@ -47,5 +52,6 @@ public interface IPeopleModel
     /// <summary>Changes when the models change, so stored results are computed again.</summary>
     string ModelId { get; }
     string Device { get; }
-    IReadOnlyList<DetectedObject> Analyze(RgbImage image);
+    /// <param name="includeWeak">Also people found with low confidence (Weak), for following people through a video.</param>
+    IReadOnlyList<DetectedObject> Analyze(RgbImage image, bool includeWeak = false);
 }

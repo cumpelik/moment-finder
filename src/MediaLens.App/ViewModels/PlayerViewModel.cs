@@ -55,6 +55,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _notice = "";
     /// <summary>The photo is being decoded or the video has not shown its first frame: the view says so.</summary>
     [ObservableProperty] private bool _isLoading;
+    /// <summary>The current video shows its own picture (not the previous video's last frame while it starts).</summary>
+    [ObservableProperty] private bool _videoReady;
     /// <summary>The first video waits on its first frame (opened from a person's card).</summary>
     public bool PauseOnOpen { get; set; }
     private readonly DispatcherTimer _loadingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -156,6 +158,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var item = entry.Item;
         Error = null;
         BeginLoading();
+        // The previous video's last frame must not stand under the new video's boxes.
+        VideoReady = false;
         Title = item.FileName;
         Detail = $"{item.Taken:d. M. yyyy H:mm}" + (item.Camera is { } c ? $"  ·  {c}" : "");
         PositionText = PositionLabel();
@@ -187,7 +191,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 _video = new VideoPlayer { Volume = Volume, Rate = (float)Rate };
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
-                _video.Started += EndLoading;
+                _video.Started += () =>
+                {
+                    VideoReady = true;
+                    EndLoading();
+                    PeopleChanged?.Invoke();
+                };
             }
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
             // Only someone's moments and they are not in this video: on to the next one.
@@ -327,7 +336,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>Boxes to draw now, in content pixels: one per person.</summary>
     public List<PeopleBox> PeopleBoxes()
     {
-        if (!ShowPeople) return [];
+        if (!ShowPeople || IsVideo && !VideoReady) return [];
         if (!IsVideo)
         {
             // A face on a body is that person already: only the body gets a box.
@@ -346,15 +355,39 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (now > lastFrame) now = lastFrame;
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         var boxes = new List<PeopleBox>();
+        // Who each track is: a confirmed detection first, then any assigned, then a suggestion.
+        var tracks = new List<(List<People.TrackBox> Path, People.DetectionRow Who)>();
         foreach (var (track, path) in _paths)
         {
-            if (Where(path, now, interval) is not { } b) continue;
-            // The name of the track: a confirmed detection first, then any assigned, then a suggestion.
             var dets = _detections.Where(d => d.Track == track).ToList();
             if (dets.Count == 0) continue;
             var who = dets.OrderByDescending(d => d.Confirmed).ThenByDescending(d => d.PersonId != null).ThenByDescending(d => d.SuggestPersonId != null)
                 .ThenByDescending(d => d.Kind == Analysis.DetectionKind.Body).ThenByDescending(d => d.Quality).First();
             if (who.PersonId is { } p && _hidden.Contains(p)) continue;
+            tracks.Add((path, who));
+        }
+        // One named person in several tracks one after another (lost while falling, found again): one box that
+        // goes from where the person was last seen to where they are found again.
+        var bridge = Math.Max(2 * interval, Math.Min(4 * interval, 4000));
+        foreach (var person in tracks.Where(t => t.Who.PersonId != null).GroupBy(t => t.Who.PersonId!.Value))
+        {
+            var parts = person.OrderBy(t => t.Path[0].TimeMs).ToList();
+            var seen = parts.Select(t => (t.Who, At: Where(t.Path, now, interval))).FirstOrDefault(t => t.At != null);
+            if (seen.At is { } inside)
+            {
+                boxes.Add(Box(seen.Who, inside.X, inside.Y, inside.W, inside.H, null));
+                continue;
+            }
+            var (before, after) = (parts.LastOrDefault(t => t.Path[^1].TimeMs <= now), parts.FirstOrDefault(t => t.Path[0].TimeMs > now));
+            if (before.Path == null || after.Path == null) continue;
+            var (p0, p1) = (before.Path[^1], after.Path[0]);
+            if (p1.TimeMs - p0.TimeMs > bridge || now < p0.TimeMs) continue;
+            var t = (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs);
+            boxes.Add(Box(before.Who, p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t, null));
+        }
+        foreach (var (path, who) in tracks.Where(t => t.Who.PersonId == null))
+        {
+            if (Where(path, now, interval) is not { } b) continue;
             boxes.Add(Box(who, b.X, b.Y, b.W, b.H, null));
         }
         return boxes;

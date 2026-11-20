@@ -144,6 +144,10 @@ public sealed class VideoPlayer : IDisposable
         var generation = ++_requested;
         Run(() =>
         {
+            // Stopped first: frames of the previous video still on their way would count as the new one starting
+            // (a wrong picture under the new boxes, and the pause meant for the new first frame hitting nothing).
+            if (_player.IsPlaying || _player.State is VLCState.Paused or VLCState.Ended or VLCState.Opening or VLCState.Buffering)
+                _player.Stop();
             _active = generation;
             _player.Play(media);
             _player.SetRate(_rate);

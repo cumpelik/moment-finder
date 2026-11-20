@@ -96,11 +96,19 @@ public sealed class PeopleAnalyzer
                 ct.ThrowIfCancellationRequested();
                 var n = int.Parse(Path.GetFileNameWithoutExtension(frame), CultureInfo.InvariantCulture) - 1;
                 var image = await Task.Run(() => RgbImage.Load(frame, FrameSize), ct);
-                var found = await Task.Run(() => _model.Analyze(image), ct);
+                var found = await Task.Run(() => _model.Analyze(image, includeWeak: true), ct);
                 perFrame.Add(((int)(n * interval * 1000), image, found));
             }
 
             var tracks = VideoTracker.Track(perFrame.Select(f => f.Found).ToList());
+            // Weak detections that continue nobody are dropped (a shadow, a snow cannon at low confidence).
+            for (var f = 0; f < perFrame.Count; f++)
+            {
+                var keep = Enumerable.Range(0, perFrame[f].Found.Count).Where(i => !perFrame[f].Found[i].Weak || tracks[f][i] != 0).ToList();
+                if (keep.Count == perFrame[f].Found.Count) continue;
+                perFrame[f] = (perFrame[f].TimeMs, perFrame[f].Image, keep.Select(i => perFrame[f].Found[i]).ToList());
+                tracks[f] = keep.Select(i => tracks[f][i]).ToArray();
+            }
             var all = new List<(NewDetection Det, RgbImage? Crop, int Frame)>();
             for (var f = 0; f < perFrame.Count; f++)
             {
@@ -195,12 +203,14 @@ public static class VideoTracker
                 for (var i = 0; i < found.Count; i++)
                 {
                     if (found[i].Kind != kind) continue;
+                    if (found[i].Weak) continue;
                     foreach (var t in tracks.Where(t => t.Kind == kind && f - t.LastFrame <= 3))
                     {
                         var sim = TensorPrimitives.Dot(found[i].Embedding, t.Embedding);
                         var iou = found[i].Box.Iou(t.Box);
                         var min = kind == DetectionKind.Body ? 0.55f : 0.4f;
-                        if (sim < min && iou < 0.3f) continue;
+                        // Close to where the person was: a changed pose (a fall) may look rather different.
+                        if (sim < min && iou < 0.3f && !(sim >= min - 0.15f && Near(found[i].Box, t.Box))) continue;
                         // A person does not shrink to a third between two frames; a distant passer-by does not join.
                         var size = MathF.Sqrt(found[i].Box.W * found[i].Box.H / MathF.Max(1, t.Box.W * t.Box.H));
                         if ((size < 0.5f || size > 2f) && sim < 0.75f) continue;
@@ -215,9 +225,31 @@ public static class VideoTracker
                     usedTracks.Add(track);
                     Update(track, found[det], f);
                 }
+                // Weak detections only continue a person not found otherwise in this frame, where they were.
+                var weak = new List<(float Score, int Det, ActiveTrack Track)>();
                 for (var i = 0; i < found.Count; i++)
                 {
-                    if (found[i].Kind != kind || ids[i] != 0) continue;
+                    if (found[i].Kind != kind || !found[i].Weak) continue;
+                    foreach (var t in tracks.Where(t => t.Kind == kind && f - t.LastFrame <= 3 && !usedTracks.Contains(t)))
+                    {
+                        var sim = TensorPrimitives.Dot(found[i].Embedding, t.Embedding);
+                        var iou = found[i].Box.Iou(t.Box);
+                        if (iou < 0.1f && !(sim >= 0.45f && Near(found[i].Box, t.Box))) continue;
+                        weak.Add((sim + 0.5f * iou, i, t));
+                    }
+                }
+                foreach (var (_, det, track) in weak.OrderByDescending(c => c.Score))
+                {
+                    if (ids[det] != 0 || usedTracks.Contains(track)) continue;
+                    ids[det] = track.Id;
+                    usedTracks.Add(track);
+                    // The box follows; the appearance of a weak view does not change the person's.
+                    track.Box = found[det].Box;
+                    track.LastFrame = f;
+                }
+                for (var i = 0; i < found.Count; i++)
+                {
+                    if (found[i].Kind != kind || ids[i] != 0 || found[i].Weak) continue;
                     var t = new ActiveTrack { Id = next++, Kind = kind };
                     Update(t, found[i], f);
                     t.Embedding = (float[])found[i].Embedding.Clone();
@@ -228,6 +260,15 @@ public static class VideoTracker
             result.Add(ids);
         }
         return result;
+    }
+
+    /// <summary>The centers within the larger side of the earlier box: the same place, give or take a fall.</summary>
+    private static bool Near(Box a, Box b)
+    {
+        var dx = a.CenterX - b.CenterX;
+        var dy = a.CenterY - b.CenterY;
+        var reach = MathF.Max(MathF.Max(b.W, b.H), MathF.Max(a.W, a.H));
+        return dx * dx + dy * dy <= reach * reach;
     }
 
     private static void Update(ActiveTrack t, DetectedObject d, int frame)

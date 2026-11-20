@@ -90,6 +90,27 @@ public class PeopleTests
         Assert.All(groups, g => Assert.Equal(2, g.Media));
     }
 
+    /// <summary>A skier falls: lying, the detector is unsure and the look changes, but it is the same track.</summary>
+    [Fact]
+    public void TrackerFollowsAFall()
+    {
+        DetectedObject B(int who, float x, float y, float w, float h, bool weak = false, float noise = 0.1f) => new()
+        {
+            Kind = DetectionKind.Body, Box = new Box(x, y, w, h), Score = weak ? 0.25f : 0.9f, Quality = 0.9f,
+            Embedding = Emb(who, noise), Weak = weak,
+        };
+        var tracks = VideoTracker.Track([
+            [B(1, 100, 50, 50, 120)],
+            [B(1, 110, 120, 120, 50, weak: true, noise: 1.2f)], // lying, low confidence, looks different
+            [],                                                 // not found at all
+            [B(1, 130, 60, 50, 120)],                           // up again
+            [B(7, 600, 50, 50, 120, weak: true)],               // a weak shape elsewhere starts nobody
+        ]);
+        Assert.Equal(tracks[0][0], tracks[1][0]);
+        Assert.Equal(tracks[0][0], tracks[3][0]);
+        Assert.Equal(0, tracks[4][0]);
+    }
+
     /// <summary>Skiers without a face: one card per person and day, not per video track; naming the card names all of it.</summary>
     [Fact]
     public async Task FiguresWithoutFaceAreOfferedAsOnePersonPerDay()

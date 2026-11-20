@@ -30,7 +30,11 @@ public sealed class PeopleModel : IPeopleModel, IDisposable
         _bodyEmbedder = new BodyEmbedder(OrtSessions.Create(Path.Combine(reidDir, "osnet_ain_x1_0_msmt17.onnx"), true).Session);
     }
 
-    public IReadOnlyList<DetectedObject> Analyze(RgbImage image)
+    /// <summary>Below this a person is only weak evidence (see DetectedObject.Weak).</summary>
+    private const float StrongScore = 0.45f;
+    private const float WeakScore = 0.15f;
+
+    public IReadOnlyList<DetectedObject> Analyze(RgbImage image, bool includeWeak = false)
     {
         lock (_lock)
         {
@@ -51,7 +55,7 @@ public sealed class PeopleModel : IPeopleModel, IDisposable
                 });
             }
 
-            var bodies = _bodies.Detect(image).Where(b => b.Box.H >= MinBodyHeight).ToList();
+            var bodies = _bodies.Detect(image, includeWeak ? WeakScore : StrongScore).Where(b => b.Box.H >= MinBodyHeight).ToList();
             var crops = bodies.Select(b =>
             {
                 // A little margin, so arms and skis at the edge of the box stay in.
@@ -71,6 +75,7 @@ public sealed class PeopleModel : IPeopleModel, IDisposable
                     Quality = b.Score * Math.Min(1f, b.Box.H / 200f) * (TouchesEdge(b.Box, image) ? 0.6f : 1f),
                     Embedding = embeddings[i],
                     Crop = crops[i],
+                    Weak = b.Score < StrongScore,
                 });
             }
             return result;

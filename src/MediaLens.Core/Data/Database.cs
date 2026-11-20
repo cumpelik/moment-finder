@@ -174,6 +174,8 @@ public sealed class Database
         UPDATE media SET analysis_version=2 WHERE kind=1 AND analysis_version=1;
         UPDATE media SET people_version=4 WHERE kind=1 AND people_version=3;
         """,
+        // People analysis 5 changed only videos.
+        "UPDATE media SET people_version=5 WHERE kind=1 AND people_version=4;",
     ];
 
     /// <summary>

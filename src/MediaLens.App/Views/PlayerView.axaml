@@ -20,7 +20,7 @@
         <Viewbox Stretch="Uniform">
             <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
                 <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !IsVideo}" />
-                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding IsVideo}" />
+                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding VideoReady}" />
                 <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
             </Panel>
         </Viewbox>

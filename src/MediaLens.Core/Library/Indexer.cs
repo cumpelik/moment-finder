@@ -28,8 +28,9 @@ public sealed class Indexer : IDisposable
     /// <summary>
     /// 2: a video track keeps its first and last detection. 3: the path of every track (track_box).
     /// 4: video frames at their real times (before, half an interval later than stored).
+    /// 5: tracks continue through low confidence views (a fall) and changed poses.
     /// </summary>
-    public const int PeopleVersion = 4;
+    public const int PeopleVersion = 5;
 
     private readonly AppPaths _paths;
     private readonly MediaRepository _repo;
