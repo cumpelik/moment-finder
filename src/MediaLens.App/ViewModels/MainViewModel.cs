@@ -37,6 +37,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<object> SidebarItems { get; } = [];
     public ObservableCollection<Bucket> Buckets { get; } = [];
+    public bool HasBuckets => Buckets.Count > 0;
 
     [ObservableProperty] private object? _selectedSidebarItem;
     [ObservableProperty] private ObservableCollection<TileViewModel> _tiles = [];
@@ -54,6 +55,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _canDownloadModel;
     [ObservableProperty] private bool _isDownloadingModel;
     [ObservableProperty] private double _downloadProgress;
+    /// <summary>The invitation to download the models, shown above the results until they are installed.</summary>
+    [ObservableProperty] private string _aiSetupText = "";
 
     [ObservableProperty] private string _mirrorText = "";
     [ObservableProperty] private int _slideSeconds = 5;
@@ -157,6 +160,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         var restored = selected == null ? null : SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == selected.Kind && e.Id == selected.Id);
         ActiveBucket = activeId is { } id ? Buckets.FirstOrDefault(b => b.Id == id) : null;
+        OnPropertyChanged(nameof(HasBuckets));
         _rebuilding = false;
         // A removed scope falls back to the whole library (and searches again).
         SelectedSidebarItem = restored ?? SidebarItems.OfType<SidebarEntry>().First();
@@ -449,9 +453,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var text = Format.Count(count, "item", "items");
         if (hasText && !_host.Search.CanSearchText)
-            text += " (search by description needs the AI model, see below)";
+            text += " with these words in the file name. To search by what is in the picture, download the AI models (above).";
         else if (hasText)
+        {
             text += " best matches";
+            var stats = _host.Repo.Stats(Indexer.AnalysisVersion);
+            if (stats.Analyzed < stats.Total)
+                text += $" (the AI has looked at {stats.Analyzed:N0} of {stats.Total:N0} so far, search again later for more)";
+        }
         ResultSummary = text;
     }
 
@@ -560,7 +569,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var missing = ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)).ToList();
         if (missing.Count > 0)
         {
-            ModelText = $"Some AI features are off: models not downloaded yet ({missing.Sum(m => m.TotalSize) / 1048576} MB, once, then everything runs offline).";
+            AiSetupText = $"Search by what is in the picture (skier, beach at sunset, birthday cake) and recognize people across the years. " +
+                $"The AI models are a one-time download of {missing.Sum(m => m.TotalSize) / 1048576} MB, then everything runs offline on this computer.";
+            ModelText = "";
             CanDownloadModel = true;
         }
         if (missing.Count == ModelCatalog.All.Count) return;
@@ -585,7 +596,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    [RelayCommand]
+    /// <summary>The same button stops a running download, so the command must run while it runs.</summary>
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task DownloadModel()
     {
         if (IsDownloadingModel)
@@ -597,13 +609,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsDownloadingModel = true;
         try
         {
-            foreach (var model in ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)))
+            var missing = ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)).ToList();
+            var total = missing.Sum(m => m.TotalSize);
+            long before = 0;
+            foreach (var model in missing)
             {
                 await _host.Models.DownloadAsync(model, new Progress<(long Done, long Total)>(p =>
                 {
-                    DownloadProgress = 100.0 * p.Done / p.Total;
-                    ModelText = $"Downloading {model.Title}: {p.Done / 1048576} / {p.Total / 1048576} MB";
+                    DownloadProgress = 100.0 * (before + p.Done) / total;
+                    ModelText = $"Downloading {model.Title}: {(before + p.Done) / 1048576} / {total / 1048576} MB";
                 }), _downloadCts.Token);
+                before += model.TotalSize;
             }
             await LoadModelAsync();
         }

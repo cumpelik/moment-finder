@@ -79,14 +79,16 @@ public class LibraryTests
     public async Task SearchWithoutModelFiltersByKindAndScope()
     {
         using var lib = new TestLibrary();
-        lib.AddPhoto("a.jpg");
-        lib.AddPhoto("b.jpg");
+        lib.AddPhoto("Pláž 2024/a.jpg");
+        lib.AddPhoto("b_lyze.jpg");
         await lib.ScanAsync(lib.AddSource());
         var search = new SearchService(lib.Repo);
         Assert.Equal(2, search.Search("fotky", new MediaFilter()).Count);
         Assert.Empty(search.Search("video", new MediaFilter()));
-        // A phrase without the model: the filters still apply, the text is ignored.
-        Assert.Equal(2, search.Search("pes na pláži", new MediaFilter()).Count);
+        // A phrase without the model: the words match file and folder names, without diacritics.
+        Assert.Empty(search.Search("pes na pláži", new MediaFilter()));
+        Assert.Equal("a.jpg", search.Search("plaz", new MediaFilter()).Single().Item.FileName);
+        Assert.Equal("b_lyze.jpg", search.Search("lyže", new MediaFilter()).Single().Item.FileName);
     }
 
     [Fact]

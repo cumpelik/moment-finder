@@ -41,6 +41,16 @@ public sealed class SearchService
         var query = QueryParser.Parse(input, People);
         var filter = QueryParser.ToFilter(query, scope);
         var items = _repo.Query(filter);
+        if (!string.IsNullOrWhiteSpace(query.Text) && !CanSearchText)
+        {
+            // Without the model the words can only match the file and folder names.
+            var words = QueryParser.Normalize(query.Text).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            items = items.Where(i =>
+            {
+                var path = QueryParser.Normalize(i.RelPath.Replace('_', ' '));
+                return words.All(w => path.Contains(w, StringComparison.Ordinal));
+            }).ToList();
+        }
         if (string.IsNullOrWhiteSpace(query.Text) || _model is not { } model || _index is not { } index)
         {
             var starts = filter.PersonIds.Count > 0 && FirstAppearance != null ? FirstAppearance(filter.PersonIds) : [];

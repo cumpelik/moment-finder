@@ -27,13 +27,7 @@
                 <TextBlock Grid.Column="3" Classes="muted small" Text="{Binding MirrorText}" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" Margin="10,0" />
                 <TextBlock Grid.Column="4" Classes="muted small" Text="{Binding ModelText}" VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis" Margin="10,0" />
-                <Button Grid.Column="5" Command="{Binding DownloadModelCommand}" IsVisible="{Binding CanDownloadModel}">
-                    <Panel>
-                        <TextBlock Text="Download" IsVisible="{Binding !IsDownloadingModel}" />
-                        <TextBlock Text="Stop" IsVisible="{Binding IsDownloadingModel}" />
-                    </Panel>
-                </Button>
+                           TextTrimming="CharacterEllipsis" Margin="10,0" IsVisible="{Binding !CanDownloadModel}" />
             </Grid>
         </Border>
 
@@ -107,35 +101,65 @@
                             </Flyout>
                         </Button.Flyout>
                     </Button>
-                    <Rectangle Grid.Column="4" Width="1" Fill="{DynamicResource AppBorderBrush}" Margin="10,4" />
-                    <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6">
-                        <mi:MaterialIcon Kind="BasketOutline" Classes="muted" />
-                        <ComboBox ItemsSource="{Binding Buckets}" SelectedItem="{Binding ActiveBucket}" MinWidth="150"
-                                  PlaceholderText="Bucket" ToolTip.Tip="Where B puts the selected items">
+                    <Rectangle Grid.Column="4" Width="1" Height="24" Fill="{DynamicResource AppBorderBrush}" Margin="10,0" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <Button Classes="toolbar" Command="{Binding AddSelectionToBucketCommand}" VerticalAlignment="Center"
+                                ToolTip.Tip="Put the selected photos into a bucket (B), for example for a photo book">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <mi:MaterialIcon Kind="BasketPlusOutline" />
+                                <TextBlock Text="Add to bucket" />
+                            </StackPanel>
+                        </Button>
+                        <ComboBox ItemsSource="{Binding Buckets}" SelectedItem="{Binding ActiveBucket}" MinWidth="140"
+                                  VerticalAlignment="Center" IsVisible="{Binding HasBuckets}"
+                                  ToolTip.Tip="The bucket that Add to bucket and B put the photos into">
                             <ComboBox.ItemTemplate>
                                 <DataTemplate DataType="b:Bucket">
                                     <TextBlock Text="{Binding Name}" />
                                 </DataTemplate>
                             </ComboBox.ItemTemplate>
                         </ComboBox>
-                        <Button Classes="toolbar" Command="{Binding AddSelectionToBucketCommand}" ToolTip.Tip="Add the selection to the bucket (B)">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <mi:MaterialIcon Kind="BasketPlusOutline" />
-                                <TextBlock Text="Add" />
-                            </StackPanel>
-                        </Button>
                     </StackPanel>
-                    <Button Grid.Column="6" Classes="toolbar" Click="OnOpenCloud" ToolTip.Tip="Cloud and backup" Margin="8,0,0,0">
-                        <mi:MaterialIcon Kind="CloudLockOutline" />
+                    <Button Grid.Column="6" Classes="toolbar" Click="OnOpenCloud" Margin="8,0,0,0" VerticalAlignment="Center"
+                            ToolTip.Tip="Back up to OneDrive, Google Drive or S3, encrypted">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="CloudLockOutline" />
+                            <TextBlock Text="Backup" />
+                        </StackPanel>
                     </Button>
-                    <Slider Grid.Column="7" Minimum="100" Maximum="360" Value="{Binding TileSize}" Width="110" Margin="12,0,0,0"
-                            VerticalAlignment="Center" ToolTip.Tip="Thumbnail size" />
+                    <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" Margin="12,0,0,0" VerticalAlignment="Center"
+                                ToolTip.Tip="Thumbnail size">
+                        <mi:MaterialIcon Kind="ImageSizeSelectSmall" Classes="muted" />
+                        <Slider Minimum="100" Maximum="360" Value="{Binding TileSize}" Width="100" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="1">
+            <!-- Until the AI models are installed: what they bring and the download -->
+            <Border Classes="card" Margin="12,10,12,0" Padding="14,12" IsVisible="{Binding CanDownloadModel}">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <mi:MaterialIcon Kind="CreationOutline" Width="28" Height="28" VerticalAlignment="Top" Margin="0,2,12,0"
+                                     Foreground="{DynamicResource SelectionBrush}" />
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="Turn on the AI" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Classes="muted" Text="{Binding AiSetupText}" TextWrapping="Wrap" />
+                        <ProgressBar Value="{Binding DownloadProgress}" IsVisible="{Binding IsDownloadingModel}" Margin="0,6,0,0" />
+                        <TextBlock Classes="muted small" Text="{Binding ModelText}" IsVisible="{Binding ModelText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Command="{Binding DownloadModelCommand}" VerticalAlignment="Top" Margin="16,10,0,0"
+                            Classes.accent="{Binding !IsDownloadingModel}" MinWidth="170" HorizontalContentAlignment="Center">
+                        <Panel>
+                            <TextBlock Text="Download AI models" IsVisible="{Binding !IsDownloadingModel}" />
+                            <TextBlock Text="Stop" IsVisible="{Binding IsDownloadingModel}" />
+                        </Panel>
+                    </Button>
                 </Grid>
             </Border>
 
             <!-- Result line; a bucket gets its own actions -->
-            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
-                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" />
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
+                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -160,6 +184,7 @@
                     </Button>
                 </StackPanel>
             </Grid>
+            </StackPanel>
 
             <!-- Thumbnails; only the visible ones exist -->
             <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
