@@ -126,7 +126,43 @@ public sealed class CloudService
         if (!string.IsNullOrWhiteSpace(s3.Region)) parameters["region"] = s3.Region;
         if (!string.IsNullOrWhiteSpace(s3.Endpoint)) parameters["endpoint"] = s3.Endpoint;
         await Rclone.CreateRemoteAsync(remote, "s3", parameters, ct);
-        return await FinishAsync(name, "s3", remote, $"{remote}:{s3.Bucket.Trim('/')}/{HomeFolder}", password, ct);
+        // IDrive e2 has an address per account and region; rclone asks IDrive for it by the access key, so nobody
+        // has to look it up. No address back: IDrive does not know the key.
+        if (parameters["provider"] == "IDrive" && !(await Rclone.DumpAsync(ct)).GetValueOrDefault(remote, []).ContainsKey("endpoint"))
+        {
+            await DeleteRemotesAsync(remote, CancellationToken.None);
+            throw new RcloneException("IDrive e2 does not know this access key. Copy it again from IDrive e2, Access Keys.");
+        }
+        // The bucket: used as it is when the key can read it (a key for one bucket only may not create buckets, and
+        // must never be made to try), otherwise made. From then on rclone is told not to check or create it again.
+        var bucket = $"{remote}:{s3.Bucket.Trim('/')}";
+        try
+        {
+            try
+            {
+                await Rclone.RunAsync(["lsjson", "--max-depth", "1", bucket], ct);
+            }
+            catch (RcloneException e) when (!new[] { "SignatureDoesNotMatch", "InvalidAccessKeyId", "RequestError", "no such host", "dial tcp" }
+                                               .Any(part => e.Message.Contains(part, StringComparison.OrdinalIgnoreCase)))
+            {
+                try
+                {
+                    await Rclone.RunAsync(["mkdir", bucket], ct);
+                }
+                catch (RcloneException)
+                {
+                    throw new RcloneException($"The bucket \"{s3.Bucket.Trim('/')}\" is not there (or this key may not use it), and the key is not allowed " +
+                                              "to make it. Make the bucket at the provider, or use a key that may create buckets.");
+                }
+            }
+            await Rclone.RunAsync(["config", "update", remote, "no_check_bucket", "true", "--non-interactive"], ct);
+        }
+        catch
+        {
+            await DeleteRemotesAsync(remote, CancellationToken.None);
+            throw;
+        }
+        return await FinishAsync(name, "s3", remote, $"{bucket}/{HomeFolder}", password, ct);
     }
 
     /// <summary>Opens the browser for the Microsoft sign-in, then finds the user's drive.</summary>

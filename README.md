@@ -19,7 +19,8 @@ and then work offline. Windows, Linux and macOS.
   exports the originals numbered `001_`, `002_`...
 - **The library in a cloud** (Settings; via rclone): the library itself, that is index (names, people, buckets,
   sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a storage you give there:
-  IDrive e2 or another S3 compatible storage (address, two keys, a bucket that is made if it is not there),
+  IDrive e2 (two keys; its address is found by them) or another S3 compatible storage (address, two keys), with
+  a bucket that is made if it is not there,
   Amazon S3, OneDrive, Google Drive or a folder. Everything is encrypted on this computer before the upload
   (rclone crypt: contents and names) with a key the application makes itself.
 - **Mirrors of folders** (originals into a cloud, under a folder named after the computer, never deleting

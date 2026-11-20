@@ -9,6 +9,8 @@ namespace MediaLens.App.ViewModels;
 public sealed record StorageKind(string Title, string Provider, string AddressLabel, string AddressHint)
 {
     public bool IsS3 => Provider.Length > 0;
+    /// <summary>IDrive e2 tells its address by the access key: nothing to fill in.</summary>
+    public bool NeedsAddress => AddressLabel.Length > 0;
     public override string ToString() => Title;
 }
 
@@ -24,7 +26,7 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
 
     public IReadOnlyList<StorageKind> Kinds { get; } =
     [
-        new("IDrive e2", "IDrive", Address, "e.g. s3.eu-central-2.idrivee2.com"),
+        new("IDrive e2", "IDrive", "", ""),
         new("S3 compatible (other)", "Other", Address, "e.g. s3.example.com"),
         new("Amazon S3", "AWS", "Region", "e.g. eu-central-1"),
         new("Backblaze B2", "Other", Address, "e.g. s3.eu-central-003.backblazeb2.com"),
@@ -35,7 +37,7 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
         new("Folder (NAS, external disk)", "", "", ""),
     ];
 
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsS3), nameof(IsFolder), nameof(IsSignIn))] private StorageKind _kind;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsS3), nameof(IsFolder), nameof(IsSignIn), nameof(NeedsAddress), nameof(KeysHint))] private StorageKind _kind;
     [ObservableProperty] private string _endpoint = "";
     [ObservableProperty] private string _accessKey = "";
     [ObservableProperty] private string _secretKey = "";
@@ -43,6 +45,9 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
     [ObservableProperty] private string _folder = "";
 
     public bool IsS3 => Kind.IsS3;
+    public bool NeedsAddress => Kind.IsS3 && Kind.NeedsAddress;
+    /// <summary>Where the keys come from, for the kind that needs nothing else.</summary>
+    public string KeysHint => Kind.Provider == "IDrive" ? "The two keys are in IDrive e2 under Access Keys. The address is found by them." : "";
     public bool IsFolder => Kind.Title.StartsWith("Folder", StringComparison.Ordinal);
     public bool IsSignIn => !IsS3 && !IsFolder;
     public bool RcloneMissing => !Rclone.IsAvailable;
@@ -104,13 +109,31 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
         }
         catch (Exception e) when (e is RcloneException or IOException or HttpRequestException or InvalidOperationException)
         {
-            Status = "Failed: " + e.Message;
+            Status = "Failed: " + Plain(e.Message);
         }
         finally
         {
             Busy = false;
             Reload();
         }
+    }
+
+    /// <summary>What a storage's answer means, in words; the answer itself stays at the end for whoever needs it.</summary>
+    private static string Plain(string error)
+    {
+        // rclone's own stamp ("2026/11/20 20:25:32 NOTICE: ") says nothing here.
+        error = System.Text.RegularExpressions.Regex.Replace(error.Trim(), @"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d (NOTICE|ERROR)?\s*:?\s*", "");
+        if (error.LastIndexOf("last error was:", StringComparison.Ordinal) is >= 0 and var last) error = error[(last + 15)..].Trim();
+        bool Has(string part) => error.Contains(part, StringComparison.OrdinalIgnoreCase);
+        var meaning =
+            Has("SignatureDoesNotMatch") ? "The secret key does not belong to this access key."
+            : Has("InvalidAccessKeyId") ? "The storage does not know this access key."
+            : Has("BucketAlreadyExists") ? "A bucket of this name belongs to somebody else: choose another name."
+            : Has("NoSuchBucket") ? "There is no such bucket, and it could not be made."
+            : Has("AccessDenied") || Has("Forbidden") ? "The key is not allowed to do this. It has to read and write the bucket (and to make it, if it is not there)."
+            : Has("send request failed") || Has("no such host") || Has("dial tcp") || Has("connection refused") ? "The storage does not answer. Check the address and the internet connection."
+            : null;
+        return meaning == null ? error : $"{meaning} ({error.Trim()})";
     }
 
     [RelayCommand]
@@ -120,9 +143,9 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
     [RelayCommand]
     private Task Connect()
     {
-        if (IsS3 && (string.IsNullOrWhiteSpace(Endpoint) || string.IsNullOrWhiteSpace(AccessKey) || string.IsNullOrWhiteSpace(SecretKey) || string.IsNullOrWhiteSpace(Bucket)))
+        if (IsS3 && (NeedsAddress && string.IsNullOrWhiteSpace(Endpoint) || string.IsNullOrWhiteSpace(AccessKey) || string.IsNullOrWhiteSpace(SecretKey) || string.IsNullOrWhiteSpace(Bucket)))
         {
-            Status = $"Fill in the {Kind.AddressLabel.ToLowerInvariant()}, both keys and the bucket.";
+            Status = NeedsAddress ? $"Fill in the {Kind.AddressLabel.ToLowerInvariant()}, both keys and the bucket." : "Fill in both keys and the bucket.";
             return Task.CompletedTask;
         }
         if (IsFolder && string.IsNullOrWhiteSpace(Folder))
@@ -135,7 +158,7 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
         {
             var aws = kind.Provider == "AWS";
             var cloud = kind.IsS3
-                ? await _host.Cloud.AddS3Async(kind.Title, new S3Settings(kind.Provider, aws ? "" : Endpoint.Trim(), aws ? Endpoint.Trim() : "",
+                ? await _host.Cloud.AddS3Async(kind.Title, new S3Settings(kind.Provider, aws || !kind.NeedsAddress ? "" : Endpoint.Trim(), aws ? Endpoint.Trim() : "",
                     AccessKey.Trim(), SecretKey.Trim(), Bucket.Trim()), null, ct)
                 : kind.Title == "OneDrive" ? await _host.Cloud.AddOneDriveAsync(kind.Title, null, ct)
                 : kind.Title == "Google Drive" ? await _host.Cloud.AddGoogleDriveAsync(kind.Title, null, ct)

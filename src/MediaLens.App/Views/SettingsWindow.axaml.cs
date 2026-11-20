@@ -18,6 +18,7 @@ public partial class SettingsWindow : Window
         var cloud = main.CreateLibraryCloudViewModel();
         cloud.RestartRequested += Restart;
         CloudPanel.DataContext = cloud;
+        StatusBar.DataContext = cloud;
         DataContext = main;
     }
 
