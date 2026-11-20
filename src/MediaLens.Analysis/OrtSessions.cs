@@ -47,8 +47,8 @@ public static class OrtSessions
     {
         GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
         LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-        // Leaves a core for the UI while the library is being analyzed.
-        IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount - 1),
+        // Half of the cores: the analysis runs in the background while the user browses and plays videos.
+        IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
     };
 
     private static IEnumerable<(string Device, Action<SessionOptions> Configure)> Accelerators()

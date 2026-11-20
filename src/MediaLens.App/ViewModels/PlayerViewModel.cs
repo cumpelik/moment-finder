@@ -52,6 +52,28 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isRunning;
     /// <summary>A message in the middle of the picture, e.g. that the person's moments are over.</summary>
     [ObservableProperty] private string _notice = "";
+    /// <summary>The photo is being decoded or the video has not shown its first frame: the view says so.</summary>
+    [ObservableProperty] private bool _isLoading;
+    /// <summary>The first video waits on its first frame (opened from a person's card).</summary>
+    public bool PauseOnOpen { get; set; }
+    private readonly DispatcherTimer _loadingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private bool _loadPending;
+
+    /// <summary>A quick load shows nothing, a slow one "Loading..." (no flicker on every click).</summary>
+    private void BeginLoading()
+    {
+        _loadPending = true;
+        IsLoading = false;
+        _loadingTimer.Stop();
+        _loadingTimer.Start();
+    }
+
+    private void EndLoading()
+    {
+        _loadPending = false;
+        _loadingTimer.Stop();
+        IsLoading = false;
+    }
     [ObservableProperty] private MomentChoice _momentChoice;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMuted))] private int _volume;
     public bool IsMuted => Volume == 0;
@@ -105,6 +127,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             _slideTimer.Stop();
             Next();
         };
+        _loadingTimer.Tick += (_, _) =>
+        {
+            _loadingTimer.Stop();
+            if (_loadPending) IsLoading = true;
+        };
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _positionTimer.Tick += (_, _) => UpdateVideoPosition();
     }
@@ -123,6 +150,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var entry = Current;
         var item = entry.Item;
         Error = null;
+        BeginLoading();
         Title = item.FileName;
         Detail = $"{item.Taken:d. M. yyyy H:mm}" + (item.Camera is { } c ? $"  ·  {c}" : "");
         PositionText = PositionLabel();
@@ -139,6 +167,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (!VideoPlayer.IsAvailable(out var error))
             {
                 Error = error;
+                EndLoading();
                 if (AutoPlay) _slideTimer.Start();
                 return;
             }
@@ -147,6 +176,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 _video = new VideoPlayer { Volume = Volume };
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
+                _video.Started += EndLoading;
             }
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
             // Only someone's moments and they are not in this video: on to the next one.
@@ -159,8 +189,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _video.Play(item.FullPath, StartOf(entry));
-                // Saying who is who: a still picture, so the boxes stay on the people.
-                if (ShowPeople) _video.Pause();
+                // Opened to say who someone is (from Who is this): a still picture at that moment.
+                if (PauseOnOpen)
+                {
+                    PauseOnOpen = false;
+                    _video.Pause();
+                }
                 _positionTimer.Start();
             }
             else
@@ -181,11 +215,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
-    partial void OnShowPeopleChanged(bool value)
+    partial void OnShowPeopleChanged(bool value) => LoadPeople();
+
+    /// <summary>While a name is typed for a box the video waits, then goes on if it was playing.</summary>
+    public bool HoldForDialog()
     {
-        LoadPeople();
-        // Saying who is who is easier on a still picture.
-        if (value && IsVideo) _video?.Pause();
+        if (!IsVideo || _video == null || !IsRunning) return false;
+        _video.Pause();
+        IsRunning = false;
+        return true;
+    }
+
+    public void ResumeAfterDialog(bool wasRunning)
+    {
+        if (wasRunning && IsVideo && _video != null && !IsRunning) TogglePlay();
     }
 
     partial void OnVolumeChanged(int value)
@@ -307,7 +350,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
         catch (Exception e) when (e is Cloud.RcloneException or IOException)
         {
-            if (version == _loadVersion) Error = "The video cannot be downloaded: " + e.Message;
+            if (version == _loadVersion)
+            {
+                Error = "The video cannot be downloaded: " + e.Message;
+                EndLoading();
+            }
         }
     }
 
@@ -319,12 +366,14 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             Photo = null;
             Error = "This photo cannot be opened.";
+            EndLoading();
         }
         else
         {
             Photo = ToBitmap(decoded);
             ContentWidth = decoded.Width;
             ContentHeight = decoded.Height;
+            EndLoading();
         }
         if (AutoPlay) _slideTimer.Start();
     }
@@ -544,6 +593,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _loadingTimer.Stop();
         _slideTimer.Stop();
         _positionTimer.Stop();
         _video?.Dispose();

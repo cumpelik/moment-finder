@@ -93,48 +93,74 @@ public partial class PlayerView : UserControl
         VideoImage.InvalidateVisual();
     }
 
-    /// <summary>Boxes around faces and people; a click says who it is (the seed for someone in a helmet).</summary>
+    private static readonly Avalonia.Media.Color KnownColor = Avalonia.Media.Color.FromRgb(0x34, 0xD3, 0x99);
+    private static readonly Avalonia.Media.Color UnknownColor = Avalonia.Media.Color.FromRgb(0xF5, 0x9E, 0x0B);
+
+    /// <summary>
+    /// A box around each person with the name above it (inside only at the top edge of the picture), so a long
+    /// name never gets cut by a narrow box. A click on the box or the name says who it is.
+    /// </summary>
     private void DrawPeople()
     {
         PeopleLayer.Children.Clear();
         if (_vm == null) return;
-        var scale = Math.Max(1, _vm.ContentWidth / 1280);
+        // Boxes are drawn in the picture's pixels and scaled with it: one screen pixel is this many of them,
+        // so lines and names keep the same size on screen for any video and window.
+        var shown = Math.Min(Root.Bounds.Width / _vm.ContentWidth, Root.Bounds.Height / _vm.ContentHeight);
+        var scale = shown > 0 ? 1 / shown : 1;
         foreach (var box in _vm.PeopleBoxes())
         {
-            var color = box.Known ? Avalonia.Media.Brushes.LimeGreen : Avalonia.Media.Brushes.Orange;
-            var label = new Border
-            {
-                Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromArgb(200, 0, 0, 0)),
-                Padding = new Thickness(4 * scale, 1 * scale),
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
-                Child = new TextBlock { Text = box.Label, Foreground = Avalonia.Media.Brushes.White, FontSize = 13 * scale },
-            };
+            var color = box.Known ? KnownColor : UnknownColor;
             var frame = new Border
             {
                 Width = box.W,
                 Height = box.H,
-                BorderBrush = color,
-                BorderThickness = new Thickness(box.IsFace ? 2 * scale : 3 * scale),
+                CornerRadius = new CornerRadius(6 * scale),
+                BorderBrush = new Avalonia.Media.SolidColorBrush(color),
+                BorderThickness = new Thickness(2 * scale),
                 Background = Avalonia.Media.Brushes.Transparent,
+                BoxShadow = Avalonia.Media.BoxShadows.Parse($"0 0 {4 * scale:0} 0 #99000000"),
                 Cursor = new Cursor(StandardCursorType.Hand),
-                Child = label,
+            };
+            var label = new Border
+            {
+                Background = new Avalonia.Media.SolidColorBrush(color),
+                CornerRadius = new CornerRadius(10 * scale),
+                Padding = new Thickness(8 * scale, 2 * scale),
+                BoxShadow = Avalonia.Media.BoxShadows.Parse($"0 {1 * scale:0} {4 * scale:0} 0 #80000000"),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Child = new TextBlock
+                {
+                    Text = box.Label,
+                    FontSize = 13 * scale,
+                    FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                    Foreground = Avalonia.Media.Brushes.Black,
+                },
             };
             ToolTip.SetTip(frame, "Click: who is it?");
-            var id = box.DetectionId;
-            var vm = _vm;
-            frame.PointerPressed += async (_, e) =>
-            {
-                e.Handled = true;
-                if (TopLevel.GetTopLevel(this) is not Window owner) return;
-                var name = await Dialogs.PromptNameAsync(owner, "Who is it?", vm.Names());
-                if (name != null) vm.NameDetection(id, name);
-                KeyboardWanted?.Invoke();
-            };
+            ToolTip.SetTip(label, "Click: who is it?");
+            frame.PointerPressed += (_, e) => AskWho(e, box.DetectionId);
+            label.PointerPressed += (_, e) => AskWho(e, box.DetectionId);
             Canvas.SetLeft(frame, box.X);
             Canvas.SetTop(frame, box.Y);
+            Canvas.SetLeft(label, box.X);
+            // Above the box; at the top edge of the picture inside it.
+            if (box.Y > 28 * scale) Canvas.SetBottom(label, _vm.ContentHeight - box.Y + 4 * scale);
+            else Canvas.SetTop(label, box.Y + 4 * scale);
             PeopleLayer.Children.Add(frame);
+            PeopleLayer.Children.Add(label);
         }
+    }
+
+    private async void AskWho(PointerPressedEventArgs e, long detectionId)
+    {
+        e.Handled = true;
+        if (_vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) return;
+        var wasRunning = vm.HoldForDialog();
+        var name = await Dialogs.PromptNameAsync(owner, "Who is it?", vm.Names());
+        if (name != null) vm.NameDetection(detectionId, name);
+        vm.ResumeAfterDialog(wasRunning);
+        KeyboardWanted?.Invoke();
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)

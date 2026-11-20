@@ -200,6 +200,15 @@ public static class FFmpeg
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"Cannot start {exe}");
+        try
+        {
+            // Background work (thumbnails, frames for the analysis): the user's clicks come first.
+            p.PriorityClass = ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            // Already finished, or not allowed here: it just runs at the normal priority.
+        }
         p.StandardInput.Close();
         var stdout = p.StandardOutput.ReadToEndAsync(ct);
         var stderr = p.StandardError.ReadToEndAsync(ct);

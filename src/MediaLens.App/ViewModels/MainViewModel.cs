@@ -550,6 +550,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var tile = timeMs > 0 ? new TileViewModel(item, timeMs) : Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
         var player = CreatePlayer([tile], 0, autoPlay: false);
         player.ShowPeople = showPeople;
+        player.PauseOnOpen = showPeople;
         PlayerRequested?.Invoke(player, true);
     }
 

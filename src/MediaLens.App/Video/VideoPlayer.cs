@@ -12,6 +12,8 @@ namespace MediaLens.App.Video;
 /// libVLC decodes (any codec, hardware accelerated, with audio) and hands frames to a WriteableBitmap, so the
 /// video is an ordinary Avalonia image: overlays work, no native window, same code on Windows, Linux and macOS.
 /// Frames larger than MaxWidth x MaxHeight are scaled down by libVLC (4K would only cost copying).
+/// Commands (play, stop, pause, seek) run one after another on a background queue: libVLC may block for a
+/// while (stopping, switching videos) and the window must stay responsive.
 /// </summary>
 public sealed class VideoPlayer : IDisposable
 {
@@ -43,6 +45,34 @@ public sealed class VideoPlayer : IDisposable
     public event Action? FrameUpdated;
     /// <summary>On the UI thread.</summary>
     public event Action? Ended;
+    /// <summary>On the UI thread: the first frame of the video just started is on screen.</summary>
+    public event Action? Started;
+
+    private readonly object _queueLock = new();
+    private Task _queue = Task.CompletedTask;
+    /// <summary>A video was asked to play and has not shown a frame yet.</summary>
+    private volatile bool _starting;
+    /// <summary>Which Play a frame belongs to: the last frames of the previous video are not the new one starting.</summary>
+    private int _requested;
+    private volatile int _active;
+    private int _frameOf;
+
+    /// <summary>Runs a libVLC command after the ones before it, off the UI thread.</summary>
+    private void Run(Action command)
+    {
+        lock (_queueLock)
+            _queue = _queue.ContinueWith(_ =>
+            {
+                try
+                {
+                    command();
+                }
+                catch (Exception e) when (e is VLCException or ObjectDisposedException)
+                {
+                    // A command for a player that is going away.
+                }
+            }, TaskScheduler.Default);
+    }
 
     public static bool IsAvailable(out string? error)
     {
@@ -84,24 +114,35 @@ public sealed class VideoPlayer : IDisposable
     public void Play(string path, long startMs)
     {
         var old = _media;
-        _media = new VlcMedia(_libVlc!, path, FromType.FromPath);
+        var media = _media = new VlcMedia(_libVlc!, path, FromType.FromPath);
         if (startMs > 0)
-            _media.AddOption(":start-time=" + (startMs / 1000.0).ToString(System.Globalization.CultureInfo.InvariantCulture));
-        _player.Play(_media);
-        old?.Dispose();
+            media.AddOption(":start-time=" + (startMs / 1000.0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        _starting = true;
+        _pauseOnFrame = false;
+        var generation = ++_requested;
+        Run(() =>
+        {
+            _active = generation;
+            _player.Play(media);
+            old?.Dispose();
+        });
     }
 
     public void TogglePause()
     {
-        if (_player.State == VLCState.Ended && _media != null)
+        var media = _media;
+        Run(() =>
         {
-            _player.Stop();
-            _player.Play(_media);
-        }
-        else
-        {
-            _player.Pause();
-        }
+            if (_player.State == VLCState.Ended && media != null)
+            {
+                _player.Stop();
+                _player.Play(media);
+            }
+            else
+            {
+                _player.Pause();
+            }
+        });
     }
 
     private volatile bool _pauseOnFrame;
@@ -109,14 +150,14 @@ public sealed class VideoPlayer : IDisposable
     /// <summary>Pauses now, or on the first frame of a video that is just starting (not before, the picture would stay black).</summary>
     public void Pause()
     {
-        if (_player.IsPlaying && Frame != null) _player.SetPause(true);
-        else _pauseOnFrame = true;
+        if (_starting) _pauseOnFrame = true;
+        else Run(() => _player.SetPause(true));
     }
 
-    public void Seek(long ms)
+    public void Seek(long ms) => Run(() =>
     {
         if (_player.IsSeekable) _player.Time = Math.Max(0, ms);
-    }
+    });
 
     public int Volume
     {
@@ -124,8 +165,13 @@ public sealed class VideoPlayer : IDisposable
         set => _player.Volume = Math.Clamp(value, 0, 100);
     }
 
-    /// <summary>Synchronous, so a following Play cannot be overtaken (events are posted, so this cannot deadlock).</summary>
-    public void Stop() => _player.Stop();
+    /// <summary>In the queue, so a following Play cannot be overtaken.</summary>
+    public void Stop()
+    {
+        _starting = false;
+        _pauseOnFrame = false;
+        Run(_player.Stop);
+    }
 
     private uint OnFormat(ref IntPtr opaque, IntPtr chroma, ref uint width, ref uint height, ref uint pitches, ref uint lines)
     {
@@ -167,6 +213,7 @@ public sealed class VideoPlayer : IDisposable
         {
             if (_buffer == IntPtr.Zero) return;
             Marshal.Copy(_buffer, _latest, 0, _latest.Length);
+            _frameOf = _active;
             _frameDirty = true;
             if (_uiUpdatePosted) return;
             _uiUpdatePosted = true;
@@ -176,11 +223,13 @@ public sealed class VideoPlayer : IDisposable
 
     private void PushFrame()
     {
+        int frameOf;
         lock (_frameLock)
         {
             _uiUpdatePosted = false;
             if (!_frameDirty || _width == 0) return;
             _frameDirty = false;
+            frameOf = _frameOf;
             if (Frame == null || Frame.PixelSize.Width != _width || Frame.PixelSize.Height != _height)
                 Frame = new WriteableBitmap(new PixelSize(_width, _height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
             using var fb = Frame.Lock();
@@ -192,10 +241,16 @@ public sealed class VideoPlayer : IDisposable
                     Marshal.Copy(_latest, y * rowBytes, fb.Address + y * fb.RowBytes, rowBytes);
         }
         FrameUpdated?.Invoke();
+        if (frameOf != _requested) return;
+        if (_starting)
+        {
+            _starting = false;
+            Started?.Invoke();
+        }
         if (_pauseOnFrame)
         {
             _pauseOnFrame = false;
-            ThreadPool.QueueUserWorkItem(_ => _player.SetPause(true));
+            Run(() => _player.SetPause(true));
         }
     }
 
@@ -203,8 +258,8 @@ public sealed class VideoPlayer : IDisposable
     {
         var player = _player;
         var media = _media;
-        // libVLC must stop before the buffer goes away; in the background so closing the window is instant.
-        ThreadPool.QueueUserWorkItem(_ =>
+        // libVLC must stop before the buffer goes away; after the queued commands, so closing the window is instant.
+        Run(() =>
         {
             player.Stop();
             player.Dispose();

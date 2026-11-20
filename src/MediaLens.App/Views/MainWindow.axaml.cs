@@ -402,7 +402,11 @@ public partial class MainWindow : Window
     private void ApplySidebar()
     {
         if (_vm == null) return;
-        MainSplit.ColumnDefinitions[0].Width = _vm.SidebarVisible ? new GridLength(_vm.SavedSize("sidebar_width") ?? 250) : new GridLength(0);
+        // Narrower than this the names would not fit; to get rid of it, it is hidden with the button.
+        const double minWidth = 180;
+        var column = MainSplit.ColumnDefinitions[0];
+        column.MinWidth = _vm.SidebarVisible ? minWidth : 0;
+        column.Width = _vm.SidebarVisible ? new GridLength(Math.Max(minWidth, _vm.SavedSize("sidebar_width") ?? 250)) : new GridLength(0);
     }
 
     /// <summary>The panel's full screen button: the same item in the full screen viewer.</summary>
