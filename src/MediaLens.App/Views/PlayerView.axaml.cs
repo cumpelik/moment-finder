@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using MediaLens.App.ViewModels;
 
 namespace MediaLens.App.Views;
@@ -40,7 +41,12 @@ public partial class PlayerView : UserControl
             if (e.Delta.Y > 0) _vm?.Previous();
             else if (e.Delta.Y < 0) _vm?.Next();
         };
-        Root.DoubleTapped += (_, _) => FullScreenRequested?.Invoke();
+        // A double click on the picture; quick clicks on a control (one frame further) are not one.
+        Root.DoubleTapped += (_, e) =>
+        {
+            if (e.Source is Visual v && (v == Overlay || Overlay.IsVisualAncestorOf(v))) return;
+            FullScreenRequested?.Invoke();
+        };
         FullScreenButton.Click += (_, _) => FullScreenRequested?.Invoke();
         SeekBar.AddHandler(PointerPressedEvent, (_, _) => _vm?.BeginSeek(), RoutingStrategies.Tunnel, handledEventsToo: true);
         SeekBar.AddHandler(PointerReleasedEvent, (_, _) => _vm?.SeekTo(SeekBar.Value), RoutingStrategies.Tunnel, handledEventsToo: true);
