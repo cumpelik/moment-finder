@@ -212,6 +212,62 @@ public sealed partial class Rclone
     public Task UploadAsync(string localFile, string remoteFile, CancellationToken ct) =>
         RunAsync(["copyto", localFile, remoteFile], ct);
 
+    /// <summary>A small text file of the cloud; null when it is not there.</summary>
+    public async Task<string?> ReadTextAsync(string remoteFile, CancellationToken ct)
+    {
+        try
+        {
+            var text = await RunAsync(["cat", remoteFile], ct);
+            return text.Length == 0 ? null : text;
+        }
+        catch (RcloneException e) when (e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+                                         e.Message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Moves a file inside one cloud (the provider copies it there, nothing goes over this computer's line).</summary>
+    public Task MoveFileAsync(string from, string to, CancellationToken ct) => RunAsync(["moveto", from, to], ct);
+
+    /// <summary>Copies only these files (paths relative to both folders) from one folder to the other.</summary>
+    public async Task CopyFilesAsync(string from, string to, IReadOnlyCollection<string> files, IProgress<CopyProgress>? progress, CancellationToken ct)
+    {
+        if (files.Count == 0) return;
+        var list = await WriteListAsync(files, ct);
+        try
+        {
+            await CopyAsync(from, to, ["--files-from-raw", list, "--no-traverse"], progress, ct);
+        }
+        finally
+        {
+            File.Delete(list);
+        }
+    }
+
+    /// <summary>Deletes these files (paths relative to the folder), then the folders left empty.</summary>
+    public async Task DeleteFilesAsync(string folder, IReadOnlyCollection<string> files, CancellationToken ct)
+    {
+        if (files.Count == 0) return;
+        var list = await WriteListAsync(files, ct);
+        try
+        {
+            await RunAsync(["delete", folder, "--files-from-raw", list], ct);
+            await RunAsync(["rmdirs", folder, "--leave-root"], ct);
+        }
+        finally
+        {
+            File.Delete(list);
+        }
+    }
+
+    private static async Task<string> WriteListAsync(IEnumerable<string> files, CancellationToken ct)
+    {
+        var list = Path.Combine(Path.GetTempPath(), "medialens-files-" + Guid.NewGuid().ToString("N") + ".txt");
+        await File.WriteAllLinesAsync(list, files, new UTF8Encoding(false), ct);
+        return list;
+    }
+
     public sealed record CopyProgress(long Bytes, long TotalBytes, int Percent, string Text);
 
     /// <summary>

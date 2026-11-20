@@ -60,7 +60,10 @@ public sealed class Indexer : IDisposable
         _paths = paths;
         _repo = repo;
         _scanner = new LibraryScanner(repo, rclone);
+        _twins = new AnalysisTwin(paths, repo.Db);
     }
+
+    private readonly AnalysisTwin _twins;
 
     /// <summary>Turns on the image analysis (after the model is downloaded).</summary>
     public void AttachSceneModel(ISceneModel model, IVectorIndex index)
@@ -159,7 +162,7 @@ public sealed class Indexer : IDisposable
             await ScanAllAsync(ct);
             return true;
         }
-        if (await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct))
+        if (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct))
             return true;
         if (_identityDirty && _identity != null)
         {
@@ -235,6 +238,16 @@ public sealed class Indexer : IDisposable
             }
             LibraryChanged?.Invoke();
         }
+    }
+
+    /// <summary>Files known elsewhere in the library get their twin's thumbnail and analysis, without reading them.</summary>
+    private bool TwinBatch()
+    {
+        var done = _twins.CopyBatch(_sceneIndex, 200);
+        if (done == 0) return false;
+        Report(new IndexerStatus(IndexerPhase.Thumbnails, $"Copies of known files: {done}", 0, 0, false));
+        LibraryChanged?.Invoke();
+        return true;
     }
 
     private async Task<bool> ThumbnailBatchAsync(CancellationToken ct)

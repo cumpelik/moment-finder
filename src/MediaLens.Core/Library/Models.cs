@@ -23,6 +23,12 @@ public sealed class Source
     public long AddedAt { get; init; }
     public long? LastScanAt { get; set; }
     public string? Remote { get; init; }
+    /// <summary>A cloud source: the storage it is in.</summary>
+    public long? CloudId { get; init; }
+    /// <summary>A cloud source that is the backup of a folder on another computer: only for looking.</summary>
+    public bool ReadOnly { get; init; }
+    /// <summary>The computer whose folder that is.</summary>
+    public string? HomeName { get; init; }
 }
 
 /// <summary>One photo or video. TakenAt is the wall clock of the camera (EXIF has no time zone), stored as if it were UTC.</summary>

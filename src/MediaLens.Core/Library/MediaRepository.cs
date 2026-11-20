@@ -37,6 +37,8 @@ public sealed class MediaRepository
 
     public MediaRepository(Database db) => _db = db;
 
+    public Database Db => _db;
+
     private const string MediaColumns =
         "m.id, m.source_id, m.rel_path, m.kind, m.size, m.mtime, m.quick_hash, m.taken_at, m.width, m.height, " +
         "m.duration_ms, m.lat, m.lon, m.camera, m.thumb_state, m.analysis_version";
@@ -76,6 +78,13 @@ public sealed class MediaRepository
     {
         using var c = _db.Open();
         c.Execute("DELETE FROM source WHERE id=@id", new { id });
+    }
+
+    /// <summary>What the folder's marker in the cloud says: the backup of another computer's folder is only for looking.</summary>
+    public void SetCloudRole(long sourceId, bool readOnly, string? homeName)
+    {
+        using var c = _db.Open();
+        c.Execute("UPDATE source SET read_only=@readOnly, home_name=@homeName WHERE id=@sourceId", new { sourceId, readOnly, homeName });
     }
 
     public void SetLastScan(long sourceId, long at)

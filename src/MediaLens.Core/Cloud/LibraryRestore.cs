@@ -143,13 +143,14 @@ public sealed class LibraryRestore
                     continue;
                 }
                 if (Directory.Exists(s.Root)) continue;
-                var mirror = c.Query<(string Target, string Remote)>("""
-                    SELECT m.target, c.remote FROM mirror m JOIN cloud c ON c.id=m.cloud_id
+                var mirror = c.Query<(string Target, string Remote, string? Own, long CloudId)>("""
+                    SELECT m.target, c.remote, m.remote, m.cloud_id FROM mirror m JOIN cloud c ON c.id=m.cloud_id
                     WHERE m.source_id=@Id AND m.last_run_at IS NOT NULL ORDER BY m.last_run_at DESC LIMIT 1
                     """, new { s.Id }, tx).FirstOrDefault();
                 if (mirror.Target == null) continue;
-                c.Execute("UPDATE source SET kind=@kind, root=@cache, remote=@remote WHERE id=@Id",
-                    new { kind = SourceKinds.Cloud, cache, remote = CloudService.Join(mirror.Remote, mirror.Target), s.Id }, tx);
+                // The backup of the other computer's folder: only for looking here, until this computer takes it over.
+                c.Execute("UPDATE source SET kind=@kind, root=@cache, remote=@remote, cloud_id=@CloudId, read_only=1 WHERE id=@Id",
+                    new { kind = SourceKinds.Cloud, cache, remote = mirror.Own ?? CloudService.Join(mirror.Remote, mirror.Target), mirror.CloudId, s.Id }, tx);
                 // This computer does not have the folder: nothing to mirror from here.
                 c.Execute("DELETE FROM mirror WHERE source_id=@Id", new { s.Id }, tx);
             }

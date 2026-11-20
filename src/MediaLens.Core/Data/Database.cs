@@ -183,6 +183,22 @@ public sealed class Database
         """,
         // 360 videos are leveled by the camera's gyroscope: analyzed again in the leveled world.
         "UPDATE media SET thumb_state=0, analysis_version=0, people_version=0 WHERE lower(rel_path) LIKE '%.insv';",
+        // 10: a source connected with a cloud. A mirror is the backup of a local folder: its place in the cloud
+        // (through a crypt remote of its own when encrypted) and the files that are gone from the folder but still
+        // in the cloud, waiting for the user's word. A cloud source knows its storage, and whether another
+        // computer's folder decides what is in it (then it is only for looking).
+        """
+        ALTER TABLE mirror ADD COLUMN remote TEXT;
+        ALTER TABLE mirror ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE mirror_gone(
+            mirror_id INTEGER NOT NULL REFERENCES mirror(id) ON DELETE CASCADE,
+            path TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            PRIMARY KEY(mirror_id, path));
+        ALTER TABLE source ADD COLUMN cloud_id INTEGER;
+        ALTER TABLE source ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE source ADD COLUMN home_name TEXT;
+        """,
     ];
 
     /// <summary>

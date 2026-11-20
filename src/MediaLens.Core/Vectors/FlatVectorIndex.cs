@@ -19,6 +19,8 @@ public interface IVectorIndex
     /// <summary>Replaces all rows of the media items in rows (re-analysis), or adds them.</summary>
     void Put(long mediaId, IReadOnlyList<VectorRow> rows);
     void RemoveMedia(long mediaId);
+    /// <summary>The rows of one media item (to give a copy of the same file the same search data).</summary>
+    List<VectorRow> RowsOf(long mediaId);
     /// <summary>Cosine similarity (vectors are L2 normalized), best row per media item, highest first.</summary>
     List<VectorHit> Search(ReadOnlySpan<float> query, IReadOnlySet<long>? allowedMedia, int topK);
 }
@@ -174,6 +176,20 @@ public sealed class FlatVectorIndex : IVectorIndex, IDisposable
 
             Unlink(mediaId);
             for (var i = 0; i < rows.Count; i++) Link(first + i, mediaId, rows[i].TimeMs);
+        }
+    }
+
+    public List<VectorRow> RowsOf(long mediaId)
+    {
+        lock (_lock)
+        {
+            if (!_rowsOfMedia.TryGetValue(mediaId, out var rows)) return [];
+            return rows.Select(r =>
+            {
+                var vector = new float[Dimension];
+                TensorPrimitives.ConvertToSingle(_data.AsSpan(r * Dimension, Dimension), vector);
+                return new VectorRow(mediaId, _timeOf[r], vector);
+            }).ToList();
         }
     }
 

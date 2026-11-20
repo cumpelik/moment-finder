@@ -37,8 +37,13 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           cloud source <cloud id> <folder> add a cloud folder as a source
           cloud restore <cloud id> <folder> <local folder>
           cloud import-index <cloud id>    names, people and buckets from the cloud's index backup
-          mirror add <source id> <cloud id>
-          mirror run [mirror id]
+          mirror add <source id> <cloud id> [--encrypt]   back a folder up to a cloud
+          mirror run [mirror id]           compare folders with the cloud: move, upload, note deleted ones
+          mirror gone <mirror id>          files deleted from the folder that are still in the cloud
+          mirror delete-gone <mirror id>   delete them in the cloud too
+          mirror bring-back <mirror id>    copy them back into the folder
+          mirror to-cloud <mirror id>      the folder moves to the cloud (a source of its own), the local one stays
+          source home <source id> <folder> a folder in the cloud gets a home here, backed up from now on
           backup cloud <cloud id>          choose the cloud the library itself is kept in (0: none)
           backup run                       the library (index, search data, thumbnails, clouds) into that cloud
           recovery show                    the recovery string: brings the library back on any computer
@@ -60,7 +65,7 @@ switch (args[0])
 {
     case "sources":
         foreach (var s in host.Repo.ListSources())
-            Console.WriteLine($"{s.Id,4}  {s.Name,-20} {s.Root}");
+            Console.WriteLine($"{s.Id,4}  {s.Name,-20} {s.Remote ?? s.Root}{(s.ReadOnly ? $"  (backup of {s.HomeName ?? "another computer"}, only for looking)" : "")}");
         return 0;
 
     case "add" when args.Length >= 2:
@@ -314,29 +319,86 @@ switch (args[0])
             return Fail(e.Message);
         }
 
-    case "mirror" when args.Length >= 2 && args[1] == "add" && args.Length >= 4:
-    {
-        var m = host.Cloud.AddMirror(long.Parse(args[2], CultureInfo.InvariantCulture), long.Parse(args[3], CultureInfo.InvariantCulture));
-        Console.WriteLine($"Mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}");
-        return 0;
-    }
-
-    case "mirror" when args.Length >= 2 && args[1] == "run":
-    {
-        foreach (var m in host.Cloud.Mirrors().Where(m => args.Length < 3 || m.Id == long.Parse(args[2], CultureInfo.InvariantCulture)))
+    case "mirror" when args.Length >= 2:
+        try
         {
-            Console.WriteLine($"{m.SourceName} -> {m.CloudName}/{m.Target}");
-            await host.Cloud.MirrorAsync(m.Id, new Progress<MediaLens.Cloud.Rclone.CopyProgress>(p => Console.Write($"\r  {p.Text,-70}")), ct);
-            Console.WriteLine("\r  done" + new string(' ', 70));
+            return await MirrorCommand(args.Skip(1).ToArray());
         }
-        return 0;
-    }
+        catch (Exception e) when (e is MediaLens.Cloud.RcloneException or InvalidOperationException or IOException)
+        {
+            return Fail(e.Message);
+        }
+
+    case "source" when args.Length >= 4 && args[1] == "home":
+        try
+        {
+            await host.Cloud.MakeHomeAsync(long.Parse(args[2], CultureInfo.InvariantCulture), args[3],
+                new Progress<MediaLens.Cloud.Rclone.CopyProgress>(p => Console.Write($"\r  {p.Text,-70}")), ct);
+            Console.WriteLine($"\rThe folder is at home in {args[3]}, backed up to the cloud from now on." + new string(' ', 20));
+            return 0;
+        }
+        catch (Exception e) when (e is MediaLens.Cloud.RcloneException or InvalidOperationException)
+        {
+            return Fail(e.Message);
+        }
 
     case "bucket" when args.Length >= 2:
         return await BucketCommand(args.Skip(1).ToArray());
 
     default:
         return Fail($"Unknown command: {string.Join(' ', args)}");
+}
+
+async Task<int> MirrorCommand(string[] a)
+{
+    long Id(int i) => long.Parse(a[i], CultureInfo.InvariantCulture);
+    var progress = new Progress<MediaLens.Cloud.Rclone.CopyProgress>(p => Console.Write($"\r  {p.Text,-70}"));
+    switch (a[0])
+    {
+        case "add" when a.Length >= 3:
+        {
+            var m = await host.Cloud.AddMirrorAsync(Id(1), Id(2), a.Contains("--encrypt"), ct);
+            Console.WriteLine($"Mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}{(m.Encrypted ? " (encrypted)" : "")}");
+            return 0;
+        }
+        case "run":
+        {
+            var failed = false;
+            foreach (var m in host.Cloud.Mirrors().Where(m => a.Length < 2 || m.Id == Id(1)))
+            {
+                Console.WriteLine($"{m.SourceName} -> {m.CloudName}/{m.Target}");
+                try
+                {
+                    var r = await host.Cloud.MirrorAsync(m.Id, progress, ct);
+                    Console.WriteLine($"\r  uploaded {r.Uploaded}, moved {r.Moved}, deleted here but still in the cloud {r.Gone}" + new string(' ', 20));
+                }
+                catch (MediaLens.Cloud.RcloneException e)
+                {
+                    Console.WriteLine("\r  " + e.Message);
+                    failed = true;
+                }
+            }
+            return failed ? 1 : 0;
+        }
+        case "gone" when a.Length >= 2:
+            foreach (var g in host.Cloud.Gone(Id(1))) Console.WriteLine($"{g.Size,12:N0}  {g.Path}");
+            return 0;
+        case "delete-gone" when a.Length >= 2:
+            await host.Cloud.DeleteGoneAsync(Id(1), ct);
+            Console.WriteLine("Deleted in the cloud.");
+            return 0;
+        case "bring-back" when a.Length >= 2:
+            await host.Cloud.BringBackGoneAsync(Id(1), progress, ct);
+            Console.WriteLine("\rBack in the folder." + new string(' ', 60));
+            return 0;
+        case "to-cloud" when a.Length >= 2:
+        {
+            var local = await host.Cloud.MoveToCloudAsync(Id(1), progress, ct);
+            Console.WriteLine($"\rThe folder lives in the cloud now; the one on this computer is source {local}." + new string(' ', 20));
+            return 0;
+        }
+    }
+    return Fail($"Unknown command: mirror {string.Join(' ', a)}");
 }
 
 async Task<int> CloudCommand(string[] a)
@@ -355,7 +417,8 @@ async Task<int> CloudCommand(string[] a)
             foreach (var c in host.Cloud.Clouds())
                 Console.WriteLine($"{c.Id,4}  {c.Name,-20} {c.KindTitle,-12} {(c.Encrypted ? "encrypted" : "plain")}");
             foreach (var m in host.Cloud.Mirrors())
-                Console.WriteLine($"  mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}  last: {m.LastResult ?? "never"}");
+                Console.WriteLine($"  mirror {m.Id}: {m.SourceName} -> {m.CloudName}/{m.Target}{(m.Encrypted ? " (encrypted)" : "")}{(m.Enabled ? "" : " (stopped)")}" +
+                                  $"  last: {m.LastResult ?? "never"}{(m.Gone > 0 ? $", {m.Gone} deleted here still in the cloud" : "")}");
             return 0;
         case "add-folder" when positional.Count >= 3:
         {

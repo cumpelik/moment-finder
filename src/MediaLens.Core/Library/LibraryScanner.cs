@@ -139,6 +139,9 @@ public sealed class LibraryScanner
         if (_rclone == null || source.Remote == null) throw new InvalidOperationException("Cloud access is not configured");
         progress?.Report($"Listing {source.Name}");
         var remote = await _rclone.ListAsync(source.Remote, ct);
+        // Whose the folder is: the backup of another computer's folder is only for looking here.
+        if (await Cloud.FolderMarker.ReadAsync(_rclone, source.Remote, ct) is { } marker)
+            _repo.SetCloudRole(source.Id, marker.IsBackup, marker.IsBackup ? marker.HomeName : null);
         var known = _repo.KnownFiles(source.Id);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var todo = new List<Cloud.RemoteFile>();
@@ -206,7 +209,7 @@ public sealed class LibraryScanner
     }
 
     /// <summary>Folders of other applications (thumbnail caches, editors' previews) are not part of the library.</summary>
-    private static bool IsIgnored(string rel)
+    public static bool IsIgnored(string rel)
     {
         foreach (var part in rel.Split('/'))
         {

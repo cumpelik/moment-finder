@@ -4,6 +4,8 @@ using MediaLens.People;
 
 namespace MediaLens.Tests;
 
+/// <summary>One at a time with the other cloud tests: the cloud files of the app are reached through one shared rclone setup.</summary>
+[Collection("Cloud")]
 public class CloudTests
 {
     [Theory]
@@ -44,7 +46,7 @@ public class CloudTests
         var service = new CloudService(lib.Paths, lib.Db, lib.Repo);
         var cloud = await service.AddFolderAsync("Backup", cloudDir, "correct horse battery", ct);
         service.BackupCloud = cloud;
-        var mirror = service.AddMirror(source.Id, cloud.Id);
+        var mirror = await service.AddMirrorAsync(source.Id, cloud.Id, false, ct);
         await service.MirrorAsync(mirror.Id, null, ct);
 
         var stored = Directory.GetFiles(cloudDir, "*", SearchOption.AllDirectories);
@@ -137,7 +139,7 @@ public class CloudTests
                 // Adding a cloud does not move the library into it: that is a choice of its own.
                 Assert.Null(service.BackupCloud);
                 service.BackupCloud = cloud;
-                await service.MirrorAsync(service.AddMirror(source.Id, cloud.Id).Id, null, ct);
+                await service.MirrorAsync((await service.AddMirrorAsync(source.Id, cloud.Id, false, ct)).Id, null, ct);
                 Assert.Equal("OK", service.Backup.LastResult);
                 var stored = Directory.GetFiles(cloudDir, "*", SearchOption.AllDirectories);
                 Assert.Contains(stored, f => Path.GetFileName(f) == "library.db");

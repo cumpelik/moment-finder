@@ -3,8 +3,8 @@ using MediaLens.Data;
 namespace MediaLens.Cloud;
 
 /// <summary>
-/// Keeps the mirrors and the library backup current: every few hours (and on request) each enabled mirror copies
-/// what is new, then the library itself goes to its cloud. One at a time, so the upload does not choke the connection.
+/// Keeps the backups of folders and of the library current: every hour (and on request) each backed up folder is
+/// compared with its copy in the cloud, every few hours the library itself goes to its cloud. One at a time, so the upload does not choke the connection.
 /// </summary>
 public sealed class MirrorScheduler : IDisposable
 {
@@ -32,9 +32,12 @@ public sealed class MirrorScheduler : IDisposable
         set => _db.SetSetting("mirror_hours", value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>Folders are compared with the cloud every hour: a listing, cheap when nothing changed.</summary>
+    public const double FolderHours = 1;
+
     public void Start() => _loop ??= Task.Run(() => LoopAsync(_stop.Token));
 
-    /// <summary>Runs a mirror now (or all of them with null).</summary>
+    /// <summary>Runs a mirror now (or all of them with null), also a stopped one.</summary>
     public void RunNow(long? mirrorId = null)
     {
         lock (_requested)
@@ -82,7 +85,7 @@ public sealed class MirrorScheduler : IDisposable
             {
                 var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var due = _cloud.Mirrors().Where(m => m.Enabled &&
-                    (m.LastRunAt == null || now - m.LastRunAt > IntervalHours * 3600_000)).Select(m => m.Id).ToHashSet();
+                    (m.LastRunAt == null || now - m.LastRunAt > FolderHours * 3600_000)).Select(m => m.Id).ToHashSet();
                 lock (_requested)
                 {
                     due.UnionWith(_requested);
@@ -92,11 +95,11 @@ public sealed class MirrorScheduler : IDisposable
                 {
                     var mirror = _cloud.Mirrors().FirstOrDefault(m => m.Id == id);
                     if (mirror == null) continue;
-                    StatusChanged?.Invoke($"Mirroring {mirror.SourceName} to {mirror.CloudName}...");
+                    StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}...");
                     try
                     {
                         await _cloud.MirrorAsync(id, new Progress<Rclone.CopyProgress>(p =>
-                            StatusChanged?.Invoke($"Mirroring {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})")), ct);
+                            StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})")), ct);
                     }
                     catch (RcloneException)
                     {

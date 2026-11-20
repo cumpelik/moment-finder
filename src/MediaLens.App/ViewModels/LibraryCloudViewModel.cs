@@ -181,7 +181,7 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
             _host.Cloud.BackupCloud = null;
             RecoveryText = "";
             // A cloud that folders are mirrored into stays known.
-            if (_host.Cloud.Mirrors().All(m => m.CloudId != cloud.Id)) await _host.Cloud.RemoveCloudAsync(cloud.Id, ct);
+            if (!_host.Cloud.CloudInUse(cloud.Id)) await _host.Cloud.RemoveCloudAsync(cloud.Id, ct);
             Status = "The library is on this computer only now. What was uploaded stays in the cloud.";
         });
 
