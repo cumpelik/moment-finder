@@ -316,6 +316,8 @@ public partial class MainWindow : Window
     // ---- player ----
 
     private PlayerViewModel? _panelPlayer;
+    /// <summary>What the panel showed before it closed (faces view, another mode), shown again when it comes back.</summary>
+    private long? _lastPanelItem;
 
     protected override void OnClosed(EventArgs e)
     {
@@ -375,6 +377,7 @@ public partial class MainWindow : Window
     {
         if (_panelPlayer is not { } old) return;
         _panelPlayer = null;
+        _lastPanelItem = old.Current.Item.Id;
         old.PropertyChanged -= OnPanelPlayerChanged;
         old.CloseRequested -= ClosePanelPlayer;
         Preview.IsVisible = false;
@@ -436,7 +439,9 @@ public partial class MainWindow : Window
                 return;
         }
         ApplyLayouts();
-        if (_vm.AnchorTile is { } tile)
+        var again = _vm.AnchorTile ?? _vm.Tiles.FirstOrDefault(t => t.Item.Id == _lastPanelItem);
+        if (again != null && _vm.AnchorTile == null) _vm.Select(again, false, false);
+        if (again is { } tile)
         {
             ShowInPanel(tile);
             Avalonia.Threading.Dispatcher.UIThread.Post(() => BringIntoView(tile), DispatcherPriority.Background);

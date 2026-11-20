@@ -10,6 +10,13 @@
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
         WindowStartupLocation="CenterScreen" WindowState="Maximized">
 
+    <Window.Styles>
+        <!-- A clicked button or choice must not keep the keyboard: Space, arrows and Enter belong to the photos -->
+        <Style Selector="Button, ToggleButton, ComboBox">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+    </Window.Styles>
+
     <Window.Resources>
         <!-- The code sets them by the mode: a grid sized by the slider, or a strip filling the space beside the viewer -->
         <UniformGridLayout x:Key="TileLayout" MinItemWidth="180" MinItemHeight="180"
@@ -256,11 +263,11 @@
             </Border>
 
             <!-- Result line; a bucket gets its own actions -->
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
                 <StackPanel Orientation="Horizontal" Spacing="14">
                     <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
                 </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsPersonScope}">
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <mi:MaterialIcon Kind="FaceRecognition" />
