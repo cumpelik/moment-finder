@@ -386,6 +386,28 @@ public sealed class PeopleRepository
     }
 
     /// <summary>"Not this person": the detection is freed and never offered for that person again.</summary>
+    /// <summary>A detection with everything that is the same person in that moment: its video track and the faces on it.</summary>
+    public List<long> SamePersonDetectionIds(long detectionId)
+    {
+        using var c = _db.Open();
+        return c.Query<long>("""
+            WITH d AS (SELECT id, track, linked_id FROM detection WHERE id=@detectionId),
+                 t AS (SELECT x.id FROM detection x, d WHERE x.id=d.id OR (d.track IS NOT NULL AND x.track=d.track))
+            SELECT id FROM t
+            UNION SELECT f.id FROM detection f WHERE f.linked_id IN (SELECT id FROM t)
+            UNION SELECT linked_id FROM detection WHERE id IN (SELECT id FROM t) AND linked_id IS NOT NULL
+            """, new { detectionId }).ToList();
+    }
+
+    /// <summary>Who these detections were confirmed as (to correct a mistake on a whole track).</summary>
+    public List<long> ConfirmedPersonsOf(IReadOnlyList<long> detectionIds)
+    {
+        if (detectionIds.Count == 0) return [];
+        using var c = _db.Open();
+        return c.Query<long>("SELECT DISTINCT person_id FROM detection WHERE id IN @detectionIds AND confirmed=1 AND person_id IS NOT NULL",
+            new { detectionIds }).ToList();
+    }
+
     public void Reject(IEnumerable<long> detectionIds, long personId)
     {
         using var c = _db.Open();

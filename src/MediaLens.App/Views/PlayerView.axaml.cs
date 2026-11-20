@@ -196,8 +196,14 @@ public partial class PlayerView : UserControl
         e.Handled = true;
         if (_vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) return;
         var wasRunning = vm.HoldForDialog();
-        var name = await Dialogs.PromptNameAsync(owner, "Who is it?", vm.Names());
-        if (name != null) vm.NameDetection(detectionId, name);
+        var box = vm.PeopleBoxes().FirstOrDefault(b => b.DetectionId == detectionId);
+        var (action, name) = await Dialogs.AskWhoAsync(owner, vm.Names(), box?.PersonName);
+        switch (action)
+        {
+            case Dialogs.WhoAction.Name: vm.NameDetection(detectionId, name!); break;
+            case Dialogs.WhoAction.NotThisPerson when box?.PersonId is { } personId: vm.RejectDetection(detectionId, personId); break;
+            case Dialogs.WhoAction.Ignore: vm.IgnoreDetection(detectionId); break;
+        }
         vm.ResumeAfterDialog(wasRunning);
         KeyboardWanted?.Invoke();
     }

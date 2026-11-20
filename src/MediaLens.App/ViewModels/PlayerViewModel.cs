@@ -105,6 +105,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private List<People.DetectionRow> _detections = [];
     private Dictionary<long, List<People.TrackBox>> _paths = [];
     private Dictionary<long, string> _names = [];
+    private HashSet<long> _hidden = [];
     private long _peopleTimeBucket = -1;
 
     public event Action? CloseRequested;
@@ -310,6 +311,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
         _paths = ShowPeople && Current.Item.IsVideo ? _main.People.TrackPaths(Current.Item.Id) : [];
         _names = ShowPeople ? _main.People.Names() : [];
+        _hidden = ShowPeople ? _main.People.HiddenPersonIds() : [];
         PeopleHint = !ShowPeople ? "" :
             _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
             IsVideo && IsRunning && !_main.BoxesWhilePlaying ? "Pause the video to see who is who." :
@@ -318,7 +320,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         PeopleChanged?.Invoke();
     }
 
-    public sealed record PeopleBox(long DetectionId, double X, double Y, double W, double H, string Label, bool Known, bool IsFace);
+    /// <summary>PersonId: who the box says (assigned or suggested), for "Not Greta".</summary>
+    public sealed record PeopleBox(long DetectionId, double X, double Y, double W, double H, string Label, bool Known, bool IsFace,
+        long? PersonId = null, string? PersonName = null);
 
     /// <summary>Boxes to draw now, in content pixels: one per person.</summary>
     public List<PeopleBox> PeopleBoxes()
@@ -330,6 +334,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var bodiesWithFace = _detections.Where(d => d.LinkedId != null).Select(d => d.LinkedId!.Value).ToHashSet();
             return _detections
                 .Where(d => d.Kind == Analysis.DetectionKind.Body || d.LinkedId == null)
+                .Where(d => d.PersonId is not { } p || !_hidden.Contains(p))
                 .Select(d => Box(d, d.X, d.Y, d.W, d.H, bodiesWithFace.Contains(d.Id) ? _detections.First(f => f.LinkedId == d.Id) : null))
                 .ToList();
         }
@@ -349,6 +354,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (dets.Count == 0) continue;
             var who = dets.OrderByDescending(d => d.Confirmed).ThenByDescending(d => d.PersonId != null).ThenByDescending(d => d.SuggestPersonId != null)
                 .ThenByDescending(d => d.Kind == Analysis.DetectionKind.Body).ThenByDescending(d => d.Quality).First();
+            if (who.PersonId is { } p && _hidden.Contains(p)) continue;
             boxes.Add(Box(who, b.X, b.Y, b.W, b.H, null));
         }
         return boxes;
@@ -378,8 +384,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var who = d.PersonId == null && face?.PersonId != null ? face : d;
         var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :
             who.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?";
+        var personId = who.PersonId ?? who.SuggestPersonId;
         return new PeopleBox(d.Id, x * ContentWidth, y * ContentHeight, w * ContentWidth, h * ContentHeight, label,
-            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face);
+            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId,
+            personId is { } id && _names.TryGetValue(id, out var name) ? name : null);
     }
 
     public IReadOnlyList<string> Names() => _main.People.PersonNames();
@@ -387,6 +395,18 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     public void NameDetection(long detectionId, string name)
     {
         _main.People.NameDetection(detectionId, name);
+        LoadPeople();
+    }
+
+    public void RejectDetection(long detectionId, long personId)
+    {
+        _main.People.RejectDetection(detectionId, personId);
+        LoadPeople();
+    }
+
+    public void IgnoreDetection(long detectionId)
+    {
+        _main.People.IgnoreDetection(detectionId);
         LoadPeople();
     }
 

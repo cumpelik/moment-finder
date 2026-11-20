@@ -422,11 +422,32 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(name)) return;
         var person = _host.People.FindOrCreatePerson(name);
+        // A correction: the person said before is not this one, on the whole track.
+        var same = _host.People.SamePersonDetectionIds(detectionId);
+        foreach (var other in _host.People.ConfirmedPersonsOf(same).Where(p => p != person.Id))
+            _host.People.Reject(same, other);
         _host.People.Confirm([detectionId], person.Id);
         AfterChange();
     }
 
+    /// <summary>"Not Greta" on a box: the name goes from the whole track and is never suggested for it again.</summary>
+    public void RejectDetection(long detectionId, long personId)
+    {
+        _host.People.Reject(_host.People.SamePersonDetectionIds(detectionId), personId);
+        AfterChange();
+    }
+
+    /// <summary>Not a person (a hand, a snow cannon) or a stranger: no box, never offered again.</summary>
+    public void IgnoreDetection(long detectionId)
+    {
+        _host.People.Confirm(_host.People.SamePersonDetectionIds(detectionId), _host.People.Strangers().Id);
+        AfterChange();
+    }
+
     public List<DetectionRow> DetectionsOf(long mediaId) => _host.People.DetectionsOfMedia(mediaId);
+
+    /// <summary>Strangers and things that are not people: no box for them.</summary>
+    public HashSet<long> HiddenPersonIds() => _host.People.ListPersons(true).Where(p => p.Hidden).Select(p => p.Id).ToHashSet();
 
     public Dictionary<long, List<TrackBox>> TrackPaths(long mediaId) =>
         _host.People.TrackPaths(mediaId).GroupBy(b => b.Track).ToDictionary(g => g.Key, g => g.ToList());
