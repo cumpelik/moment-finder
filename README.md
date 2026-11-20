@@ -24,9 +24,16 @@ and then work offline. Windows, Linux and macOS.
   Amazon S3, OneDrive, Google Drive or a folder. It is stored there as it is (it is of use to MediaLens only);
   the one thing that must not be readable, the access keys of your clouds, is encrypted on this computer before
   the upload (rclone crypt) with a key the application makes itself.
-- **Mirrors of folders** (originals into a cloud, under a folder named after the computer, never deleting
-  there) and cloud folders as sources: command line only for now; in the application they will come back as
-  an option of a source.
+- **A folder and the cloud** (the cloud button of a source in the sidebar): a folder is connected with a storage,
+  encrypted or not (per folder, a key made by the application and kept in the library), in one of two ways:
+  - *Backup*: the folder stays the main one. What is added is uploaded, what is moved or renamed is moved in the
+    cloud too (same size and time at a new place: nothing is uploaded again), what is deleted waits for the
+    user's word (delete in the cloud too, or bring back). Compared every hour. Other computers of the library
+    see it only for looking; one of them can take it over (download, then it is its folder and backup).
+  - *Move to the cloud*: after the backup is complete the copy in the cloud becomes a source of its own that
+    every computer may change; the folder here stays as a separate source and its files get their twins'
+    thumbnails and analysis without being read again. Keep it on this computer again: download, backed up.
+  A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
   On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
@@ -95,7 +102,8 @@ medialens clusters / name <group> <name> / persons / match
 medialens bucket add "Fotokniha" Eva lyže 2023
 medialens bucket export "Fotokniha" ~/Desktop/fotokniha
 medialens cloud add-onedrive Backup --password ...
-medialens mirror add <source> <cloud> / mirror run
+medialens mirror add <source> <cloud> [--encrypt] / mirror run / mirror gone|delete-gone|bring-back|to-cloud <mirror>
+medialens source home <source> <folder>
 medialens cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>
 medialens backup cloud <cloud> / backup run / recovery show / recovery restore <string>
 ```

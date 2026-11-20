@@ -17,9 +17,11 @@ public partial class SettingsWindow : Window
         // and its bindings (compiled for the cloud one) would fail on it.
         var cloud = main.CreateLibraryCloudViewModel();
         cloud.RestartRequested += Restart;
+        LibraryForm.DataContext = cloud.Form;
         CloudPanel.DataContext = cloud;
         StatusBar.DataContext = cloud;
         DataContext = main;
+        Closed += (_, _) => cloud.Detach();
     }
 
     private LibraryCloudViewModel? Cloud => CloudPanel.DataContext as LibraryCloudViewModel;
@@ -31,12 +33,6 @@ public partial class SettingsWindow : Window
     {
         if (Environment.ProcessPath is { } exe) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false });
         (Avalonia.Application.Current?.ApplicationLifetime as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown();
-    }
-
-    private async void OnPickFolder(object? sender, RoutedEventArgs e)
-    {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Folder to keep the library in" });
-        if (Cloud is { } vm && folders.Count > 0 && folders[0].TryGetLocalPath() is { } path) vm.Folder = path;
     }
 
     private async void OnCopyRecovery(object? sender, RoutedEventArgs e)

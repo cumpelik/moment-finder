@@ -94,18 +94,24 @@
                         </Grid>
                     </DataTemplate>
                     <DataTemplate DataType="vm:SidebarEntry">
-                        <Grid ColumnDefinitions="Auto,*,Auto" Background="Transparent" ToolTip.Tip="{Binding ToolTip}">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent" ToolTip.Tip="{Binding ToolTip}">
                             <Grid.ContextMenu>
                                 <ContextMenu IsVisible="{Binding HasMenu}">
                                     <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
-                                    <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding CanRescan}" />
+                                    <MenuItem Header="Cloud..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
+                                    <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding IsAway}" />
                                     <MenuItem Header="{Binding RemoveText}" Click="OnRemoveEntry" IsVisible="{Binding CanRemove}" />
                                 </ContextMenu>
                             </Grid.ContextMenu>
                             <mi:MaterialIcon Kind="{Binding Icon}" Margin="0,0,8,0" />
                             <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Count}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            <Button Grid.Column="3" Classes="icon sourcecloud" Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}"
+                                    ToolTip.Tip="{Binding CloudTip}" Margin="4,0,0,0">
+                                <mi:MaterialIcon Kind="{Binding CloudIcon}" Classes.attention="{Binding CloudAttention}"
+                                                 Classes.done="{Binding CloudDone}" Classes.idle="{Binding CloudIdle}" />
+                            </Button>
                         </Grid>
                     </DataTemplate>
                 </ListBox.DataTemplates>

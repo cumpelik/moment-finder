@@ -1,0 +1,169 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
+        xmlns:v="clr-namespace:MediaLens.App.Views"
+        x:Class="MediaLens.App.Views.SourceCloudWindow"
+        x:DataType="vm:SourceCloudViewModel"
+        Title="{Binding Title}"
+        Width="780" SizeToContent="Height" MinWidth="620" MinHeight="300"
+        WindowStartupLocation="CenterOwner">
+    <Window.Styles>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="RadioButton.mode">
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Top" />
+        </Style>
+        <Style Selector="TextBlock.warn">
+            <Setter Property="Foreground" Value="#F59E0B" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Always in sight: what is going on, and the way out -->
+        <Border DockPanel.Dock="Bottom" Padding="24,12" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource AppBorderBrush}">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" MaxLines="4" />
+                <Button Grid.Column="1" Command="{Binding StopCommand}" IsVisible="{Binding Busy}" Margin="12,0,0,0">Stop</Button>
+                <Button Grid.Column="2" Click="OnClose" Padding="20,6" Margin="12,0,0,0">Close</Button>
+            </Grid>
+        </Border>
+        <ScrollViewer>
+            <StackPanel Margin="24,24,24,16" Spacing="16">
+
+                <!-- A folder here, not connected yet -->
+                <StackPanel Spacing="16" IsVisible="{Binding IsLocal}">
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="12">
+                            <TextBlock Classes="section" Text="1. Which storage" />
+                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding HasClouds}">
+                                <TextBlock VerticalAlignment="Center" Text="Connected storage" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Destinations}" SelectedItem="{Binding Destination}" HorizontalAlignment="Stretch" />
+                            </Grid>
+                            <!-- The form has its own view model: what shows it is bound out here -->
+                            <Panel IsVisible="{Binding IsNewStorage}">
+                                <v:StorageForm x:Name="NewStorage" />
+                            </Panel>
+                            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding WhereText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="2. Encrypt it?" />
+                            <CheckBox IsChecked="{Binding Encrypt}">Encrypt the files</CheckBox>
+                            <TextBlock Classes="warn" IsVisible="{Binding KeyAtRisk}"
+                                       Text="The key is kept in your library, and the library is on this computer only. Keep the library in a cloud too (Settings), otherwise a lost computer means files nobody can read." />
+                            <TextBlock Classes="muted" TextWrapping="Wrap"
+                                       Text="Encrypted, the storage holds only noise: names and contents are unreadable there, only MediaLens with your library (or its recovery string) reads them. Without it the files are there as they are, and you can look at them in the storage's own app too. This cannot be changed later." />
+                        </StackPanel>
+                    </Border>
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="3. What it should be" />
+                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsBackupMode}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="A backup of this folder" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Your folder stays the main one. What you add is copied to the cloud, what you move or rename is moved there too, and what you delete is deleted there only after you say so. The backup is not another source in the library. Other computers of this library may look at it, not change it. When you lose this computer, another one can take the backup over and be the main one." />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsMoveMode}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="Move it to the cloud" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="It is copied to the cloud once and then lives there, as a source of its own; names, people and buckets go with it. Every computer of this library may add, move and delete in it. The folder on this computer stays as it is and stays in the library as a separate source: what changes in one does not reach the other. For moving your photos to the cloud step by step." />
+                                </StackPanel>
+                            </RadioButton>
+                            <TextBlock Classes="muted" TextWrapping="Wrap" Text="Either can be switched to the other later." />
+                        </StackPanel>
+                    </Border>
+                    <Button Classes="accent" Command="{Binding ConnectCommand}" IsEnabled="{Binding NotBusy}" Padding="16,6" HorizontalAlignment="Left"
+                            Content="{Binding ConnectText}" />
+                </StackPanel>
+
+                <!-- A folder here, not on this computer now -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsAway}">
+                    <TextBlock TextWrapping="Wrap" Text="{Binding AwayText}" />
+                </Border>
+
+                <!-- A folder here with its backup -->
+                <StackPanel Spacing="16" IsVisible="{Binding IsBackedUp}">
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="Backup" />
+                            <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding PlaceText}" />
+                            <TextBlock TextWrapping="Wrap" Text="{Binding LastText}" Classes="muted" Classes.warn="{Binding LastFailed}" />
+                            <WrapPanel>
+                                <Button Command="{Binding BackUpNowCommand}" IsVisible="{Binding !Stopped}" Margin="0,0,8,0">Back up now</Button>
+                                <Button Click="OnDisconnect" IsEnabled="{Binding NotBusy}"
+                                        ToolTip.Tip="The copy in the cloud stays as it is">Stop backing it up...</Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="18" IsVisible="{Binding HasGone}">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="Deleted here, still in the cloud" />
+                            <TextBlock Classes="warn" Text="{Binding GoneText}" />
+                            <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="8,4" MaxHeight="150">
+                                <ScrollViewer>
+                                    <ItemsControl ItemsSource="{Binding GoneFiles}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <TextBlock Classes="small" Text="{Binding}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+                            <WrapPanel>
+                                <Button Click="OnDeleteGone" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0">Delete them in the cloud too...</Button>
+                                <Button Command="{Binding BringBackCommand}" IsEnabled="{Binding NotBusy}"
+                                        ToolTip.Tip="Deleted by mistake: they are copied back into the folder">Bring them back into the folder</Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="Move it to the cloud" />
+                            <TextBlock Classes="muted" TextWrapping="Wrap"
+                                       Text="The copy in the cloud becomes a source of its own that lives there; names, people and buckets go with it, and every computer of this library may change it. This folder stays as it is, in the library as a separate source, no longer backed up." />
+                            <Button Click="OnMoveToCloud" IsVisible="{Binding CanMove}" HorizontalAlignment="Left">Move it to the cloud...</Button>
+                            <StackPanel Spacing="8" IsVisible="{Binding MoveWaiting}">
+                                <TextBlock Classes="warn" Text="{Binding MoveWaitingText}" />
+                                <Button Command="{Binding KeepHereCommand}" HorizontalAlignment="Left">Keep it here, backed up</Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- A folder that lives in the cloud -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsShared}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="In the cloud" />
+                        <TextBlock TextWrapping="Wrap" Text="{Binding CloudText}" />
+                        <TextBlock Classes="muted" TextWrapping="Wrap"
+                                   Text="To have it on this computer again as the main one: it is downloaded into a folder you choose (files already there are not downloaded again), and the copy in the cloud becomes its backup." />
+                        <Button Click="OnMakeHome" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Keep it on this computer, backed up...</Button>
+                    </StackPanel>
+                </Border>
+
+                <!-- The backup of another computer's folder -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsReadOnly}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="Backup of another computer" />
+                        <TextBlock TextWrapping="Wrap" Text="{Binding HomeText}" />
+                        <TextBlock Classes="muted" TextWrapping="Wrap"
+                                   Text="When that computer is gone, or this one should be the main one now: the folder is downloaded into a folder you choose here, this computer backs it up from then on, and the other one stops changing the backup." />
+                        <Button Click="OnMakeHome" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Make this computer its home...</Button>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

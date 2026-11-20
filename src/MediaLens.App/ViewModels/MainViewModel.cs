@@ -5,7 +5,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MediaLens.Analysis;
 using MediaLens.App.Services;
+using Material.Icons;
 using MediaLens.Buckets;
+using MediaLens.Cloud;
 using MediaLens.Library;
 using MediaLens.Search;
 
@@ -116,7 +118,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         LoadBrowseSettings();
 
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
-        host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text);
+        host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
+        host.Mirrors.MirrorsChanged += () => Dispatcher.UIThread.Post(OnCloudChanged);
+        host.Mirrors.FoldersChanged += host.Indexer.RequestScan;
         host.Indexer.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
         {
             _refreshPending = true;
@@ -152,13 +156,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SidebarItems.Add(new SidebarHeader("SOURCES", "Add a folder", SidebarKind.Source));
         var sources = _host.Repo.ListSources();
         var counts = _host.Repo.CountBySource();
+        var mirrors = _host.Cloud.Mirrors().GroupBy(m => m.SourceId).ToDictionary(g => g.Key, g => g.First());
         foreach (var s in sources)
         {
             // A folder of a library restored from another computer, or a disk that is not connected.
             var away = s.Kind == SourceKinds.Local && !Directory.Exists(s.Root);
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Source, s.Id, away ? s.Name + " (not here)" : s.Name, counts.GetValueOrDefault(s.Id).ToString("N0"),
-                away ? $"{s.Root} is not on this computer. Right click, Locate folder: say where it is now."
-                : s.Kind == SourceKinds.Cloud ? $"In the cloud: files are fetched when opened ({s.Remote})" : s.Root));
+            SidebarItems.Add(SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirrors.GetValueOrDefault(s.Id)));
         }
         IsLibraryEmpty = sources.Count == 0;
         var persons = _host.People.ListPersons();
@@ -188,6 +191,68 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _rebuilding = false;
         // A removed scope falls back to the whole library (and searches again).
         SelectedSidebarItem = restored ?? SidebarItems.OfType<SidebarEntry>().First();
+    }
+
+    private SidebarEntry SourceEntry(Source s, bool away, long count, MirrorInfo? mirror)
+    {
+        var tip = away ? $"{s.Root} is not on this computer. Right click, Locate folder: say where it is now."
+            : s.Kind == SourceKinds.Cloud ? $"In the cloud: files are fetched when opened ({s.Remote})" : s.Root;
+        var entry = new SidebarEntry(SidebarKind.Source, s.Id, away ? s.Name + " (not here)" : s.Name, count.ToString("N0"), tip) { IsAway = away };
+        if (s.Kind == SourceKinds.Cloud)
+            return s.ReadOnly
+                ? entry with
+                {
+                    IconOverride = MaterialIconKind.CloudLockOutline, CloudIcon = MaterialIconKind.CloudLockOutline,
+                    CloudTip = $"The backup of a folder on {s.HomeName ?? "another computer"}: here only for looking. Click to make this computer its home.",
+                }
+                : entry with
+                {
+                    IconOverride = MaterialIconKind.CloudOutline, CloudIcon = MaterialIconKind.CloudOutline,
+                    CloudTip = "Lives in the cloud. Click to keep it on this computer too.",
+                };
+        if (mirror == null)
+            return entry with { CloudIdle = true, CloudTip = "Back this folder up to a cloud, or move it there..." };
+        var moving = _host.Cloud.MoveRequested(mirror.Id);
+        if (mirror.Gone > 0 || !mirror.Enabled || mirror.LastResult is { } r && r != "OK")
+            return entry with
+            {
+                CloudIcon = MaterialIconKind.CloudAlertOutline, CloudAttention = true,
+                CloudTip = mirror.Gone > 0 ? $"{mirror.Gone:N0} files deleted here are still in the cloud. Click to decide." :
+                    !mirror.Enabled ? "The backup stopped. Click for why." : "The last backup failed. Click for why.",
+            };
+        if (mirror.LastRunAt == null || moving)
+            return entry with
+            {
+                CloudIcon = MaterialIconKind.CloudSyncOutline,
+                CloudTip = moving ? $"Moving to {mirror.CloudName}: after the backup is complete." : $"The first backup to {mirror.CloudName} is running.",
+            };
+        return entry with { CloudIcon = MaterialIconKind.CloudCheckOutline, CloudDone = true, CloudTip = $"Backed up to {mirror.CloudName}. Click for more." };
+    }
+
+    /// <summary>Something waits for the user in the backups: said in the status bar while nothing runs.</summary>
+    private string CloudSummary()
+    {
+        var mirrors = _host.Cloud.Mirrors();
+        var gone = mirrors.Sum(m => m.Gone);
+        var failed = mirrors.Count(m => !m.Enabled || m.LastResult is { } r && r != "OK");
+        return gone > 0 ? $"{gone:N0} {(gone == 1 ? "file deleted here is" : "files deleted here are")} still in the cloud: click the orange cloud of the folder."
+            : failed > 0 ? "A backup needs a look: click the orange cloud of the folder." : "";
+    }
+
+    /// <summary>A backup ran, a folder moved to the cloud or got a home here: the sidebar shows it, copies get their twins' analysis.</summary>
+    public void OnCloudChanged()
+    {
+        RebuildSidebar();
+        if (MirrorText.Length == 0 || !MirrorText.StartsWith("Backing up", StringComparison.Ordinal) && !MirrorText.StartsWith("Moving", StringComparison.Ordinal))
+            MirrorText = CloudSummary();
+        _host.Indexer.Wake();
+    }
+
+    public SourceCloudViewModel CreateSourceCloudViewModel(long sourceId)
+    {
+        var vm = new SourceCloudViewModel(_host, sourceId);
+        vm.SourcesChanged += OnCloudChanged;
+        return vm;
     }
 
     private void RefreshSidebarCounts()

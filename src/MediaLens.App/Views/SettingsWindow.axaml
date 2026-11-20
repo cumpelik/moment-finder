@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
+        xmlns:v="clr-namespace:MediaLens.App.Views"
         xmlns:c="clr-namespace:MediaLens.Cloud;assembly=MediaLens.Core"
         x:Class="MediaLens.App.Views.SettingsWindow"
         x:DataType="vm:MainViewModel"
@@ -54,44 +55,12 @@
                         <TextBlock Classes="section" Text="The library in a cloud" />
                         <TextBlock Classes="muted" TextWrapping="Wrap"
                                    Text="The library is what MediaLens knows about your photos and videos: these settings, the folders, names and people, buckets, search data and thumbnails. Kept in a cloud, it comes back on any computer from one recovery string. It is stored there as it is; only the access keys of your clouds are encrypted, with a key that is in the recovery string." />
-                        <TextBlock Foreground="#F97066" TextWrapping="Wrap" IsVisible="{Binding RcloneMissing}"
-                                   Text="rclone was not found. The installer brings it along; for a development build install rclone (rclone.org)." />
-
                         <!-- Not connected: the storage -->
                         <StackPanel Spacing="10" IsVisible="{Binding NotConnected}">
+                            <v:StorageForm x:Name="LibraryForm" />
                             <Grid ColumnDefinitions="300,*">
-                                <TextBlock Classes="label" Text="Storage" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding Kinds}" SelectedItem="{Binding Kind}" HorizontalAlignment="Stretch" />
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding NeedsAddress}">
-                                <TextBlock Classes="label" Text="{Binding Kind.AddressLabel}" />
-                                <TextBox Grid.Column="1" Text="{Binding Endpoint}" PlaceholderText="{Binding Kind.AddressHint}" />
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding IsS3}">
-                                <TextBlock Classes="label" Text="Access key" />
-                                <TextBox Grid.Column="1" Text="{Binding AccessKey}" />
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding IsS3}">
-                                <TextBlock Classes="label" Text="Secret key" />
-                                <TextBox Grid.Column="1" Text="{Binding SecretKey}" PasswordChar="*" />
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding IsS3}">
-                                <TextBlock Classes="label" Text="Bucket (made if it is not there)" />
-                                <TextBox Grid.Column="1" Text="{Binding Bucket}" />
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*,Auto" IsVisible="{Binding IsFolder}">
-                                <TextBlock Classes="label" Text="Folder" />
-                                <TextBox Grid.Column="1" Text="{Binding Folder}" />
-                                <Button Grid.Column="2" Click="OnPickFolder" Margin="6,0,0,0">Choose...</Button>
-                            </Grid>
-                            <Grid ColumnDefinitions="300,*">
-                                <StackPanel Grid.Column="1" Spacing="8">
-                                    <TextBlock Classes="muted" TextWrapping="Wrap" IsVisible="{Binding IsSignIn}" Text="Connect opens your browser to sign in." />
-                                    <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding KeysHint}"
-                                               IsVisible="{Binding KeysHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <Button Classes="accent" Command="{Binding ConnectCommand}" IsEnabled="{Binding !Busy}"
-                                            HorizontalAlignment="Left" Padding="16,6">Connect and keep the library there</Button>
-                                </StackPanel>
+                                <Button Grid.Column="1" Classes="accent" Command="{Binding ConnectCommand}" IsEnabled="{Binding NotBusy}"
+                                        HorizontalAlignment="Left" Padding="16,6">Connect and keep the library there</Button>
                             </Grid>
                         </StackPanel>
 
@@ -102,12 +71,12 @@
                                     <TextBlock Text="{Binding ConnectedText}" FontWeight="SemiBold" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding BackupSummary}" Classes="muted" TextWrapping="Wrap" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Command="{Binding DisconnectCommand}" IsEnabled="{Binding !Busy}" VerticalAlignment="Top"
+                                <Button Grid.Column="1" Command="{Binding DisconnectCommand}" IsEnabled="{Binding NotBusy}" VerticalAlignment="Top"
                                         ToolTip.Tip="The library stays on this computer only; what is in the cloud is not deleted">Disconnect</Button>
                             </Grid>
                             <WrapPanel>
                                 <Button Command="{Binding BackUpNowCommand}" Margin="0,0,8,0">Back up now</Button>
-                                <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" IsEnabled="{Binding !Busy}"
+                                <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" IsEnabled="{Binding NotBusy}"
                                         ToolTip.Tip="One string that brings the whole library back on any computer">Show my recovery string</Button>
                             </WrapPanel>
                             <StackPanel Spacing="8" IsVisible="{Binding RecoveryText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
@@ -128,10 +97,10 @@
                     <StackPanel Spacing="12">
                         <TextBlock Classes="section" Text="Bring a library back" />
                         <TextBlock Classes="muted" TextWrapping="Wrap"
-                                   Text="On a new or second computer: paste the recovery string of your library. It replaces the library on this computer (the old one is kept beside it as library.before-restore.db). Folders that are not on this computer are browsed from the cloud where they were mirrored." />
+                                   Text="On a new or second computer: paste the recovery string of your library. It replaces the library on this computer (the old one is kept beside it as library.before-restore.db). Folders that are not on this computer are browsed from the cloud where they were backed up." />
                         <TextBox Text="{Binding RestoreText}" PlaceholderText="Paste your recovery string here" TextWrapping="Wrap" MaxHeight="100"
                                  FontFamily="monospace" FontSize="12" />
-                        <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding !Busy}" HorizontalAlignment="Left">Find my library</Button>
+                        <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Find my library</Button>
                         <StackPanel Spacing="10" IsVisible="{Binding HasFoundBackups}">
                             <ListBox ItemsSource="{Binding FoundBackups}" SelectedItem="{Binding SelectedBackup}" MaxHeight="110">
                                 <ListBox.ItemTemplate>
@@ -142,7 +111,7 @@
                             </ListBox>
                             <CheckBox IsChecked="{Binding RestoreThumbnails}"
                                       ToolTip.Tip="Without them the library is here sooner, and the thumbnails are made again from the originals">With thumbnails</CheckBox>
-                            <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding !Busy}" HorizontalAlignment="Left" Padding="16,6">Bring this library back</Button>
+                            <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Bring this library back</Button>
                         </StackPanel>
                         <Button Classes="accent" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}" HorizontalAlignment="Left" Padding="16,6">Restart MediaLens to open it</Button>
                     </StackPanel>

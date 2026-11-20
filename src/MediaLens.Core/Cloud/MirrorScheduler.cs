@@ -19,6 +19,8 @@ public sealed class MirrorScheduler : IDisposable
     /// <summary>Text for the status bar; empty when nothing runs.</summary>
     public event Action<string>? StatusChanged;
     public event Action? MirrorsChanged;
+    /// <summary>A backup found the folder changed, or a folder moved to the cloud: the library scans again.</summary>
+    public event Action? FoldersChanged;
 
     public MirrorScheduler(CloudService cloud, Database db)
     {
@@ -98,10 +100,19 @@ public sealed class MirrorScheduler : IDisposable
                     StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}...");
                     try
                     {
-                        await _cloud.MirrorAsync(id, new Progress<Rclone.CopyProgress>(p =>
+                        var result = await _cloud.MirrorAsync(id, new Progress<Rclone.CopyProgress>(p =>
                             StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})")), ct);
+                        if (result.Moved + result.Gone > 0) FoldersChanged?.Invoke();
+                        // All of it is in the cloud now: the folder moves there, if the user asked for it.
+                        if (_cloud.MoveRequested(id) && _cloud.Mirrors().FirstOrDefault(m => m.Id == id) is { Gone: 0 })
+                        {
+                            StatusChanged?.Invoke($"Moving {mirror.SourceName} to {mirror.CloudName}...");
+                            await _cloud.MoveToCloudAsync(id, null, ct);
+                            _cloud.RequestMoveToCloud(id, false);
+                            FoldersChanged?.Invoke();
+                        }
                     }
-                    catch (RcloneException)
+                    catch (Exception e) when (e is RcloneException or InvalidOperationException)
                     {
                         // Recorded in the mirror's last result; tried again at the next interval.
                     }

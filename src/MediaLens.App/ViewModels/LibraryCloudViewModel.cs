@@ -5,52 +5,16 @@ using MediaLens.Cloud;
 
 namespace MediaLens.App.ViewModels;
 
-/// <summary>A kind of storage the library can be kept in, as offered in Settings.</summary>
-public sealed record StorageKind(string Title, string Provider, string AddressLabel, string AddressHint)
-{
-    public bool IsS3 => Provider.Length > 0;
-    /// <summary>IDrive e2 tells its address by the access key: nothing to fill in.</summary>
-    public bool NeedsAddress => AddressLabel.Length > 0;
-    public override string ToString() => Title;
-}
-
 /// <summary>
 /// Settings, the library in a cloud: where the library itself (settings, names, search data, thumbnails) is kept,
 /// the recovery string, and bringing a library back on a new or second computer.
 /// </summary>
-public sealed partial class LibraryCloudViewModel : ObservableObject
+public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
 {
-    private const string Address = "Address (endpoint)";
     private readonly LibraryHost _host;
-    private CancellationTokenSource? _cts;
 
-    public IReadOnlyList<StorageKind> Kinds { get; } =
-    [
-        new("IDrive e2", "IDrive", "", ""),
-        new("S3 compatible (other)", "Other", Address, "e.g. s3.example.com"),
-        new("Amazon S3", "AWS", "Region", "e.g. eu-central-1"),
-        new("Backblaze B2", "Other", Address, "e.g. s3.eu-central-003.backblazeb2.com"),
-        new("Wasabi", "Wasabi", Address, "e.g. s3.eu-central-1.wasabisys.com"),
-        new("MinIO", "Minio", Address, "e.g. https://minio.example.com:9000"),
-        new("OneDrive", "", "", ""),
-        new("Google Drive", "", "", ""),
-        new("Folder (NAS, external disk)", "", "", ""),
-    ];
-
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsS3), nameof(IsFolder), nameof(IsSignIn), nameof(NeedsAddress), nameof(KeysHint))] private StorageKind _kind;
-    [ObservableProperty] private string _endpoint = "";
-    [ObservableProperty] private string _accessKey = "";
-    [ObservableProperty] private string _secretKey = "";
-    [ObservableProperty] private string _bucket;
-    [ObservableProperty] private string _folder = "";
-
-    public bool IsS3 => Kind.IsS3;
-    public bool NeedsAddress => Kind.IsS3 && Kind.NeedsAddress;
-    /// <summary>Where the keys come from, for the kind that needs nothing else.</summary>
-    public string KeysHint => Kind.Provider == "IDrive" ? "The two keys are in IDrive e2 under Access Keys. The address is found by them." : "";
-    public bool IsFolder => Kind.Title.StartsWith("Folder", StringComparison.Ordinal);
-    public bool IsSignIn => !IsS3 && !IsFolder;
-    public bool RcloneMissing => !Rclone.IsAvailable;
+    /// <summary>The storage to keep the library in; a bucket of the library's own is made if it is not there.</summary>
+    public StorageFormViewModel Form { get; }
 
     /// <summary>The library has its cloud: the form gives way to the state and the recovery string.</summary>
     [ObservableProperty, NotifyPropertyChangedFor(nameof(NotConnected))] private bool _connected;
@@ -67,22 +31,22 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
     /// <summary>A library is downloaded and waits for the next start.</summary>
     [ObservableProperty] private bool _restartNeeded;
 
-    [ObservableProperty] private string _status = "";
-    [ObservableProperty] private bool _busy;
-
     public event Action? RestartRequested;
 
     public LibraryCloudViewModel(LibraryHost host)
     {
         _host = host;
-        _kind = Kinds[0];
-        // A bucket of the library's own, made if it is not there: nothing to prepare at the provider.
-        _bucket = "medialens-" + host.Cloud.LibraryId;
+        Form = new StorageFormViewModel("medialens-" + host.Cloud.LibraryId);
         Reload();
-        host.Mirrors.MirrorsChanged += () => Avalonia.Threading.Dispatcher.UIThread.Post(Reload);
+        host.Mirrors.MirrorsChanged += OnMirrorsChanged;
     }
 
-    private void Reload()
+    private void OnMirrorsChanged() => Avalonia.Threading.Dispatcher.UIThread.Post(Reload);
+
+    /// <summary>The window closed: no more updates.</summary>
+    public void Detach() => _host.Mirrors.MirrorsChanged -= OnMirrorsChanged;
+
+    protected override void Reload()
     {
         var cloud = _host.Cloud.BackupCloud;
         Connected = cloud != null;
@@ -94,78 +58,20 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
             : backup.LastResult is { } failed && failed != "OK" ? $"Not backed up yet: {failed}" : "The first backup is running or starts in a moment.";
     }
 
-    private async Task RunAsync(string what, Func<CancellationToken, Task> action)
-    {
-        _cts = new CancellationTokenSource();
-        Busy = true;
-        Status = what;
-        try
-        {
-            await action(_cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Status = "Stopped.";
-        }
-        catch (Exception e) when (e is RcloneException or IOException or HttpRequestException or InvalidOperationException)
-        {
-            Status = "Failed: " + Plain(e.Message);
-        }
-        finally
-        {
-            Busy = false;
-            Reload();
-        }
-    }
-
-    /// <summary>What a storage's answer means, in words; the answer itself stays at the end for whoever needs it.</summary>
-    private static string Plain(string error)
-    {
-        // rclone's own stamp ("2026/11/20 20:25:32 NOTICE: ") says nothing here.
-        error = System.Text.RegularExpressions.Regex.Replace(error.Trim(), @"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d (NOTICE|ERROR)?\s*:?\s*", "");
-        if (error.LastIndexOf("last error was:", StringComparison.Ordinal) is >= 0 and var last) error = error[(last + 15)..].Trim();
-        bool Has(string part) => error.Contains(part, StringComparison.OrdinalIgnoreCase);
-        var meaning =
-            Has("SignatureDoesNotMatch") ? "The secret key does not belong to this access key."
-            : Has("InvalidAccessKeyId") ? "The storage does not know this access key."
-            : Has("BucketAlreadyExists") ? "A bucket of this name belongs to somebody else: choose another name."
-            : Has("NoSuchBucket") ? "There is no such bucket, and it could not be made."
-            : Has("AccessDenied") || Has("Forbidden") ? "The key is not allowed to do this. It has to read and write the bucket (and to make it, if it is not there)."
-            : Has("send request failed") || Has("no such host") || Has("dial tcp") || Has("connection refused") ? "The storage does not answer. Check the address and the internet connection."
-            : null;
-        return meaning == null ? error : $"{meaning} ({error.Trim()})";
-    }
-
-    [RelayCommand]
-    private void Stop() => _cts?.Cancel();
-
     /// <summary>Connects the storage, keeps the library in it from now on and shows the recovery string.</summary>
     [RelayCommand]
     private Task Connect()
     {
-        if (IsS3 && (NeedsAddress && string.IsNullOrWhiteSpace(Endpoint) || string.IsNullOrWhiteSpace(AccessKey) || string.IsNullOrWhiteSpace(SecretKey) || string.IsNullOrWhiteSpace(Bucket)))
+        if (Form.Missing() is { } missing)
         {
-            Status = NeedsAddress ? $"Fill in the {Kind.AddressLabel.ToLowerInvariant()}, both keys and the bucket." : "Fill in both keys and the bucket.";
+            Status = missing;
             return Task.CompletedTask;
         }
-        if (IsFolder && string.IsNullOrWhiteSpace(Folder))
+        return RunAsync(Form.ConnectingText, async ct =>
         {
-            Status = "Choose the folder.";
-            return Task.CompletedTask;
-        }
-        var kind = Kind;
-        return RunAsync(IsSignIn ? "Sign in in the browser window that opened..." : "Connecting...", async ct =>
-        {
-            var aws = kind.Provider == "AWS";
             // The library is stored as it is (index, search data, thumbnails: of use to MediaLens only); what must
             // not be readable, the access keys of the clouds, is encrypted by the backup itself.
-            var cloud = kind.IsS3
-                ? await _host.Cloud.AddS3Async(kind.Title, new S3Settings(kind.Provider, aws || !kind.NeedsAddress ? "" : Endpoint.Trim(), aws ? Endpoint.Trim() : "",
-                    AccessKey.Trim(), SecretKey.Trim(), Bucket.Trim()), null, ct, encrypt: false)
-                : kind.Title == "OneDrive" ? await _host.Cloud.AddOneDriveAsync(kind.Title, null, ct, encrypt: false)
-                : kind.Title == "Google Drive" ? await _host.Cloud.AddGoogleDriveAsync(kind.Title, null, ct, encrypt: false)
-                : await _host.Cloud.AddFolderAsync("Folder", Folder.Trim(), null, ct, encrypt: false);
-            SecretKey = "";
+            var cloud = await Form.ConnectAsync(_host.Cloud, ct);
             _host.Cloud.BackupCloud = cloud;
             RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
             _host.Mirrors.BackupNow();
@@ -180,7 +86,7 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
         {
             _host.Cloud.BackupCloud = null;
             RecoveryText = "";
-            // A cloud that folders are mirrored into stays known.
+            // A cloud that folders are backed up to or live in stays known.
             if (!_host.Cloud.CloudInUse(cloud.Id)) await _host.Cloud.RemoveCloudAsync(cloud.Id, ct);
             Status = "The library is on this computer only now. What was uploaded stays in the cloud.";
         });

@@ -518,6 +518,14 @@ public sealed class CloudService
     }
 
     /// <summary>
+    /// The user wants the folder moved to the cloud: done by the scheduler once the backup is complete (which may take
+    /// hours the first time) and nothing deleted waits for a decision.
+    /// </summary>
+    public void RequestMoveToCloud(long mirrorId, bool move) => _db.SetSetting($"move_to_cloud_{mirrorId}", move ? "1" : null);
+
+    public bool MoveRequested(long mirrorId) => _db.GetSetting($"move_to_cloud_{mirrorId}") == "1";
+
+    /// <summary>
     /// The folder moves to the cloud: after a last backup, the copy in the cloud becomes a source of its own that lives
     /// there (everything known about the files stays with it: names, buckets). The folder on this computer stays in
     /// the library as another source, its files get what is known from their twins without being read again.
@@ -531,6 +539,8 @@ public sealed class CloudService
             throw new InvalidOperationException($"First decide about the {mirror.Gone} files deleted from the folder that are still in the cloud.");
         var source = _repo.ListSources().First(s => s.Id == mirror.SourceId);
         var cloud = Clouds().First(x => x.Id == mirror.CloudId);
+        // The library knows the folder as it is now (moved and deleted files), so both sources start from the same.
+        await new LibraryScanner(_repo, Rclone).ScanAsync(source, null, ct);
         await new FolderMarker(FolderMarker.Shared, Device.Id, Device.Name, source.Name).WriteAsync(Rclone, mirror.Place, ct);
         var cache = Path.Combine(_paths.CacheDir, "cloud", source.Id.ToString());
         long localId;
@@ -557,16 +567,20 @@ public sealed class CloudService
     /// <summary>
     /// A folder in the cloud gets a home on this computer: downloaded into the folder (files already there are not
     /// downloaded again), the source becomes that local folder (everything known stays), and its copy in the cloud is
-    /// its backup from now on, this computer's. For a folder moved to the cloud, and after losing a computer.
+    /// its backup from now on, this computer's. For a folder moved to the cloud, and after losing a computer. A chosen
+    /// folder that holds other things gets it as a folder of its own inside. Returns where it is.
     /// </summary>
-    public async Task MakeHomeAsync(long sourceId, string folder, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
+    public async Task<string> MakeHomeAsync(long sourceId, string folder, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
     {
         var source = _repo.ListSources().First(s => s.Id == sourceId);
         if (source.Kind != SourceKinds.Cloud || source.Remote is not { } remote) throw new InvalidOperationException("This is not a folder in a cloud.");
         var cloud = CloudOf(source) ?? throw new InvalidOperationException("The cloud of this folder is not connected.");
+        var name = source.Name.EndsWith($" ({cloud.Name})", StringComparison.Ordinal) ? source.Name[..^(cloud.Name.Length + 3)] : source.Name;
+        if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any() &&
+            !string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)), name, StringComparison.OrdinalIgnoreCase))
+            folder = Path.Combine(folder, Sanitize(name));
         Directory.CreateDirectory(folder);
         await Rclone.CopyAsync(remote, folder, ["--exclude", ".*", "--exclude", ".*/**"], progress, ct);
-        var name = source.Name.EndsWith($" ({cloud.Name})", StringComparison.Ordinal) ? source.Name[..^(cloud.Name.Length + 3)] : source.Name;
         var target = remote.StartsWith(cloud.Remote, StringComparison.Ordinal) ? remote[cloud.Remote.Length..].Trim('/') : name;
         var encrypted = cloud.Encrypted || !remote.StartsWith(cloud.Remote, StringComparison.Ordinal);
         var full = Path.GetFullPath(folder);
@@ -588,6 +602,7 @@ public sealed class CloudService
         await new FolderMarker(FolderMarker.Backup, Device.Id, Device.Name, name).WriteAsync(Rclone, remote, ct);
         var cache = Path.Combine(_paths.CacheDir, "cloud", sourceId.ToString());
         try { if (Directory.Exists(cache)) Directory.Delete(cache, true); } catch (IOException) { }
+        return full;
     }
 
     /// <summary>

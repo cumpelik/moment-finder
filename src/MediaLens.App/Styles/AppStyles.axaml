@@ -12,6 +12,17 @@
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
+    <!-- The cloud button of a source in the sidebar: the state of its backup -->
+    <Style Selector="Button.sourcecloud mi|MaterialIcon.attention">
+        <Setter Property="Foreground" Value="#F59E0B" />
+    </Style>
+    <Style Selector="Button.sourcecloud mi|MaterialIcon.done">
+        <Setter Property="Foreground" Value="#10B981" />
+    </Style>
+    <Style Selector="Button.sourcecloud mi|MaterialIcon.idle">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
     <Style Selector="TextBlock.muted">
         <Setter Property="Foreground" Value="{DynamicResource MutedForegroundBrush}" />
     </Style>

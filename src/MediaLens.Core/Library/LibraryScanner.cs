@@ -189,7 +189,7 @@ public sealed class LibraryScanner
             var fresh = new List<ScannedFile>();
             foreach (var f in scanned)
             {
-                if (!known.ContainsKey(f.RelPath) && MovedFrom(source, f, movedIds, null) is { } old)
+                if (!known.ContainsKey(f.RelPath) && MovedFrom(source, f, movedIds, seen) is { } old)
                 {
                     _repo.Move(old, source.Id, f.RelPath, f.Mtime);
                     movedIds.Add(old);

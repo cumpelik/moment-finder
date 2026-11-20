@@ -610,6 +610,13 @@ public partial class MainWindow : Window
 
     private void OnRescanEntry(object? sender, RoutedEventArgs e) => _vm?.RescanCommand.Execute(null);
 
+    /// <summary>A source and the cloud: back it up, move it there, or give a folder in the cloud a home here.</summary>
+    private async void OnSourceCloud(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        await new SourceCloudWindow(_vm.CreateSourceCloudViewModel(entry.Id)).ShowDialog(this);
+    }
+
     private async void OnLocateEntry(object? sender, RoutedEventArgs e)
     {
         if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
