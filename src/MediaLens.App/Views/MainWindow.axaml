@@ -218,35 +218,67 @@
                 </ItemsRepeater>
             </ScrollViewer>
 
-            <!-- Who is this: unnamed groups of faces -->
-            <DockPanel Grid.Row="2" Grid.RowSpan="1" IsVisible="{Binding IsGroupsMode}" Margin="12,8,12,8">
+            <!-- Who is this: everybody without a name, groups of faces and people without a visible face -->
+            <DockPanel Grid.Row="2" IsVisible="{Binding IsGroupsMode}" Margin="12,8,12,8">
                 <TextBlock DockPanel.Dock="Top" Classes="muted" Text="{Binding People.ClustersSummary}" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding People.Clusters}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="vm:CropViewModel">
-                                <Border Classes="card" Margin="0,0,10,10">
-                                    <StackPanel Spacing="6" Width="140">
-                                        <Button Padding="0" Click="OnNameCluster" ToolTip.Tip="Who is it?" Background="Transparent">
-                                            <Image Source="{Binding Image}" Width="140" Height="140" Stretch="UniformToFill" />
-                                        </Button>
-                                        <Grid ColumnDefinitions="*,Auto">
-                                            <TextBlock Text="{Binding Caption}" Classes="muted small" VerticalAlignment="Center" />
-                                            <Button Grid.Column="1" Classes="icon" Click="OnIgnoreCluster"
-                                                    ToolTip.Tip="A stranger: never show this group again">
-                                                <mi:MaterialIcon Kind="EyeOffOutline" />
+                    <StackPanel Spacing="8">
+                        <TextBlock Classes="heading" Text="FACES" IsVisible="{Binding People.HasClusters}" Margin="0" />
+                        <ItemsControl ItemsSource="{Binding People.Clusters}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:CropViewModel">
+                                    <Border Classes="card" Margin="0,0,10,10">
+                                        <StackPanel Spacing="6" Width="140">
+                                            <Button Padding="0" Click="OnNameCluster" ToolTip.Tip="Who is it?" Background="Transparent">
+                                                <Image Source="{Binding Image}" Width="140" Height="140" Stretch="UniformToFill" />
                                             </Button>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Text="{Binding Caption}" Classes="muted small" VerticalAlignment="Center" />
+                                                <Button Grid.Column="1" Classes="icon" Click="OnIgnoreCluster"
+                                                        ToolTip.Tip="A stranger: never show this group again">
+                                                    <mi:MaterialIcon Kind="EyeOffOutline" />
+                                                </Button>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Classes="heading" Text="WITHOUT A VISIBLE FACE (HELMETS, FROM BEHIND, FAR AWAY)" IsVisible="{Binding People.HasFigures}" Margin="0" />
+                        <ItemsControl ItemsSource="{Binding People.Figures}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:CropViewModel">
+                                    <Border Classes="card" Margin="0,0,10,10">
+                                        <StackPanel Spacing="6" Width="120">
+                                            <Button Padding="0" Click="OnNameCluster" ToolTip.Tip="Who is it?" Background="Transparent">
+                                                <Image Source="{Binding Image}" Width="120" Height="180" Stretch="Uniform" />
+                                            </Button>
+                                            <TextBlock Text="{Binding Caption}" Classes="muted small" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Caption}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="2" HorizontalAlignment="Right">
+                                                <Button Classes="icon" Click="OnShowFigure" ToolTip.Tip="Show where it is (in the video at this moment)">
+                                                    <mi:MaterialIcon Kind="PlayCircleOutline" />
+                                                </Button>
+                                                <Button Classes="icon" Click="OnIgnoreCluster" ToolTip.Tip="A stranger: never show again">
+                                                    <mi:MaterialIcon Kind="EyeOffOutline" />
+                                                </Button>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </ScrollViewer>
             </DockPanel>
 

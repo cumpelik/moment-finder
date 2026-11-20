@@ -337,10 +337,71 @@ public sealed class PeopleRepository
             SELECT d.cluster AS Cluster, COUNT(*) AS Faces, COUNT(DISTINCT d.media_id) AS Media,
                    (SELECT d2.id FROM detection d2 WHERE d2.cluster=d.cluster ORDER BY d2.quality DESC LIMIT 1) AS CoverId
             FROM detection d JOIN media m ON m.id=d.media_id
-            WHERE d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
+            WHERE d.kind=@face AND d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
             GROUP BY d.cluster HAVING COUNT(DISTINCT d.media_id) >= 2
             ORDER BY Media DESC
-            """).ToList();
+            """, new { face = (int)DetectionKind.Face }).ToList();
+    }
+
+    public sealed class FigureInfo
+    {
+        /// <summary>The group of alike figures (IdentityService.ClusterFigures).</summary>
+        public long GroupKey { get; init; }
+        public long MediaId { get; init; }
+        public long CoverId { get; init; }
+        public int TimeMs { get; init; }
+        public long Media { get; init; }
+        public long Tracks { get; init; }
+    }
+
+    /// <summary>
+    /// People nobody named whose face does not identify them (helmet and goggles, seen from behind, too small):
+    /// groups of alike figures of one event, the clearest first. A group whose face is already among the
+    /// groups of faces is left to that group.
+    /// </summary>
+    public List<FigureInfo> UnnamedFigures(IReadOnlySet<long> faceClusters, int limit = 300)
+    {
+        using var c = _db.Open();
+        var members = c.Query<(long Cluster, long Id, long? Track, long MediaId, int TimeMs, double Quality)>("""
+            SELECT d.cluster, d.id, d.track, d.media_id, d.time_ms, d.quality
+            FROM detection d JOIN media m ON m.id=d.media_id
+            WHERE d.kind=@body AND d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
+            """, new { body = (int)DetectionKind.Body }).ToList();
+        var skip = new HashSet<long>();
+        if (faceClusters.Count > 0)
+            foreach (var (track, linked) in c.Query<(long? Track, long? Linked)>(
+                         "SELECT track, linked_id FROM detection WHERE kind=@face AND person_id IS NULL AND cluster IN @faceClusters",
+                         new { face = (int)DetectionKind.Face, faceClusters }))
+            {
+                if (track is { } t) skip.Add(t);
+                if (linked is { } l) skip.Add(l);
+            }
+        return members.GroupBy(m => m.Cluster)
+            .Where(g => !g.Any(m => skip.Contains(m.Id) || m.Track is { } t && skip.Contains(t)))
+            .Select(g =>
+            {
+                var cover = g.MaxBy(m => m.Quality);
+                return (Quality: cover.Quality, Info: new FigureInfo
+                {
+                    GroupKey = g.Key, MediaId = cover.MediaId, CoverId = cover.Id, TimeMs = cover.TimeMs,
+                    Media = g.Select(m => m.MediaId).Distinct().Count(), Tracks = g.Select(m => m.Track ?? m.Id).Distinct().Count(),
+                });
+            })
+            .OrderByDescending(x => x.Info.Tracks).ThenByDescending(x => x.Quality)
+            .Take(limit).Select(x => x.Info).ToList();
+    }
+
+    /// <summary>The unnamed detections of a group of figures: its bodies and the faces on them or on their tracks.</summary>
+    public List<long> FigureDetectionIds(long groupKey)
+    {
+        using var c = _db.Open();
+        return c.Query<long>("""
+            WITH b AS (SELECT id, track FROM detection WHERE kind=@body AND cluster=@groupKey AND person_id IS NULL)
+            SELECT id FROM b
+            UNION
+            SELECT f.id FROM detection f WHERE f.kind=@face AND f.person_id IS NULL
+              AND (f.linked_id IN (SELECT id FROM b) OR f.track IN (SELECT track FROM b WHERE track IS NOT NULL))
+            """, new { groupKey, body = (int)DetectionKind.Body, face = (int)DetectionKind.Face }).ToList();
     }
 
     public List<long> ClusterDetectionIds(long cluster)

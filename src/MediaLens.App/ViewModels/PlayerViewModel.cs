@@ -38,6 +38,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private int _index;
     [ObservableProperty] private bool _autoPlay;
+    [ObservableProperty] private string _peopleHint = "";
     [ObservableProperty] private Bitmap? _photo;
     [ObservableProperty] private bool _isVideo;
     [ObservableProperty] private string _title = "";
@@ -118,6 +119,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _video.Play(item.FullPath, entry.StartMs);
+                // Saying who is who: a still picture, so the boxes stay on the people.
+                if (ShowPeople) _video.Pause();
                 _positionTimer.Start();
             }
             else
@@ -136,12 +139,27 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
-    partial void OnShowPeopleChanged(bool value) => LoadPeople();
+    partial void OnShowPeopleChanged(bool value)
+    {
+        LoadPeople();
+        // In a video the people are known at sampled moments: stop at the nearest one so the boxes fit.
+        if (value && IsVideo && _video != null && _detections.Count > 0)
+        {
+            var now = _video.TimeMs;
+            var nearest = _detections.MinBy(d => Math.Abs(d.TimeMs - now))!.TimeMs;
+            _video.Pause();
+            if (Math.Abs(nearest - now) > 1000) _video.Seek(nearest);
+        }
+    }
 
     private void LoadPeople()
     {
         _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
         _names = ShowPeople ? _main.People.Names() : [];
+        PeopleHint = !ShowPeople ? "" :
+            _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
+            IsVideo ? "Click a person to say who it is. Space plays on; the boxes show at the moments the analysis looked at." :
+            "Click a person to say who it is.";
         _peopleTimeBucket = -1;
         PeopleChanged?.Invoke();
     }
@@ -152,7 +170,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     public List<PeopleBox> PeopleBoxes()
     {
         if (!ShowPeople) return [];
-        var now = IsVideo && _video != null ? _video.TimeMs : 0;
+        // Paused on the first frame, libVLC still says 0: the video was opened at its start time.
+        var now = IsVideo && _video != null ? (_video.TimeMs > 0 ? _video.TimeMs : Current.StartMs) : 0;
         return _detections
             .Where(d => !IsVideo || Math.Abs(d.TimeMs - now) <= 1500)
             .Select(d => new PeopleBox(d.Id, d.X * ContentWidth, d.Y * ContentHeight, d.W * ContentWidth, d.H * ContentHeight,

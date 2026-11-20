@@ -104,6 +104,15 @@ public sealed class VideoPlayer : IDisposable
         }
     }
 
+    private volatile bool _pauseOnFrame;
+
+    /// <summary>Pauses now, or on the first frame of a video that is just starting (not before, the picture would stay black).</summary>
+    public void Pause()
+    {
+        if (_player.IsPlaying && Frame != null) _player.SetPause(true);
+        else _pauseOnFrame = true;
+    }
+
     public void Seek(long ms)
     {
         if (_player.IsSeekable) _player.Time = Math.Max(0, ms);
@@ -183,6 +192,11 @@ public sealed class VideoPlayer : IDisposable
                     Marshal.Copy(_latest, y * rowBytes, fb.Address + y * fb.RowBytes, rowBytes);
         }
         FrameUpdated?.Invoke();
+        if (_pauseOnFrame)
+        {
+            _pauseOnFrame = false;
+            ThreadPool.QueueUserWorkItem(_ => _player.SetPause(true));
+        }
     }
 
     public void Dispose()

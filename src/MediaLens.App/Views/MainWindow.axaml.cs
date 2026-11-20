@@ -277,12 +277,22 @@ public partial class MainWindow : Window
     {
         if (_vm == null || (sender as Control)?.DataContext is not CropViewModel card) return;
         var name = await Dialogs.PromptNameAsync(this, "Who is this?", _vm.People.PersonNames());
-        if (name != null) _vm.People.NameCluster(card, name);
+        if (name == null) return;
+        if (card.FigureKey != null) _vm.People.NameFigure(card, name);
+        else _vm.People.NameCluster(card, name);
     }
 
     private void OnIgnoreCluster(object? sender, RoutedEventArgs e)
     {
-        if (_vm != null && (sender as Control)?.DataContext is CropViewModel card) _vm.People.IgnoreCluster(card);
+        if (_vm == null || (sender as Control)?.DataContext is not CropViewModel card) return;
+        if (card.FigureKey != null) _vm.People.IgnoreFigure(card);
+        else _vm.People.IgnoreCluster(card);
+    }
+
+    /// <summary>A figure in its photo or video, with the boxes on, so it is clear who it is.</summary>
+    private void OnShowFigure(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel card) _vm.OpenMedia(card.MediaId, card.TimeMs, showPeople: true);
     }
 
     private async void OnReviewOther(object? sender, RoutedEventArgs e) => await ReviewOtherAsync();

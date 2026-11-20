@@ -14,6 +14,9 @@ public sealed partial class CropViewModel : ObservableObject
     public long MediaId { get; }
     public DetectionKind Kind { get; }
     public long? Cluster { get; init; }
+    /// <summary>A figure without a usable face: its video track (or the detection in a photo).</summary>
+    public long? FigureKey { get; init; }
+    public int TimeMs { get; init; }
     public long Count { get; init; }
     public string Caption { get; init; } = "";
 
@@ -56,9 +59,12 @@ public sealed partial class PeopleViewModel : ObservableObject
     private Dictionary<long, string> _names = [];
 
     public ObservableCollection<CropViewModel> Clusters { get; } = [];
+    public ObservableCollection<CropViewModel> Figures { get; } = [];
     public ObservableCollection<CropViewModel> PersonCrops { get; } = [];
 
     [ObservableProperty] private string _clustersSummary = "";
+    [ObservableProperty] private bool _hasClusters;
+    [ObservableProperty] private bool _hasFigures;
     [ObservableProperty] private CropViewModel? _reviewCrop;
     [ObservableProperty] private Bitmap? _reviewContext;
     [ObservableProperty] private string _reviewQuestion = "";
@@ -97,7 +103,9 @@ public sealed partial class PeopleViewModel : ObservableObject
     public void LoadClusters()
     {
         Clusters.Clear();
-        foreach (var c in _host.People.UnnamedClusters())
+        Figures.Clear();
+        var groups = _host.People.UnnamedClusters();
+        foreach (var c in groups)
         {
             var crop = new CropViewModel(c.CoverId, 0, DetectionKind.Face)
             {
@@ -108,9 +116,26 @@ public sealed partial class PeopleViewModel : ObservableObject
             crop.Load(CropPath(c.CoverId), 160);
             Clusters.Add(crop);
         }
-        ClustersSummary = Clusters.Count == 0
-            ? "No unnamed faces. Groups appear here as the analysis finds the same face in more photos."
-            : $"{Clusters.Count} groups of faces nobody named yet. Click one and write who it is; an existing name adds the faces to that person.";
+        var items = new Dictionary<long, MediaLens.Library.MediaItem?>();
+        foreach (var f in _host.People.UnnamedFigures(groups.Select(g => g.Cluster).ToHashSet()))
+        {
+            if (!items.TryGetValue(f.MediaId, out var item)) items[f.MediaId] = item = _host.Repo.Get(f.MediaId);
+            var crop = new CropViewModel(f.CoverId, f.MediaId, DetectionKind.Body)
+            {
+                FigureKey = f.GroupKey,
+                TimeMs = f.TimeMs,
+                Caption = f.Media > 1 ? $"{f.Media} videos and photos" :
+                    item == null ? "" : item.IsVideo ? $"{item.FileName} {TimeSpan.FromMilliseconds(f.TimeMs):m\\:ss}" : item.FileName,
+            };
+            crop.Load(CropPath(f.CoverId), 160);
+            Figures.Add(crop);
+        }
+        HasClusters = Clusters.Count > 0;
+        HasFigures = Figures.Count > 0;
+        ClustersSummary = Clusters.Count + Figures.Count == 0
+            ? "Everybody found so far has a name. New people appear here as the analysis goes through the photos and videos."
+            : "Click a person and write who it is. An existing name adds them to that person, and the analysis then " +
+              "looks for them elsewhere (by the face, and on the same day also by the clothes). The eye hides strangers for good.";
     }
 
     public void NameCluster(CropViewModel card, string name)
@@ -120,6 +145,27 @@ public sealed partial class PeopleViewModel : ObservableObject
         _host.People.Confirm(_host.People.ClusterDetectionIds(cluster), person.Id);
         if (person.CoverDetectionId == null) _host.People.SetCover(person.Id, card.DetectionId);
         Clusters.Remove(card);
+        HasClusters = Clusters.Count > 0;
+        AfterChange();
+    }
+
+    public void NameFigure(CropViewModel card, string name)
+    {
+        if (card.FigureKey is not { } key || string.IsNullOrWhiteSpace(name)) return;
+        var person = _host.People.FindOrCreatePerson(name);
+        _host.People.Confirm(_host.People.FigureDetectionIds(key), person.Id);
+        if (person.CoverDetectionId == null) _host.People.SetCover(person.Id, card.DetectionId);
+        Figures.Remove(card);
+        HasFigures = Figures.Count > 0;
+        AfterChange();
+    }
+
+    public void IgnoreFigure(CropViewModel card)
+    {
+        if (card.FigureKey is not { } key) return;
+        _host.People.Confirm(_host.People.FigureDetectionIds(key), _host.People.Strangers().Id);
+        Figures.Remove(card);
+        HasFigures = Figures.Count > 0;
         AfterChange();
     }
 
@@ -129,6 +175,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         if (card.Cluster is not { } cluster) return;
         _host.People.Confirm(_host.People.ClusterDetectionIds(cluster), _host.People.Strangers().Id);
         Clusters.Remove(card);
+        HasClusters = Clusters.Count > 0;
         AfterChange();
     }
 

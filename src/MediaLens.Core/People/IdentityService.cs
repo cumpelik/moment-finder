@@ -23,6 +23,8 @@ public sealed class IdentityService
     public float BodyAuto { get; set; } = 0.72f;
     public float BodySuggest { get; set; } = 0.6f;
     public float BodyMinQuality { get; set; } = 0.25f;
+    /// <summary>Unnamed figures of one event this alike are offered as one person in Who is this.</summary>
+    public float FigureCluster { get; set; } = 0.75f;
     public float Margin { get; set; } = 0.06f;
     private const int MaxPrototypes = 400;
 
@@ -63,6 +65,7 @@ public sealed class IdentityService
             MatchOutfits(bodies, rejections);
             SpreadTracks(all);
             ClusterFaces(faces);
+            ClusterFigures(bodies);
 
             var changed = all.Where(d => !d.Confirmed && Snapshot(d) != before[d.Id]).ToList();
             _repo.SaveAssignments(changed);
@@ -262,6 +265,56 @@ public sealed class IdentityService
             var norm = TensorPrimitives.Norm(c.Sum);
             TensorPrimitives.Divide(c.Sum, norm, c.Unit);
             f.Cluster = c.Id;
+        }
+    }
+
+    /// <summary>
+    /// Unnamed figures for Who is this: a video track is one unit (the tracker loses a skier who leaves the
+    /// picture, so one person makes several tracks), units of one event with alike clothes are one group.
+    /// Blurry or cut figures may join a group but not start one.
+    /// </summary>
+    private void ClusterFigures(List<DetectionRow> bodies)
+    {
+        var units = bodies.Where(b => b.PersonId == null)
+            .GroupBy(b => b.Track ?? b.Id)
+            .Select(g =>
+            {
+                var good = g.Where(b => b.Quality >= BodyMinQuality).ToList();
+                var sum = new float[g.First().Embedding.Length];
+                foreach (var b in good.Count > 0 ? good : g.ToList()) TensorPrimitives.Add(sum, b.Embedding, sum);
+                var norm = TensorPrimitives.Norm(sum);
+                if (norm > 0) TensorPrimitives.Divide(sum, norm, sum);
+                return (Key: g.Key, Members: g.ToList(), Event: g.First().EventId, Quality: g.Max(b => b.Quality), Unit: sum);
+            })
+            .OrderByDescending(u => u.Quality).ThenBy(u => u.Key).ToList();
+        foreach (var ev in units.GroupBy(u => u.Event ?? -u.Key))
+        {
+            var leaders = new List<(long Id, float[] Sum, float[] Unit)>();
+            foreach (var u in ev)
+            {
+                var best = -1;
+                var bestScore = FigureCluster;
+                for (var i = 0; i < leaders.Count; i++)
+                {
+                    var s = TensorPrimitives.Dot(u.Unit, leaders[i].Unit);
+                    if (s > bestScore) { bestScore = s; best = i; }
+                }
+                long cluster;
+                if (best < 0)
+                {
+                    if (u.Quality < BodyMinQuality) continue;
+                    leaders.Add((u.Key, (float[])u.Unit.Clone(), (float[])u.Unit.Clone()));
+                    cluster = u.Key;
+                }
+                else
+                {
+                    var l = leaders[best];
+                    TensorPrimitives.Add(l.Sum, u.Unit, l.Sum);
+                    TensorPrimitives.Divide(l.Sum, TensorPrimitives.Norm(l.Sum), l.Unit);
+                    cluster = l.Id;
+                }
+                foreach (var b in u.Members) b.Cluster = cluster;
+            }
         }
     }
 }

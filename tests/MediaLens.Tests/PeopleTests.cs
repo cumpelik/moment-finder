@@ -90,6 +90,38 @@ public class PeopleTests
         Assert.All(groups, g => Assert.Equal(2, g.Media));
     }
 
+    /// <summary>Skiers without a face: one card per person and day, not per video track; naming the card names all of it.</summary>
+    [Fact]
+    public async Task FiguresWithoutFaceAreOfferedAsOnePersonPerDay()
+    {
+        using var lib = new TestLibrary();
+        string[] files = ["v1.jpg", "v2.jpg", "v3.jpg"];
+        foreach (var f in files)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse("2024-02-10 10:00", System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var ids = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        var repo = new PeopleRepository(lib.Db);
+        new EventBuilder(lib.Db).Rebuild();
+        // Jacket 5 in two tracks of one video and in another video; jacket 7 once; a blurry figure alone.
+        repo.ReplaceDetections(ids["v1.jpg"], [Body(Emb(5), time: 0, track: 1), Body(Emb(5, 0.15f), time: 2000, track: 1),
+            Body(Emb(5, 0.2f), time: 9000, track: 2), Body(Emb(7), time: 0, track: 3)]);
+        repo.ReplaceDetections(ids["v2.jpg"], [Body(Emb(5, 0.1f), time: 4000, track: 1)]);
+        repo.ReplaceDetections(ids["v3.jpg"], [Body(Emb(9), quality: 0.1f)]);
+        new IdentityService(repo).Recompute();
+
+        var figures = repo.UnnamedFigures(new HashSet<long>());
+        Assert.Equal(2, figures.Count);
+        Assert.Equal(2, figures[0].Media);
+        Assert.Equal(3, figures[0].Tracks);
+
+        var eva = repo.CreatePerson("Eva");
+        repo.Confirm(repo.FigureDetectionIds(figures[0].GroupKey), eva.Id);
+        new IdentityService(repo).Recompute();
+        Assert.Equal(2, repo.ListPersons().Single().MediaCount);
+        Assert.Single(repo.UnnamedFigures(new HashSet<long>()));
+        Assert.Empty(repo.UnnamedClusters()); // figure groups are not groups of faces
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

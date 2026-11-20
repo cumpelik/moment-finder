@@ -143,12 +143,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             SidebarItems.Add(new SidebarEntry(SidebarKind.Source, s.Id, s.Name, counts.GetValueOrDefault(s.Id).ToString("N0"), s.Root));
         IsLibraryEmpty = sources.Count == 0;
         var persons = _host.People.ListPersons();
-        var groups = _host.People.UnnamedClusters().Count;
+        var clusters = _host.People.UnnamedClusters();
+        var groups = clusters.Count + _host.People.UnnamedFigures(clusters.Select(c => c.Cluster).ToHashSet()).Count;
         var suggestions = _host.People.SuggestionCount();
         if (persons.Count > 0 || groups > 0 || suggestions > 0 || _host.PeopleModel != null)
         {
             SidebarItems.Add(new SidebarHeader("PEOPLE", "", SidebarKind.Person));
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Groups, 0, "Who is this?", groups.ToString("N0"), "Groups of faces nobody named yet"));
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Groups, 0, "Who is this?", groups.ToString("N0"),
+                "People nobody named yet: groups of faces, and people without a visible face (helmets, from behind)"));
             SidebarItems.Add(new SidebarEntry(SidebarKind.Review, 0, "Review suggestions", suggestions.ToString("N0"),
                 "The analysis is not sure: confirm or reject, one key per answer"));
             foreach (var p in persons)
@@ -526,12 +528,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PlayerRequested?.Invoke(CreatePlayer(Tiles.ToList(), index, autoPlay: false));
     }
 
-    /// <summary>Opens one item by id (from a face crop).</summary>
-    public void OpenMedia(long mediaId)
+    /// <summary>Opens one item by id (from a face crop); a video at the moment of the crop, with the people boxes on.</summary>
+    public void OpenMedia(long mediaId, int timeMs = 0, bool showPeople = false)
     {
         if (_host.Repo.Get(mediaId) is not { } item) return;
-        var tile = Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
-        PlayerRequested?.Invoke(CreatePlayer([tile], 0, autoPlay: false));
+        var tile = timeMs > 0 ? new TileViewModel(item, timeMs) : Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
+        var player = CreatePlayer([tile], 0, autoPlay: false);
+        player.ShowPeople = showPeople;
+        PlayerRequested?.Invoke(player);
     }
 
     /// <summary>Plays the selection when there is more than one selected item, otherwise the whole result.</summary>
