@@ -85,8 +85,7 @@ public sealed class PeopleAnalyzer
             Save(video.Id, []);
             return;
         }
-        // About one frame a second for short clips, at most 90 frames for long videos.
-        var interval = Math.Clamp(duration / 90, 1.0, 20.0);
+        var interval = FrameIntervalMs(video.DurationMs ?? 0) / 1000.0;
         var dir = Path.Combine(_paths.CacheDir, "people-frames", video.Id.ToString(CultureInfo.InvariantCulture));
         try
         {
@@ -117,9 +116,13 @@ public sealed class PeopleAnalyzer
         }
     }
 
+    /// <summary>How far apart the analyzed frames of a video are: about one a second for short clips, at most 90 frames.</summary>
+    public static int FrameIntervalMs(long durationMs) => (int)(Math.Clamp(durationMs / 1000.0 / 90, 1.0, 20.0) * 1000);
+
     /// <summary>
     /// A person seen in 90 frames does not need 90 stored detections: per track and kind the best few,
-    /// spread over time. Links to dropped detections are dropped; the track still connects them.
+    /// spread over time, plus the first and the last one (when the person is on screen, for playing only
+    /// their moments). Links to dropped detections are dropped; the track still connects them.
     /// </summary>
     private static List<(NewDetection Det, RgbImage? Crop)> KeepRepresentatives(List<(NewDetection Det, RgbImage? Crop, int Frame)> all)
     {
@@ -134,6 +137,11 @@ public sealed class PeopleAnalyzer
                 picked.Add(i);
             }
             keep.UnionWith(picked);
+            if (group.Key.Track != null)
+            {
+                keep.Add(group.MinBy(t => t.x.Det.TimeMs).i);
+                keep.Add(group.MaxBy(t => t.x.Det.TimeMs).i);
+            }
         }
         var order = keep.Order().ToList();
         var newIndex = order.Select((old, idx) => (old, idx)).ToDictionary(t => t.old, t => t.idx);

@@ -92,11 +92,8 @@
                         <Button.Flyout>
                             <Flyout Placement="BottomEdgeAlignedRight">
                                 <StackPanel Spacing="10" Width="260">
-                                    <TextBlock Text="Photo duration in a slideshow (seconds)" />
+                                    <TextBlock Text="How long a photo shows in Play all and Shuffle (seconds)" TextWrapping="Wrap" />
                                     <NumericUpDown Value="{Binding SlideSeconds}" Minimum="1" Maximum="60" Increment="1" FormatString="0" />
-                                    <CheckBox IsChecked="{Binding VideoHighlightsOnly}">
-                                        <TextBlock TextWrapping="Wrap" Text="Videos found by a search: play only the matching part" />
-                                    </CheckBox>
                                 </StackPanel>
                             </Flyout>
                         </Button.Flyout>
@@ -159,7 +156,12 @@
 
             <!-- Result line; a bucket gets its own actions -->
             <Grid ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
-                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="14">
+                    <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <ToggleSwitch IsChecked="{Binding VideoHighlightsOnly}" IsVisible="{Binding CanPlayMoments}" VerticalAlignment="Center"
+                                  OnContent="{Binding MomentsLabel}" OffContent="{Binding MomentsLabel}"
+                                  ToolTip.Tip="On: videos play only these moments, one after another. Off: whole videos." />
+                </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -199,6 +201,9 @@
                             <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
                                 <Grid>
                                     <Image Source="{Binding Thumb}" Stretch="UniformToFill" />
+                                    <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Open (or double click the picture)">
+                                        <mi:MaterialIcon Kind="Play" Width="30" Height="30" Foreground="White" />
+                                    </Button>
                                     <Border Classes="badge" IsVisible="{Binding IsVideo}"
                                             HorizontalAlignment="Right" VerticalAlignment="Bottom">
                                         <StackPanel Orientation="Horizontal" Spacing="3">

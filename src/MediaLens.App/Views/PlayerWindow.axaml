@@ -42,6 +42,8 @@
                     <StackPanel VerticalAlignment="Center" Spacing="2">
                         <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding MomentText}" FontSize="12" Foreground="#F59E0B"
+                                   IsVisible="{Binding MomentText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
                         <Button Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">

@@ -157,6 +157,8 @@ public sealed class Database
 
         ALTER TABLE source ADD COLUMN remote TEXT;
         """,
+        // People analysis 2 changed only videos: photos stay as they are.
+        "UPDATE media SET people_version=2 WHERE kind=1 AND people_version=1;",
     ];
 
     private static void Migrate(SqliteConnection c)

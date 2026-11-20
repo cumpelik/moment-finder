@@ -72,6 +72,11 @@ public partial class MainWindow : Window
         GridScroll.Focus();
     }
 
+    private void OnTilePlay(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is TileViewModel tile) _vm.Open(tile);
+    }
+
     private void OnTileDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (_vm != null && TileOf(e) is { } tile) _vm.Open(tile);

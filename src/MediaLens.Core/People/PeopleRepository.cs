@@ -435,6 +435,40 @@ public sealed class PeopleRepository
     }
 
     /// <summary>For a video: where each person appears first (playback starts there).</summary>
+    /// <summary>
+    /// When the people are on screen in each video: the spans of their tracks, widened by the frame interval
+    /// (a person is seen at sampled frames only) and merged when they touch.
+    /// </summary>
+    public Dictionary<long, List<(int StartMs, int EndMs)>> PersonSegments(IEnumerable<long> personIds)
+    {
+        var ids = personIds.ToList();
+        if (ids.Count == 0) return [];
+        using var c = _db.Open();
+        var spans = c.Query<(long MediaId, long From, long To, long Duration)>("""
+            SELECT d.media_id, MIN(d.time_ms), MAX(d.time_ms), COALESCE(m.duration_ms, 0)
+            FROM detection d JOIN media m ON m.id=d.media_id
+            WHERE m.kind=2 AND d.track IN (SELECT track FROM detection WHERE person_id IN @ids AND track IS NOT NULL)
+            GROUP BY d.media_id, d.track
+            """, new { ids }).ToList();
+        var result = new Dictionary<long, List<(int, int)>>();
+        foreach (var video in spans.GroupBy(s => s.MediaId))
+        {
+            var pad = PeopleAnalyzer.FrameIntervalMs(video.First().Duration);
+            var merged = new List<(int Start, int End)>();
+            foreach (var s in video.OrderBy(s => s.From))
+            {
+                var start = (int)Math.Max(0, s.From - pad / 2);
+                var end = (int)(s.To + pad);
+                if (merged.Count > 0 && start <= merged[^1].End + 1000)
+                    merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, end));
+                else
+                    merged.Add((start, end));
+            }
+            result[video.Key] = merged;
+        }
+        return result;
+    }
+
     public Dictionary<long, int> FirstAppearance(IEnumerable<long> personIds)
     {
         var ids = personIds.ToList();

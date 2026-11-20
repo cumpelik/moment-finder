@@ -11,9 +11,11 @@ using MediaLens.Media;
 
 namespace MediaLens.App.ViewModels;
 
-public sealed record PlaylistEntry(MediaItem Item, int StartMs);
+/// <summary>An item to show; for a video found by a search or a person, the moments that matter.</summary>
+public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? Moments = null);
 
-public sealed record PlayerSettings(int SlideSeconds, bool VideoHighlightsOnly);
+/// <summary>OnlyMoments: videos play only their Moments (the person, the matching part), then go on.</summary>
+public sealed record PlayerSettings(int SlideSeconds, bool OnlyMoments, string? MomentsOf = null);
 
 /// <summary>
 /// The full-screen viewer: browsing (arrows) or a slideshow (photos for N seconds, videos to the end or only
@@ -21,9 +23,6 @@ public sealed record PlayerSettings(int SlideSeconds, bool VideoHighlightsOnly);
 /// </summary>
 public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 {
-    /// <summary>Highlights mode: how long a video plays from the matching frame.</summary>
-    private const int HighlightMs = 12_000;
-
     private readonly List<PlaylistEntry> _entries;
     private readonly PlayerSettings _settings;
     private readonly MainViewModel _main;
@@ -33,12 +32,16 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private VideoPlayer? _video;
     private int _loadVersion;
     private bool _seeking;
+    private int _moment;
+    private bool _insideMoment;
 
     public PixelSize ScreenSize { get; set; } = new(1920, 1080);
 
     [ObservableProperty] private int _index;
     [ObservableProperty] private bool _autoPlay;
     [ObservableProperty] private string _peopleHint = "";
+    /// <summary>"Greta: 2 / 3" while only the moments of a video play.</summary>
+    [ObservableProperty] private string _momentText = "";
     [ObservableProperty] private Bitmap? _photo;
     [ObservableProperty] private bool _isVideo;
     [ObservableProperty] private string _title = "";
@@ -99,10 +102,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         PositionText = PositionLabel();
         InBucket = _main.IsInActiveBucket(item.Id);
 
+        _moment = 0;
+        _insideMoment = false;
         if (item.IsVideo)
         {
             Photo = null;
             IsVideo = true;
+            MomentText = MomentLabel();
             if (!VideoPlayer.IsAvailable(out var error))
             {
                 Error = error;
@@ -118,7 +124,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
             if (Cloud.MediaFiles.IsLocal(item))
             {
-                _video.Play(item.FullPath, entry.StartMs);
+                _video.Play(item.FullPath, StartOf(entry));
                 // Saying who is who: a still picture, so the boxes stay on the people.
                 if (ShowPeople) _video.Pause();
                 _positionTimer.Start();
@@ -131,6 +137,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         else
         {
             IsVideo = false;
+            MomentText = "";
             _positionTimer.Stop();
             _video?.Stop();
             _ = ShowPhotoAsync(entry, version);
@@ -171,7 +178,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         if (!ShowPeople) return [];
         // Paused on the first frame, libVLC still says 0: the video was opened at its start time.
-        var now = IsVideo && _video != null ? (_video.TimeMs > 0 ? _video.TimeMs : Current.StartMs) : 0;
+        var now = IsVideo && _video != null ? (_video.TimeMs > 0 ? _video.TimeMs : StartOf(Current)) : 0;
         return _detections
             .Where(d => !IsVideo || Math.Abs(d.TimeMs - now) <= 1500)
             .Select(d => new PeopleBox(d.Id, d.X * ContentWidth, d.Y * ContentHeight, d.W * ContentWidth, d.H * ContentHeight,
@@ -197,7 +204,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
             if (version != _loadVersion || _video == null) return;
             Error = null;
-            _video.Play(path, entry.StartMs);
+            _video.Play(path, StartOf(entry));
             _positionTimer.Start();
         }
         catch (Exception e) when (e is Cloud.RcloneException or IOException)
@@ -278,10 +285,37 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             _peopleTimeBucket = time / 500;
             PeopleChanged?.Invoke();
         }
-        // Highlights: only the part around the match, then the next item.
-        if (AutoPlay && _settings.VideoHighlightsOnly && Current.StartMs > 0 && time > Current.StartMs + HighlightMs)
-            Next();
+        // Only the moments: at the end of one jump to the next, after the last one go on (or stop when browsing).
+        // Right after a switch libVLC may still report the previous video's time: act only once inside the moment.
+        if (Moments is not { } moments || _moment >= moments.Count) return;
+        var (start, end) = moments[_moment];
+        if (!_insideMoment)
+        {
+            _insideMoment = time >= start - 1500 && time <= end;
+            return;
+        }
+        if (time <= end) return;
+        _insideMoment = false;
+        if (++_moment < moments.Count)
+        {
+            _video.Seek(moments[_moment].StartMs);
+            MomentText = MomentLabel();
+        }
+        else if (AutoPlay) Next();
+        else _video.Pause();
     }
+
+    /// <summary>The moments to play of the current video, when the setting says so.</summary>
+    private IReadOnlyList<(int StartMs, int EndMs)>? Moments =>
+        _settings.OnlyMoments && IsVideo && Current.Moments is { Count: > 0 } m ? m : null;
+
+    private string MomentLabel() => Moments is { } m
+        ? $"{_settings.MomentsOf ?? "Matching part"}: {Math.Min(_moment + 1, m.Count)} / {m.Count}"
+        : "";
+
+    /// <summary>Where a video starts: its first moment, or the matching frame.</summary>
+    private int StartOf(PlaylistEntry entry) =>
+        _settings.OnlyMoments && entry.Moments is { Count: > 0 } m ? m[0].StartMs : entry.StartMs;
 
     /// <summary>The slider was dragged.</summary>
     public void SeekTo(double ms)

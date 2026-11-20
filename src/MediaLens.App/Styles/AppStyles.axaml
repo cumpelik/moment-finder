@@ -50,6 +50,26 @@
     </Style>
 
     <!-- Thumbnail tiles -->
+    <!-- The open button appears on the tile under the mouse -->
+    <Style Selector="Button.tileplay">
+        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="Width" Value="56" />
+        <Setter Property="Height" Value="56" />
+        <Setter Property="CornerRadius" Value="28" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Background" Value="#99000000" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.tileplay:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#CC000000" />
+    </Style>
+    <Style Selector="Border.tile:pointerover Button.tileplay">
+        <Setter Property="IsVisible" Value="True" />
+    </Style>
     <Style Selector="Border.tile">
         <Setter Property="Background" Value="{DynamicResource TileBackgroundBrush}" />
         <Setter Property="BorderThickness" Value="3" />

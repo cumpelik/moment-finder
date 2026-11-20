@@ -63,7 +63,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _mirrorText = "";
     [ObservableProperty] private int _slideSeconds = 5;
+    /// <summary>Videos play only the moments of the searched person or the matching part.</summary>
     [ObservableProperty] private bool _videoHighlightsOnly;
+    [ObservableProperty] private bool _canPlayMoments;
+    [ObservableProperty] private string _momentsLabel = "";
 
     /// <summary>The view opens the player window.</summary>
     public event Action<PlayerViewModel>? PlayerRequested;
@@ -444,6 +447,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (keepSelection && hits.Count == Tiles.Count && hits.Select(h => h.Item.Id).SequenceEqual(Tiles.Select(t => t.Item.Id)))
         {
             UpdateSummary(hits.Count, hasText);
+            UpdateMomentsSwitch();
             return;
         }
         var tiles = hits.Select(h => new TileViewModel(h.Item, h.TimeMs) { IsSelected = selectedIds.Contains(h.Item.Id) });
@@ -451,6 +455,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _anchorIndex = -1;
         MarkBucketMembership();
         UpdateSummary(hits.Count, hasText);
+        UpdateMomentsSwitch();
         if (!keepSelection) ResultsReset?.Invoke();
     }
 
@@ -554,9 +559,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PlayerRequested?.Invoke(CreatePlayer(list, 0, autoPlay: true));
     }
 
-    private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay) =>
-        new(tiles.Select(t => new PlaylistEntry(t.Item, t.StartMs)).ToList(), index, autoPlay,
-            new PlayerSettings(SlideSeconds, VideoHighlightsOnly), this);
+    private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
+    {
+        var (personIds, names, hasText) = CurrentQuery();
+        var segments = personIds.Count > 0 ? _host.People.PersonSegments(personIds) : [];
+        var entries = tiles.Select(t => new PlaylistEntry(t.Item, t.StartMs,
+            !t.Item.IsVideo ? null :
+            personIds.Count > 0 ? segments.GetValueOrDefault(t.Item.Id) :
+            hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)] : null)).ToList();
+        return new PlayerViewModel(entries, index, autoPlay,
+            new PlayerSettings(SlideSeconds, VideoHighlightsOnly, names.Count > 0 ? string.Join(" + ", names) : null), this);
+    }
+
+    /// <summary>A video found by a description: how long it plays from the matching frame.</summary>
+    private const int MatchMomentMs = 12_000;
+
+    /// <summary>The people of the search (named in the box or the person in the sidebar) and whether there is text to match.</summary>
+    private (List<long> PersonIds, List<string> Names, bool HasText) CurrentQuery()
+    {
+        var query = QueryParser.Parse(SearchText, _host.Search.People);
+        var personIds = QueryParser.ToFilter(query, ScopeFilter()).PersonIds.ToList();
+        var names = _host.Search.People.Where(p => personIds.Contains(p.Id)).Select(p => p.Name).ToList();
+        return (personIds, names, !string.IsNullOrWhiteSpace(query.Text) && _host.Search.CanSearchText);
+    }
+
+    /// <summary>The "only the moments" switch makes sense for videos found by a person or a description.</summary>
+    private void UpdateMomentsSwitch()
+    {
+        var (personIds, names, hasText) = CurrentQuery();
+        CanPlayMoments = Tiles.Any(t => t.Item.IsVideo) && (personIds.Count > 0 || hasText);
+        MomentsLabel = names.Count > 0 ? $"Only {string.Join(" + ", names)} in videos" : "Only the matching parts of videos";
+    }
 
     partial void OnSlideSecondsChanged(int value) => _host.Db.SetSetting("slide_seconds", value.ToString(CultureInfo.InvariantCulture));
     partial void OnVideoHighlightsOnlyChanged(bool value) => _host.Db.SetSetting("video_highlights", value ? "1" : "0");
