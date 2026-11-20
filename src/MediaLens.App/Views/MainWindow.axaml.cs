@@ -305,21 +305,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnOpenCloud(object? sender, RoutedEventArgs e) => OpenCloud();
-
-    private void OnOpenLibraryBackup(object? sender, RoutedEventArgs e)
+    private void OnOpenSettings(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
-        SettingsButton.Flyout?.Hide();
-        var window = new LibraryBackupWindow { DataContext = _vm.CreateCloudViewModel() };
-        window.AddCloudRequested += OpenCloud;
-        window.ShowDialog(this);
-    }
-
-    private void OpenCloud()
-    {
-        if (_vm == null) return;
-        new CloudWindow { DataContext = _vm.CreateCloudViewModel() }.Show(this);
+        if (_vm != null) new SettingsWindow(_vm).ShowDialog(this);
     }
 
     // ---- player ----
@@ -525,9 +513,6 @@ public partial class MainWindow : Window
                 photos.Click += (_, _) => _vm.AddApplePhotos();
                 menu.Items.Add(photos);
             }
-            var cloud = new MenuItem { Header = "Folder in a cloud..." };
-            cloud.Click += (_, _) => OpenCloud();
-            menu.Items.Add(cloud);
             menu.Open(sender as Control);
         }
         else

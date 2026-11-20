@@ -113,7 +113,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _ => host.Db.GetSetting("open_in_panel") == "1" ? PreviewMode.Below : PreviewMode.Window,
         };
         _sidebarVisible = host.Db.GetSetting("sidebar_hidden") != "1";
-        if (double.TryParse(host.Db.GetSetting("tile_size"), CultureInfo.InvariantCulture, out var ts)) _tileSize = ts;
         LoadBrowseSettings();
 
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
@@ -265,7 +264,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _host.Indexer.RequestScan();
     }
 
-    public CloudViewModel CreateCloudViewModel() => new(_host, () => Dispatcher.UIThread.Post(RebuildSidebar));
+    public LibraryCloudViewModel CreateLibraryCloudViewModel() => new(_host);
 
     /// <summary>
     /// macOS: the originals of the Photos app (iCloud Photos with "Download Originals to this Mac") as a
@@ -700,7 +699,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>The panel shows this item of the results; arrows and clicks in the grid move it.</summary>
     public PlayerViewModel CreatePreview(int index) => CreatePlayer(Tiles.ToList(), index, autoPlay: false);
-    partial void OnTileSizeChanged(double value) => _host.Db.SetSetting("tile_size", value.ToString(CultureInfo.InvariantCulture));
 
     // ---- background work ----
 

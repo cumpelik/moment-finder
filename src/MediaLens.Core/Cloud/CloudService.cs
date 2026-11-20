@@ -223,7 +223,8 @@ public sealed class CloudService
     {
         var remote = basePath;
         // Always encrypted; a password is only given to read a cloud encrypted with one (an older setup, plain rclone).
-        password = string.IsNullOrEmpty(password) ? NewKey() : password;
+        var generated = string.IsNullOrEmpty(password);
+        password = generated ? NewKey() : password;
         {
             var crypt = baseRemote + "c";
             await Rclone.CreateRemoteAsync(crypt, "crypt", new Dictionary<string, string>
@@ -239,7 +240,9 @@ public sealed class CloudService
         {
             await Rclone.TestAsync(remote, ct);
             if (remote != basePath && await CountAsync(basePath, ct) > 0 && await CountAsync(remote, ct) == 0)
-                throw new RcloneException("Wrong password: the cloud folder holds data encrypted with another password.");
+                throw new RcloneException(generated
+                    ? "This place already holds a library encrypted with another key. Bring it back with its recovery string, or use another bucket or folder."
+                    : "Wrong password: the cloud folder holds data encrypted with another password.");
         }
         catch
         {

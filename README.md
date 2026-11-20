@@ -17,15 +17,16 @@ and then work offline. Windows, Linux and macOS.
 - **Viewer and slideshow**: Play all, Shuffle, photos for N seconds, videos whole or only the matching part.
 - **Buckets** (a photo book): `B` adds the selection, `Ctrl+Left/Right` changes the order, Copy to folder
   exports the originals numbered `001_`, `002_`...
-- **Cloud and backup** (via rclone): OneDrive, Google Drive, S3 (Amazon, IDrive e2, Backblaze, Wasabi, MinIO...)
-  or a NAS folder. Everything is encrypted on this computer before the upload (rclone crypt: contents and names)
-  with a key the application makes itself. Mirrors upload new and changed files of a source every few hours,
-  into a folder named after the computer, and never delete in the cloud.
-- **Library backup** (Settings, Library backup): the library itself, that is index (names, people, buckets,
-  sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a cloud you choose for it,
-  which can be another one than the photos go to. Adding a cloud does not choose it.
-- **Recovery string**: one string (shown there) holds the way to that storage and the key.
-  On a new or second computer, paste it (same window, or the start screen of an empty library): the library comes
+- **The library in a cloud** (Settings; via rclone): the library itself, that is index (names, people, buckets,
+  sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a storage you give there:
+  IDrive e2 or another S3 compatible storage (address, two keys, a bucket that is made if it is not there),
+  Amazon S3, OneDrive, Google Drive or a folder. Everything is encrypted on this computer before the upload
+  (rclone crypt: contents and names) with a key the application makes itself.
+- **Mirrors of folders** (originals into a cloud, under a folder named after the computer, never deleting
+  there) and cloud folders as sources: command line only for now; in the application they will come back as
+  an option of a source.
+- **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and the key.
+  On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
   size-limited cache when opened. Whoever has the string can read the backup; without it nobody can.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
