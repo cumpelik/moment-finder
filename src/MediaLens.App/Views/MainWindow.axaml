@@ -3,6 +3,7 @@
         xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
         xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
         xmlns:b="clr-namespace:MediaLens.Buckets;assembly=MediaLens.Core"
+        xmlns:views="clr-namespace:MediaLens.App.Views"
         x:Class="MediaLens.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="MediaLens"
@@ -17,8 +18,8 @@
             <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
                 <Grid>
                     <Image Classes="thumb" Source="{Binding Thumb}" />
-                    <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Open (or double click the picture)">
-                        <mi:MaterialIcon Kind="Play" Width="30" Height="30" Foreground="White" />
+                    <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Full screen (or double click the picture)">
+                        <mi:MaterialIcon Kind="Fullscreen" Width="18" Height="18" Foreground="White" />
                     </Button>
                     <Border Classes="badge" IsVisible="{Binding IsVideo}"
                             HorizontalAlignment="Right" VerticalAlignment="Bottom">
@@ -247,9 +248,6 @@
             <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
                 <StackPanel Orientation="Horizontal" Spacing="14">
                     <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
-                    <ToggleSwitch IsChecked="{Binding VideoHighlightsOnly}" IsVisible="{Binding CanPlayMoments}" VerticalAlignment="Center"
-                                  OnContent="{Binding MomentsLabel}" OffContent="{Binding MomentsLabel}"
-                                  ToolTip.Tip="On: videos play only these moments, one after another. Off: whole videos." />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
@@ -263,6 +261,13 @@
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
                     <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
                               ToolTip.Tip="Show the results in groups: by day, month, year or person" />
+                    <ToggleButton IsChecked="{Binding OpenInPanel}" VerticalAlignment="Center"
+                                  ToolTip.Tip="On: a click shows the photo or video in a panel under the thumbnails. Off: it opens full screen.">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="ViewSplitHorizontal" />
+                            <TextBlock Text="Show below" />
+                        </StackPanel>
+                    </ToggleButton>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
                     <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
@@ -283,8 +288,9 @@
             </StackPanel>
 
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->
-            <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
-                          Padding="10,4,10,10" IsVisible="{Binding IsGridMode}">
+            <Grid x:Name="BrowseArea" Grid.Row="2" RowDefinitions="3*,Auto,0" IsVisible="{Binding IsGridMode}">
+            <ScrollViewer x:Name="GridScroll" HorizontalScrollBarVisibility="Disabled" Focusable="True"
+                          Padding="10,4,10,10">
                 <Panel>
                     <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding FlatTiles}" Layout="{StaticResource TileLayout}"
                                    ItemTemplate="{StaticResource TileTemplate}" IsVisible="{Binding !IsGrouped}" />
@@ -304,6 +310,14 @@
                     </ItemsRepeater>
                 </Panel>
             </ScrollViewer>
+            <!-- The panel under the thumbnails: the clicked photo or video -->
+            <GridSplitter Grid.Row="1" Height="6" ResizeDirection="Rows" Background="{DynamicResource AppBorderBrush}"
+                          IsVisible="{Binding ShowPreviewPanel}" />
+            <Panel Grid.Row="2" Background="Black" IsVisible="{Binding ShowPreviewPanel}">
+                <TextBlock Text="Click a photo or video to see it here." Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <views:PlayerView x:Name="Preview" IsVisible="False" />
+            </Panel>
+            </Grid>
 
             <!-- Who is this: everybody without a name, groups of faces and people without a visible face -->
             <DockPanel Grid.Row="2" IsVisible="{Binding IsGroupsMode}" Margin="12,8,12,8">

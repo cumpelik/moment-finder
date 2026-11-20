@@ -189,6 +189,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>Another choice of what to play: continue with its next moment in this video.</summary>
     partial void OnMomentChoiceChanged(MomentChoice value)
     {
+        _main.RememberMoments(value.Kind != MomentKind.Whole);
         _moment = 0;
         _insideMoment = false;
         if (!IsVideo || _video == null) return;
@@ -467,6 +468,25 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             // End of the slideshow.
             CloseRequested?.Invoke();
         }
+    }
+
+    /// <summary>The panel follows the grid: another item of the same results.</summary>
+    public void GoTo(int index)
+    {
+        if (index < 0 || index >= Count || (index == Index && _loadVersion > 0)) return;
+        Index = index;
+        Show();
+    }
+
+    /// <summary>Whether this viewer shows exactly these results (then the panel only moves, it is not rebuilt).</summary>
+    public bool Plays(IReadOnlyList<TileViewModel> tiles) =>
+        tiles.Count == Count && tiles.Select(t => t.Item.Id).SequenceEqual(_entries.Select(e => e.Item.Id));
+
+    /// <summary>The panel's video stops while the same item plays full screen.</summary>
+    public void Pause()
+    {
+        if (IsVideo && _video is { IsPlaying: true }) _video.TogglePause();
+        _slideTimer.Stop();
     }
 
     [RelayCommand]

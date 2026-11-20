@@ -25,6 +25,8 @@ public partial class MainWindow : Window
         Repeater.DoubleTapped += OnTileDoubleTapped;
         GroupRepeater.Tapped += OnTileTapped;
         GroupRepeater.DoubleTapped += OnTileDoubleTapped;
+        Preview.FullScreenRequested += OnPanelFullScreen;
+        Preview.KeyboardWanted += () => GridScroll.Focus();
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
     }
 
@@ -43,14 +45,21 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.ResultsReset += OnResultsReset;
         ApplyTileSize();
+        ApplyPreviewPanel();
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.TileSize)) ApplyTileSize();
+        if (e.PropertyName == nameof(MainViewModel.ShowPreviewPanel)) ApplyPreviewPanel();
     }
 
-    private void OnResultsReset() => GridScroll.Offset = default;
+    private void OnResultsReset()
+    {
+        GridScroll.Offset = default;
+        // Other results: the panel's item may not be among them.
+        ClosePanelPlayer();
+    }
 
     private void ApplyTileSize()
     {
@@ -68,9 +77,10 @@ public partial class MainWindow : Window
     private void OnTileTapped(object? sender, TappedEventArgs e)
     {
         if (_vm == null || TileOf(e) is not { } tile) return;
-        _vm.Select(tile,
-            toggle: e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta),
-            range: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+        var toggle = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var range = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        _vm.Select(tile, toggle, range);
+        if (!toggle && !range) ShowInPanel(tile);
         GridScroll.Focus();
     }
 
@@ -136,6 +146,13 @@ public partial class MainWindow : Window
             case Key.Enter when _vm.AnchorTile is { } tile:
                 _vm.Open(tile);
                 break;
+            // With the panel: space plays / pauses it, I shows who is who in it.
+            case Key.Space when _panelPlayer != null:
+                _panelPlayer.TogglePlay();
+                break;
+            case Key.I when _panelPlayer != null:
+                _panelPlayer.ShowPeople = !_panelPlayer.ShowPeople;
+                break;
             case Key.A when ctrl:
                 _vm.SelectAll();
                 break;
@@ -159,7 +176,11 @@ public partial class MainWindow : Window
                 return;
         }
         e.Handled = true;
-        if (moved != null) BringIntoView(moved);
+        if (moved != null)
+        {
+            BringIntoView(moved);
+            if (!shift) ShowInPanel(moved);
+        }
     }
 
     private void BringIntoView(TileViewModel tile)
@@ -219,8 +240,23 @@ public partial class MainWindow : Window
 
     // ---- player ----
 
-    private void OpenPlayer(PlayerViewModel player)
+    private PlayerViewModel? _panelPlayer;
+
+    protected override void OnClosed(EventArgs e)
     {
+        ClosePanelPlayer();
+        base.OnClosed(e);
+    }
+
+    private void OpenPlayer(PlayerViewModel player, bool inWindow)
+    {
+        if (!inWindow && _vm is { ShowPreviewPanel: true })
+        {
+            SetPanelPlayer(player);
+            return;
+        }
+        // Full screen over the panel: the panel stops meanwhile.
+        _panelPlayer?.Pause();
         var window = new PlayerWindow { DataContext = player };
         window.Closed += (_, _) =>
         {
@@ -236,6 +272,67 @@ public partial class MainWindow : Window
             GridScroll.Focus();
         };
         window.Show(this);
+    }
+
+    /// <summary>A click or an arrow in the grid: the panel shows that item (it only moves when the results are the same).</summary>
+    private void ShowInPanel(TileViewModel tile)
+    {
+        if (_vm is not { ShowPreviewPanel: true }) return;
+        var index = _vm.Tiles.IndexOf(tile);
+        if (index < 0) return;
+        if (_panelPlayer != null && _panelPlayer.Plays(_vm.Tiles)) _panelPlayer.GoTo(index);
+        else SetPanelPlayer(_vm.CreatePreview(index));
+    }
+
+    private void SetPanelPlayer(PlayerViewModel player)
+    {
+        ClosePanelPlayer();
+        _panelPlayer = player;
+        player.PropertyChanged += OnPanelPlayerChanged;
+        player.CloseRequested += ClosePanelPlayer;
+        Preview.DataContext = player;
+        Preview.Docked = true;
+        Preview.IsVisible = true;
+        player.Start();
+    }
+
+    private void ClosePanelPlayer()
+    {
+        if (_panelPlayer is not { } old) return;
+        _panelPlayer = null;
+        old.PropertyChanged -= OnPanelPlayerChanged;
+        old.CloseRequested -= ClosePanelPlayer;
+        Preview.IsVisible = false;
+        Preview.DataContext = null;
+        old.Dispose();
+    }
+
+    /// <summary>Previous / next in the panel (or its slideshow): the grid selects the same item.</summary>
+    private void OnPanelPlayerChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(PlayerViewModel.Index) || _vm == null || _panelPlayer == null) return;
+        var id = _panelPlayer.Current.Item.Id;
+        if (_vm.Tiles.FirstOrDefault(t => t.Item.Id == id) is not { } tile || tile.IsSelected && _vm.SelectedTiles().Count() == 1) return;
+        _vm.Select(tile, false, false);
+        BringIntoView(tile);
+    }
+
+    /// <summary>The panel takes the lower part of the browsing area; the splitter between them moves.</summary>
+    private void ApplyPreviewPanel()
+    {
+        var show = _vm?.ShowPreviewPanel == true;
+        BrowseArea.RowDefinitions[0].Height = new GridLength(show ? 1 : 3, GridUnitType.Star);
+        BrowseArea.RowDefinitions[2].Height = show ? new GridLength(1.4, GridUnitType.Star) : new GridLength(0);
+        if (!show) ClosePanelPlayer();
+        else if (_vm?.AnchorTile is { } tile) ShowInPanel(tile);
+    }
+
+    /// <summary>The panel's full screen button: the same item in the full screen viewer.</summary>
+    private void OnPanelFullScreen()
+    {
+        if (_vm == null || _panelPlayer == null) return;
+        var id = _panelPlayer.Current.Item.Id;
+        if (_vm.Tiles.FirstOrDefault(t => t.Item.Id == id) is { } tile) _vm.Open(tile);
     }
 
     // ---- sidebar ----

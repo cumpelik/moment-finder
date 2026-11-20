@@ -65,11 +65,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _slideSeconds = 5;
     /// <summary>Videos play only the moments of the searched person or the matching part.</summary>
     [ObservableProperty] private bool _videoHighlightsOnly;
-    [ObservableProperty] private bool _canPlayMoments;
-    [ObservableProperty] private string _momentsLabel = "";
 
     /// <summary>The view opens the player window.</summary>
-    public event Action<PlayerViewModel>? PlayerRequested;
+    /// <summary>InWindow: full screen; otherwise the panel under the thumbnails.</summary>
+    public event Action<PlayerViewModel, bool>? PlayerRequested;
     /// <summary>A new search or scope (not a refresh of the same one): the view scrolls to the top.</summary>
     public event Action? ResultsReset;
 
@@ -104,7 +103,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         });
 
         if (int.TryParse(host.Db.GetSetting("slide_seconds"), CultureInfo.InvariantCulture, out var s)) _slideSeconds = s;
-        _videoHighlightsOnly = host.Db.GetSetting("video_highlights") == "1";
+        // Videos found by a person or a description start on those moments unless the user chose whole videos.
+        _videoHighlightsOnly = host.Db.GetSetting("video_highlights") != "0";
+        _openInPanel = host.Db.GetSetting("open_in_panel") == "1";
         if (double.TryParse(host.Db.GetSetting("tile_size"), CultureInfo.InvariantCulture, out var ts)) _tileSize = ts;
         LoadBrowseSettings();
 
@@ -200,6 +201,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsPersonScope));
         if (!same) ShowPersonFaces = false;
         OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(ShowPreviewPanel));
         OnPropertyChanged(nameof(IsGroupsMode));
         OnPropertyChanged(nameof(IsReviewMode));
         OnPropertyChanged(nameof(IsPeopleScreen));
@@ -293,6 +295,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     partial void OnShowPersonFacesChanged(bool value)
     {
         OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(ShowPreviewPanel));
         if (value && CurrentScope is { Kind: SidebarKind.Person } p) People.LoadPerson(p.Id);
     }
 
@@ -450,7 +453,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (keepSelection && hits.Count == Tiles.Count && hits.Select(h => h.Item.Id).SequenceEqual(Tiles.Select(t => t.Item.Id)))
         {
             UpdateSummary(hits.Count, hasText);
-            UpdateMomentsSwitch();
             return;
         }
         var tiles = hits.Select(h => new TileViewModel(h.Item, h.TimeMs) { IsSelected = selectedIds.Contains(h.Item.Id) });
@@ -458,7 +460,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _anchorIndex = -1;
         MarkBucketMembership();
         UpdateSummary(hits.Count, hasText);
-        UpdateMomentsSwitch();
         if (!keepSelection) ResultsReset?.Invoke();
     }
 
@@ -533,7 +534,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var index = Tiles.IndexOf(tile);
         if (index < 0) return;
-        PlayerRequested?.Invoke(CreatePlayer(Tiles.ToList(), index, autoPlay: false));
+        PlayerRequested?.Invoke(CreatePlayer(Tiles.ToList(), index, autoPlay: false), true);
     }
 
     /// <summary>Opens one item by id (from a face crop); a video at the moment of the crop, with the people boxes on.</summary>
@@ -543,7 +544,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var tile = timeMs > 0 ? new TileViewModel(item, timeMs) : Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
         var player = CreatePlayer([tile], 0, autoPlay: false);
         player.ShowPeople = showPeople;
-        PlayerRequested?.Invoke(player);
+        PlayerRequested?.Invoke(player, true);
     }
 
     /// <summary>Plays the selection when there is more than one selected item, otherwise the whole result.</summary>
@@ -559,7 +560,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var list = selected.Count > 1 ? selected : Tiles.ToList();
         if (list.Count == 0) return;
         if (shuffle) list = list.OrderBy(_ => Random.Shared.Next()).ToList();
-        PlayerRequested?.Invoke(CreatePlayer(list, 0, autoPlay: true));
+        PlayerRequested?.Invoke(CreatePlayer(list, 0, autoPlay: true), !OpenInPanel);
     }
 
     private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
@@ -603,16 +604,22 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         return (personIds, names, !string.IsNullOrWhiteSpace(query.Text) && _host.Search.CanSearchText);
     }
 
-    /// <summary>The "only the moments" switch makes sense for videos found by a person or a description.</summary>
-    private void UpdateMomentsSwitch()
+    partial void OnVideoHighlightsOnlyChanged(bool value) => _host.Db.SetSetting("video_highlights", value ? "1" : "0");
+
+    /// <summary>The viewer remembers whether the user wants whole videos or only the found moments.</summary>
+    public void RememberMoments(bool onlyMoments) => VideoHighlightsOnly = onlyMoments;
+
+    /// <summary>Photos and videos open in a panel under the thumbnails instead of a full screen window.</summary>
+    [ObservableProperty] private bool _openInPanel;
+
+    partial void OnOpenInPanelChanged(bool value)
     {
-        var (personIds, names, hasText) = CurrentQuery();
-        CanPlayMoments = Tiles.Any(t => t.Item.IsVideo) && (personIds.Count > 0 || hasText);
-        MomentsLabel = names.Count > 0 ? $"Only {string.Join(" + ", names)} in videos" : "Only the matching parts of videos";
+        _host.Db.SetSetting("open_in_panel", value ? "1" : "0");
+        OnPropertyChanged(nameof(ShowPreviewPanel));
     }
 
-    partial void OnSlideSecondsChanged(int value) => _host.Db.SetSetting("slide_seconds", value.ToString(CultureInfo.InvariantCulture));
-    partial void OnVideoHighlightsOnlyChanged(bool value) => _host.Db.SetSetting("video_highlights", value ? "1" : "0");
+    /// <summary>The panel shows this item of the results; arrows and clicks in the grid move it.</summary>
+    public PlayerViewModel CreatePreview(int index) => CreatePlayer(Tiles.ToList(), index, autoPlay: false);
     partial void OnTileSizeChanged(double value) => _host.Db.SetSetting("tile_size", value.ToString(CultureInfo.InvariantCulture));
 
     // ---- background work ----

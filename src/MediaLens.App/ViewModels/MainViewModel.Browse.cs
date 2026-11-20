@@ -50,6 +50,9 @@ public sealed partial class MainViewModel
     [ObservableProperty] private ObservableCollection<TileGroup> _groups = [];
 
     public bool IsGrouped => GroupBy.Mode != GroupMode.None;
+
+    /// <summary>The panel under the thumbnails is open (the choice is on and the grid is shown).</summary>
+    public bool ShowPreviewPanel => OpenInPanel && IsGridMode;
     /// <summary>The plain grid gets the tiles only when the results are not grouped (two grids would load every thumbnail twice).</summary>
     public ObservableCollection<TileViewModel>? FlatTiles => IsGrouped ? null : Tiles;
 

@@ -1,0 +1,92 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
+             x:Class="MediaLens.App.Views.PlayerView"
+             x:DataType="vm:PlayerViewModel">
+
+    <Grid x:Name="Root" Background="Black">
+        <!-- The picture and the people boxes share one coordinate space (pixels of the picture); the Viewbox fits it to the screen. -->
+        <Viewbox Stretch="Uniform">
+            <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
+                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !IsVideo}" />
+                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding IsVideo}" />
+                <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
+            </Panel>
+        </Viewbox>
+        <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,16,0,0" Padding="14,8" CornerRadius="6"
+                Background="#CC000000" IsVisible="{Binding ShowPeople}" IsHitTestVisible="False">
+            <TextBlock Text="{Binding PeopleHint}" Foreground="White" FontSize="15" />
+        </Border>
+        <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
+
+        <Border x:Name="Overlay" Classes="overlay" VerticalAlignment="Bottom">
+            <Border.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.25" />
+                </Transitions>
+            </Border.Transitions>
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsVideo}">
+                    <Slider x:Name="SeekBar" Minimum="0" Maximum="{Binding VideoLength}" Value="{Binding VideoPosition, Mode=OneWay}"
+                            VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding VideoTimeText}" VerticalAlignment="Center" Margin="12,0,0,0"
+                               FontFeatures="tnum" />
+                </Grid>
+                <!-- Title on the left, all controls in one row on the right: fits the panel as well as the full screen -->
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,12,0">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding MomentText}" FontSize="12" Foreground="#F59E0B"
+                                   IsVisible="{Binding MomentText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
+                        <Button Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
+                            <mi:MaterialIcon Kind="SkipPrevious" />
+                        </Button>
+                        <Button Command="{Binding TogglePlayCommand}" ToolTip.Tip="Pause / play (Space)">
+                            <mi:MaterialIcon Kind="PlayPause" />
+                        </Button>
+                        <Button Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
+                            <mi:MaterialIcon Kind="SkipNext" />
+                        </Button>
+                        <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="6,0,12,0" />
+                        <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding HasMomentChoices}"
+                                  VerticalAlignment="Center" MinWidth="150" Margin="0,0,4,0" Focusable="False"
+                                  ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,8,0">
+                            <Button Command="{Binding ToggleMuteCommand}" ToolTip.Tip="Sound on / off (Up / Down: volume)" Focusable="False">
+                                <Panel>
+                                    <mi:MaterialIcon Kind="VolumeHigh" IsVisible="{Binding !IsMuted}" />
+                                    <mi:MaterialIcon Kind="VolumeOff" IsVisible="{Binding IsMuted}" />
+                                </Panel>
+                            </Button>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding Volume}" Width="70" VerticalAlignment="Center" Focusable="False" />
+                        </StackPanel>
+                        <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show the people (I) and say who is who"
+                                      Padding="8,4">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <mi:MaterialIcon Kind="AccountBoxOutline" Width="20" Height="20" />
+                                <TextBlock Text="Who is who" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </ToggleButton>
+                        <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
+                            <Panel>
+                                <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />
+                                <mi:MaterialIcon Kind="Basket" IsVisible="{Binding InBucket}" Foreground="{DynamicResource BucketBadgeBrush}" />
+                            </Panel>
+                        </Button>
+                        <Button x:Name="FullScreenButton" ToolTip.Tip="Full screen (F)">
+                            <mi:MaterialIcon Kind="Fullscreen" />
+                        </Button>
+                        <Button x:Name="CloseButton" Command="{Binding CloseCommand}" ToolTip.Tip="Close (Esc)">
+                            <mi:MaterialIcon Kind="Close" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>
