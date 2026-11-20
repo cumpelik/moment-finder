@@ -22,7 +22,7 @@ public sealed class Database
         }.ToString();
         using var c = Open();
         c.Execute("PRAGMA journal_mode=WAL;");
-        Migrate(c);
+        Migrate(c, path);
     }
 
     public SqliteConnection Open()
@@ -169,11 +169,26 @@ public sealed class Database
         CREATE INDEX track_box_media ON track_box(media_id, track, time_ms);
         UPDATE media SET people_version=3 WHERE kind=1 AND people_version=2;
         """,
+        // Video frames were taken half an interval late: videos are analyzed again, photos stay.
+        """
+        UPDATE media SET analysis_version=2 WHERE kind=1 AND analysis_version=1;
+        UPDATE media SET people_version=4 WHERE kind=1 AND people_version=3;
+        """,
     ];
 
-    private static void Migrate(SqliteConnection c)
+    /// <summary>
+    /// Brings an older library up to date. Before that a copy is kept next to it (library.v6.db): an upgrade may
+    /// analyze again, and the user's names and confirmations must never be lost for good.
+    /// </summary>
+    private static void Migrate(SqliteConnection c, string path)
     {
         var version = c.ExecuteScalar<int>("PRAGMA user_version;");
+        if (version > 0 && version < Migrations.Length)
+        {
+            var backup = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!,
+                $"{Path.GetFileNameWithoutExtension(path)}.v{version}{Path.GetExtension(path)}");
+            if (!File.Exists(backup)) c.Execute("VACUUM INTO @backup", new { backup });
+        }
         for (var i = version; i < Migrations.Length; i++)
         {
             using var tx = c.BeginTransaction();

@@ -144,6 +144,28 @@ public class PeopleTests
         Assert.All(repo.DetectionsOfMedia(id), d => Assert.NotNull(d.PersonId));
     }
 
+    /// <summary>
+    /// An older analysis stored video frames half an interval earlier than they really were: a name confirmed then
+    /// goes to the new track that is at that place at the real time.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmedNameSurvivesTheFrameTimeFix()
+    {
+        using var lib = new TestLibrary();
+        lib.AddPhoto("v.jpg");
+        await lib.ScanAsync(lib.AddSource());
+        var id = lib.Repo.Query(new MediaFilter()).Single().Id;
+        var repo = new PeopleRepository(lib.Db);
+        // Old: stored at 2 s, really at 2.5 s, where the skier (moving right 0.1 per second) was at x = 0.25.
+        NewDetection At(int time, float x) => new(DetectionKind.Body, time, x, 0.2f, 0.1f, 0.5f, 0.9f, 0.8f, Emb(5), 0, null);
+        var old = repo.ReplaceDetections(id, [At(2000, 0.25f)], [new NewTrackBox(0, 2000, 0.25f, 0.2f, 0.1f, 0.5f)]);
+        repo.Confirm(old, repo.CreatePerson("Eva").Id);
+        // New, at the real times: 2 s at x = 0.2, 3 s at x = 0.3.
+        repo.ReplaceDetections(id, [At(2000, 0.2f), At(3000, 0.3f)],
+            [new NewTrackBox(0, 2000, 0.2f, 0.2f, 0.1f, 0.5f), new NewTrackBox(0, 3000, 0.3f, 0.2f, 0.1f, 0.5f)], oldTimeShiftMs: 500);
+        Assert.Single(repo.DetectionsOfMedia(id), d => d.Confirmed && d.PersonId != null);
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

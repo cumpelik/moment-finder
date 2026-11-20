@@ -618,6 +618,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Who is who stays on for the next viewer and the next start, until it is switched off.</summary>
     public void RememberShowPeople(bool on) => _host.Db.SetSetting("show_people", on ? "1" : "0");
 
+    /// <summary>People boxes follow the people in a playing video, or show only on a paused one.</summary>
+    public bool BoxesWhilePlaying
+    {
+        get => _host.Db.GetSetting("boxes_playing") != "0";
+        set
+        {
+            _host.Db.SetSetting("boxes_playing", value ? "1" : "0");
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BoxesOnlyPaused));
+        }
+    }
+
+    public bool BoxesOnlyPaused
+    {
+        get => !BoxesWhilePlaying;
+        set => BoxesWhilePlaying = !value;
+    }
+
     public void SaveVolume(int volume) => _host.Db.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>A video found by a description: how long it plays from the matching frame.</summary>

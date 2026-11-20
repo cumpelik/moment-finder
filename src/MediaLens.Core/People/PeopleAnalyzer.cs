@@ -70,9 +70,9 @@ public sealed class PeopleAnalyzer
         return list;
     }
 
-    private void Save(long mediaId, List<(NewDetection Det, RgbImage? Crop)> items, IReadOnlyList<NewTrackBox>? paths = null)
+    private void Save(long mediaId, List<(NewDetection Det, RgbImage? Crop)> items, IReadOnlyList<NewTrackBox>? paths = null, int oldTimeShiftMs = 0)
     {
-        var ids = _repo.ReplaceDetections(mediaId, items.Select(x => x.Det).ToList(), paths);
+        var ids = _repo.ReplaceDetections(mediaId, items.Select(x => x.Det).ToList(), paths, oldTimeShiftMs);
         for (var i = 0; i < ids.Count; i++)
             items[i].Crop?.SaveJpeg(_paths.PeopleCropPath(ids[i]), 82);
     }
@@ -113,7 +113,9 @@ public sealed class PeopleAnalyzer
                 .GroupBy(x => (x.Det.Track!.Value, x.Frame))
                 .Select(g => g.OrderBy(x => x.Det.Kind == DetectionKind.Body ? 0 : 1).First().Det)
                 .Select(d => new NewTrackBox(d.Track!.Value, d.TimeMs, d.X, d.Y, d.W, d.H)).ToList();
-            Save(video.Id, KeepRepresentatives(all), paths);
+            // Before version 4 a frame stored at time t was really half an interval later.
+            var shift = _repo.PeopleVersionOf(video.Id) is > 0 and < 4 ? FrameIntervalMs(video.DurationMs ?? 0) / 2 : 0;
+            Save(video.Id, KeepRepresentatives(all), paths, shift);
         }
         finally
         {

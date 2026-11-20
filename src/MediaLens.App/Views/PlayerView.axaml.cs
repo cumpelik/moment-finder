@@ -76,6 +76,7 @@ public partial class PlayerView : UserControl
         _vm = DataContext as PlayerViewModel;
         VideoImage.Source = null;
         PeopleLayer.Children.Clear();
+        _boxes.Clear();
         if (_vm == null) return;
         _vm.VideoFrameChanged += OnVideoFrame;
         _vm.PeopleChanged += DrawPeople;
@@ -93,10 +94,11 @@ public partial class PlayerView : UserControl
             {
                 _vm.ContentWidth = frame.PixelSize.Width;
                 _vm.ContentHeight = frame.PixelSize.Height;
-                DrawPeople();
             }
         }
         VideoImage.InvalidateVisual();
+        // The boxes follow the people frame by frame.
+        if (_vm?.ShowPeople == true) DrawPeople();
     }
 
     private static readonly Avalonia.Media.Color KnownColor = Avalonia.Media.Color.FromRgb(0x34, 0xD3, 0x99);
@@ -106,56 +108,87 @@ public partial class PlayerView : UserControl
     /// A box around each person with the name above it (inside only at the top edge of the picture), so a long
     /// name never gets cut by a narrow box. A click on the box or the name says who it is.
     /// </summary>
+    /// <summary>The drawn box and name of each person, moved on every frame instead of being made again.</summary>
+    private readonly Dictionary<long, (Border Frame, Border Label, TextBlock Text)> _boxes = [];
+
     private void DrawPeople()
     {
-        PeopleLayer.Children.Clear();
-        if (_vm == null) return;
+        if (_vm == null)
+        {
+            PeopleLayer.Children.Clear();
+            _boxes.Clear();
+            return;
+        }
         // Boxes are drawn in the picture's pixels and scaled with it: one screen pixel is this many of them,
         // so lines and names keep the same size on screen for any video and window.
         var shown = Math.Min(Root.Bounds.Width / _vm.ContentWidth, Root.Bounds.Height / _vm.ContentHeight);
         var scale = shown > 0 ? 1 / shown : 1;
+        var seen = new HashSet<long>();
         foreach (var box in _vm.PeopleBoxes())
         {
-            var color = box.Known ? KnownColor : UnknownColor;
-            var frame = new Border
+            seen.Add(box.DetectionId);
+            if (!_boxes.TryGetValue(box.DetectionId, out var drawn))
             {
-                Width = box.W,
-                Height = box.H,
-                CornerRadius = new CornerRadius(6 * scale),
-                BorderBrush = new Avalonia.Media.SolidColorBrush(color),
-                BorderThickness = new Thickness(2 * scale),
-                Background = Avalonia.Media.Brushes.Transparent,
-                BoxShadow = Avalonia.Media.BoxShadows.Parse($"0 0 {4 * scale:0} 0 #99000000"),
-                Cursor = new Cursor(StandardCursorType.Hand),
-            };
-            var label = new Border
-            {
-                Background = new Avalonia.Media.SolidColorBrush(color),
-                CornerRadius = new CornerRadius(10 * scale),
-                Padding = new Thickness(8 * scale, 2 * scale),
-                BoxShadow = Avalonia.Media.BoxShadows.Parse($"0 {1 * scale:0} {4 * scale:0} 0 #80000000"),
-                Cursor = new Cursor(StandardCursorType.Hand),
-                Child = new TextBlock
-                {
-                    Text = box.Label,
-                    FontSize = 13 * scale,
-                    FontWeight = Avalonia.Media.FontWeight.SemiBold,
-                    Foreground = Avalonia.Media.Brushes.Black,
-                },
-            };
-            ToolTip.SetTip(frame, "Click: who is it?");
-            ToolTip.SetTip(label, "Click: who is it?");
-            frame.PointerPressed += (_, e) => AskWho(e, box.DetectionId);
-            label.PointerPressed += (_, e) => AskWho(e, box.DetectionId);
+                drawn = NewBox(box.DetectionId);
+                _boxes[box.DetectionId] = drawn;
+                PeopleLayer.Children.Add(drawn.Frame);
+                PeopleLayer.Children.Add(drawn.Label);
+            }
+            var brush = new Avalonia.Media.SolidColorBrush(box.Known ? KnownColor : UnknownColor);
+            var (frame, label, text) = drawn;
+            frame.Width = box.W;
+            frame.Height = box.H;
+            frame.CornerRadius = new CornerRadius(6 * scale);
+            frame.BorderBrush = brush;
+            frame.BorderThickness = new Thickness(2 * scale);
+            label.Background = brush;
+            label.CornerRadius = new CornerRadius(10 * scale);
+            label.Padding = new Thickness(8 * scale, 2 * scale);
+            text.Text = box.Label;
+            text.FontSize = 13 * scale;
             Canvas.SetLeft(frame, box.X);
             Canvas.SetTop(frame, box.Y);
             Canvas.SetLeft(label, box.X);
             // Above the box; at the top edge of the picture inside it.
-            if (box.Y > 28 * scale) Canvas.SetBottom(label, _vm.ContentHeight - box.Y + 4 * scale);
-            else Canvas.SetTop(label, box.Y + 4 * scale);
-            PeopleLayer.Children.Add(frame);
-            PeopleLayer.Children.Add(label);
+            if (box.Y > 28 * scale)
+            {
+                label.ClearValue(Canvas.TopProperty);
+                Canvas.SetBottom(label, _vm.ContentHeight - box.Y + 4 * scale);
+            }
+            else
+            {
+                label.ClearValue(Canvas.BottomProperty);
+                Canvas.SetTop(label, box.Y + 4 * scale);
+            }
         }
+        foreach (var gone in _boxes.Keys.Where(k => !seen.Contains(k)).ToList())
+        {
+            PeopleLayer.Children.Remove(_boxes[gone].Frame);
+            PeopleLayer.Children.Remove(_boxes[gone].Label);
+            _boxes.Remove(gone);
+        }
+    }
+
+    private (Border Frame, Border Label, TextBlock Text) NewBox(long detectionId)
+    {
+        var frame = new Border
+        {
+            Background = Avalonia.Media.Brushes.Transparent,
+            BoxShadow = Avalonia.Media.BoxShadows.Parse("0 0 4 0 #99000000"),
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        var text = new TextBlock { FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = Avalonia.Media.Brushes.Black };
+        var label = new Border
+        {
+            BoxShadow = Avalonia.Media.BoxShadows.Parse("0 1 4 0 #80000000"),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = text,
+        };
+        ToolTip.SetTip(frame, "Click: who is it?");
+        ToolTip.SetTip(label, "Click: who is it?");
+        frame.PointerPressed += (_, e) => AskWho(e, detectionId);
+        label.PointerPressed += (_, e) => AskWho(e, detectionId);
+        return (frame, label, text);
     }
 
     private async void AskWho(PointerPressedEventArgs e, long detectionId)

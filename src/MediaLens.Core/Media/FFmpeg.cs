@@ -168,7 +168,8 @@ public static class FFmpeg
     }
 
     /// <summary>
-    /// Frames every intervalSeconds, named 0001.jpg, 0002.jpg... Frame n is at about (n-1) * intervalSeconds.
+    /// Frames every intervalSeconds, named 0001.jpg, 0002.jpg... Frame n is at (n-1) * intervalSeconds (round=up:
+    /// the default takes the frame half an interval later, measured on a video numbering its frames).
     /// keyframesOnly decodes only keyframes: fast even for long videos, but the times are approximate.
     /// </summary>
     public static async Task<string[]> ExtractFramesAsync(string file, double intervalSeconds, int maxFrames, string outDir, int maxSize,
@@ -180,7 +181,7 @@ public static class FFmpeg
         await RunAsync(ffmpeg,
         [
             "-v", "error", "-y", .. (keyframesOnly ? new[] { "-skip_frame", "nokey" } : []), "-i", file,
-            "-vf", $"fps={fps},scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease",
+            "-vf", $"fps=fps={fps}:round=up,scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease",
             "-frames:v", maxFrames.ToString(CultureInfo.InvariantCulture), "-q:v", "3",
             Path.Combine(outDir, "%04d.jpg"),
         ], ct);

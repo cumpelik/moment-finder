@@ -202,6 +202,9 @@
                                 <StackPanel Spacing="10" Width="260">
                                     <TextBlock Text="How long a photo shows in Play all and Shuffle (seconds)" TextWrapping="Wrap" />
                                     <NumericUpDown Value="{Binding SlideSeconds}" Minimum="1" Maximum="60" Increment="1" FormatString="0" />
+                                    <TextBlock Text="Who is who in a playing video" Margin="0,8,0,0" />
+                                    <RadioButton GroupName="boxes" IsChecked="{Binding BoxesWhilePlaying}" Content="The boxes follow the people" />
+                                    <RadioButton GroupName="boxes" IsChecked="{Binding BoxesOnlyPaused}" Content="Only when the video is paused" />
                                 </StackPanel>
                             </Flyout>
                         </Button.Flyout>

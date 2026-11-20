@@ -158,19 +158,22 @@ public sealed class PeopleRepository
     /// Replaces the detections of a media item (new analysis). What the user confirmed survives when a new
     /// detection lies at the same place (same frame, boxes overlapping), or a new track passes through it.
     /// </summary>
-    public List<long> ReplaceDetections(long mediaId, IReadOnlyList<NewDetection> detections, IReadOnlyList<NewTrackBox>? paths = null)
+    /// <param name="oldTimeShiftMs">How much later the old detections really were than their stored time (an older analysis).</param>
+    public List<long> ReplaceDetections(long mediaId, IReadOnlyList<NewDetection> detections, IReadOnlyList<NewTrackBox>? paths = null,
+        int oldTimeShiftMs = 0)
     {
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
-        var old = c.Query<(long Id, long Kind, long TimeMs, double X, double Y, double W, double H, long PersonId)>(
-            "SELECT id, kind, time_ms, x, y, w, h, person_id FROM detection WHERE media_id=@mediaId AND confirmed=1 AND person_id IS NOT NULL",
+        var old = c.Query<(long Id, long Kind, long TimeMs, double X, double Y, double W, double H, long PersonId, byte[] Embedding)>(
+            "SELECT id, kind, time_ms, x, y, w, h, person_id, embedding FROM detection WHERE media_id=@mediaId AND confirmed=1 AND person_id IS NOT NULL",
             new { mediaId }, tx).ToList();
         c.Execute("DELETE FROM detection WHERE media_id=@mediaId", new { mediaId }, tx);
         var ids = new List<long>();
         var carriedOld = new HashSet<long>();
         foreach (var d in detections)
         {
-            var carried = old.FirstOrDefault(o => o.Kind == (long)d.Kind && o.TimeMs == d.TimeMs &&
+            // Old times shifted: the same stored time is another moment, only the paths below can tell.
+            var carried = oldTimeShiftMs != 0 ? default : old.FirstOrDefault(o => o.Kind == (long)d.Kind && o.TimeMs == d.TimeMs &&
                 new Box((float)o.X, (float)o.Y, (float)o.W, (float)o.H).Iou(new Box(d.X, d.Y, d.W, d.H)) > 0.5f);
             if (carried.Id != 0) carriedOld.Add(carried.Id);
             ids.Add(c.ExecuteScalar<long>("""
@@ -209,18 +212,23 @@ public sealed class PeopleRepository
             c.Execute("INSERT INTO track_box(media_id, track, time_ms, x, y, w, h) VALUES(@mediaId, @track, @TimeMs, @X, @Y, @W, @H)",
                 new { mediaId, track, p.TimeMs, p.X, p.Y, p.W, p.H }, tx);
         }
-        // A confirmation whose detection is gone: the new track passing through the same place takes it.
+        // A confirmation whose detection is gone: the new track passing through the same place takes it
+        // (its path at the old detection's real time, between two analyzed frames if need be).
+        var tracks = (paths ?? []).Where(p => firstOfTrack.ContainsKey(p.Track)).GroupBy(p => p.Track)
+            .ToDictionary(g => g.Key, g => g.OrderBy(p => p.TimeMs).ToList());
         foreach (var o in old.Where(o => !carriedOld.Contains(o.Id)))
         {
             var box = new Box((float)o.X, (float)o.Y, (float)o.W, (float)o.H);
-            var hit = (paths ?? []).Where(p => p.TimeMs == o.TimeMs && firstOfTrack.ContainsKey(p.Track))
-                .Select(p =>
+            var at = (int)o.TimeMs + oldTimeShiftMs;
+            var hit = tracks.Select(t => (Track: t.Key, Box: PathAt(t.Value, at)))
+                .Where(t => t.Box != null)
+                .Select(t =>
                 {
-                    var path = new Box(p.X, p.Y, p.W, p.H);
+                    var path = t.Box!.Value;
                     // A confirmed face: the path is its body, the face sits in its upper part.
                     var faceInside = o.Kind == (long)DetectionKind.Face && path.Contains(box.X + box.W / 2, box.Y + box.H / 2) &&
                                      box.Y + box.H / 2 < path.Y + path.H * 0.5f;
-                    return (p.Track, Iou: Math.Max(box.Iou(path), faceInside ? 0.6f : 0f));
+                    return (t.Track, Iou: Math.Max(box.Iou(path), faceInside ? 0.6f : 0f));
                 })
                 .Where(x => x.Iou > 0.5f).OrderByDescending(x => x.Iou).FirstOrDefault();
             if (hit.Iou == 0) continue;
@@ -228,9 +236,46 @@ public sealed class PeopleRepository
                 .OrderByDescending(i => (long)detections[i].Kind == o.Kind).ThenByDescending(i => detections[i].Quality).First();
             c.Execute("UPDATE detection SET person_id=@PersonId, assign_source=@source, confidence=1, confirmed=1 WHERE id=@id AND confirmed=0",
                 new { o.PersonId, source = (int)AssignSource.User, id = ids[target] }, tx);
+            carriedOld.Add(o.Id);
+        }
+        // Still without a place (the new analysis looks at other moments and sees small or far people differently):
+        // the detection in this item that looks the same, clearly more than anybody else.
+        foreach (var o in old.Where(o => !carriedOld.Contains(o.Id) && o.Embedding is { Length: > 0 }))
+        {
+            var embedding = FromBlob(o.Embedding);
+            var scored = Enumerable.Range(0, detections.Count)
+                .Where(i => (long)detections[i].Kind == o.Kind && detections[i].Embedding.Length == embedding.Length)
+                .Select(i => (Index: i, Score: TensorPrimitives.Dot(embedding, detections[i].Embedding), Group: detections[i].Track ?? -i - 1))
+                .GroupBy(x => x.Group).Select(g => g.MaxBy(x => x.Score))
+                .OrderByDescending(x => x.Score).ToList();
+            if (scored.Count == 0) continue;
+            var same = o.Kind == (long)DetectionKind.Face ? 0.45f : 0.72f;
+            var second = scored.Count > 1 ? scored[1].Score : 0;
+            if (scored[0].Score < same || scored[0].Score - second < 0.06f) continue;
+            c.Execute("UPDATE detection SET person_id=@PersonId, assign_source=@source, confidence=1, confirmed=1 WHERE id=@id AND confirmed=0",
+                new { o.PersonId, source = (int)AssignSource.User, id = ids[scored[0].Index] }, tx);
+            carriedOld.Add(o.Id);
         }
         tx.Commit();
         return ids;
+    }
+
+    /// <summary>Which people analysis a media item had (an older one stored video times differently).</summary>
+    public int PeopleVersionOf(long mediaId)
+    {
+        using var c = _db.Open();
+        return c.ExecuteScalar<int>("SELECT people_version FROM media WHERE id=@mediaId", new { mediaId });
+    }
+
+    /// <summary>Where a track is at a time: between two of its points proportionally; outside them, none.</summary>
+    private static Box? PathAt(List<NewTrackBox> path, int time)
+    {
+        if (path.Count == 0 || time < path[0].TimeMs - 1000 || time > path[^1].TimeMs + 1000) return null;
+        var after = path.FindIndex(p => p.TimeMs >= time);
+        if (after <= 0) { var e = after == 0 ? path[0] : path[^1]; return new Box(e.X, e.Y, e.W, e.H); }
+        var (a, b) = (path[after - 1], path[after]);
+        var f = (float)(time - a.TimeMs) / Math.Max(1, b.TimeMs - a.TimeMs);
+        return new Box(a.X + (b.X - a.X) * f, a.Y + (b.Y - a.Y) * f, a.W + (b.W - a.W) * f, a.H + (b.H - a.H) * f);
     }
 
     /// <summary>The paths of the people of a video, by track and time.</summary>

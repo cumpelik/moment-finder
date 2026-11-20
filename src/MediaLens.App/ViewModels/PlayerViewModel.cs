@@ -222,6 +222,34 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private bool _notRemembered;
 
+    /// <summary>Playing or paused changes what the people layer shows (setting: boxes only on a paused video).</summary>
+    partial void OnIsRunningChanged(bool value)
+    {
+        if (ShowPeople) LoadPeople();
+    }
+
+    private long _lastVlcTime = -1;
+    private readonly System.Diagnostics.Stopwatch _sinceVlcTime = new();
+
+    /// <summary>
+    /// The video's time between libVLC's reports (they come a few times a second): the last report plus the
+    /// time since, at the playing speed, so a box moves with every frame and not in steps.
+    /// </summary>
+    private long SmoothNowMs
+    {
+        get
+        {
+            var reported = NowMs;
+            if (reported != _lastVlcTime)
+            {
+                _lastVlcTime = reported;
+                _sinceVlcTime.Restart();
+                return reported;
+            }
+            return IsRunning ? reported + (long)Math.Min(1000, _sinceVlcTime.ElapsedMilliseconds * Rate) : reported;
+        }
+    }
+
     partial void OnShowPeopleChanged(bool value)
     {
         LoadPeople();
@@ -283,6 +311,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _names = ShowPeople ? _main.People.Names() : [];
         PeopleHint = !ShowPeople ? "" :
             _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
+            IsVideo && IsRunning && !_main.BoxesWhilePlaying ? "Pause the video to see who is who." :
             "Click a person to say who it is.";
         _peopleTimeBucket = -1;
         PeopleChanged?.Invoke();
@@ -303,8 +332,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 .Select(d => Box(d, d.X, d.Y, d.W, d.H, bodiesWithFace.Contains(d.Id) ? _detections.First(f => f.LinkedId == d.Id) : null))
                 .ToList();
         }
-        // Paused on the first frame, libVLC still says 0: the video was opened at its start time.
-        var now = (int)NowMs;
+        // Only on a paused video, if the user prefers that.
+        if (IsRunning && !_main.BoxesWhilePlaying) return [];
+        var now = (int)SmoothNowMs;
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         var boxes = new List<PeopleBox>();
         foreach (var (track, path) in _paths)

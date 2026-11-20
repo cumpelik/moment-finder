@@ -23,9 +23,13 @@ public sealed record IndexerStatus(IndexerPhase Phase, string Message, int Done,
 public sealed class Indexer : IDisposable
 {
     /// <summary>Raised when the pipeline changes so old results must be computed again.</summary>
-    public const int AnalysisVersion = 1;
-    /// <summary>2: a video track keeps its first and last detection. 3: the path of every track (track_box).</summary>
-    public const int PeopleVersion = 3;
+    /// <summary>2: video frames at their real times (they were half an interval later).</summary>
+    public const int AnalysisVersion = 2;
+    /// <summary>
+    /// 2: a video track keeps its first and last detection. 3: the path of every track (track_box).
+    /// 4: video frames at their real times (before, half an interval later than stored).
+    /// </summary>
+    public const int PeopleVersion = 4;
 
     private readonly AppPaths _paths;
     private readonly MediaRepository _repo;
