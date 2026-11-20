@@ -200,12 +200,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             {
                 _playingPath = item.FullPath;
                 _video.Play(item.FullPath, TakeStart(entry));
-                // Opened to say who someone is (from Who is this): a still picture at that moment.
-                if (PauseOnOpen)
-                {
-                    PauseOnOpen = false;
-                    _video.Pause();
-                }
+                HoldIfWanted();
                 _positionTimer.Start();
             }
             else
@@ -341,6 +336,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         // Only on a paused video, if the user prefers that.
         if (IsRunning && !_main.BoxesWhilePlaying) return [];
         var now = (int)SmoothNowMs;
+        // The last seconds after the last analyzed frame: the people stay where that frame saw them.
+        var lastFrame = _paths.Values.SelectMany(p => p).Select(p => p.TimeMs).DefaultIfEmpty(0).Max();
+        if (now > lastFrame) now = lastFrame;
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         var boxes = new List<PeopleBox>();
         foreach (var (track, path) in _paths)
@@ -392,6 +390,21 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
+    /// <summary>The user paused and browses on: the next video waits on its first frame too (not in a slideshow).</summary>
+    public bool StaysPaused { get; set; }
+
+    /// <summary>
+    /// A still picture instead of playing: opened to say who someone is (from Who is this), or the user had
+    /// paused the previous video.
+    /// </summary>
+    private void HoldIfWanted()
+    {
+        if (_video == null || !(PauseOnOpen || StaysPaused && !AutoPlay)) return;
+        PauseOnOpen = false;
+        _video.Pause();
+        IsRunning = false;
+    }
+
     private async Task ShowWhenVideoLoadedAsync(int version)
     {
         await VideoPlayer.LoadAsync();
@@ -408,6 +421,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             Error = null;
             _playingPath = path;
             _video.Play(path, TakeStart(entry));
+            HoldIfWanted();
             _positionTimer.Start();
         }
         catch (Exception e) when (e is Cloud.RcloneException or IOException)
@@ -579,11 +593,25 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         var at = ResumeAtMs ?? StartOf(entry);
         ResumeAtMs = null;
+        _lastReportedMs = 0;
         return _startedAtMs = at;
     }
 
     /// <summary>The video's time; the start until libVLC reports one.</summary>
-    private long NowMs => _video is { } v && v.TimeMs > 0 ? v.TimeMs : _startedAtMs;
+    private long NowMs
+    {
+        get
+        {
+            if (_video is not { } v) return _startedAtMs;
+            // At the end libVLC reports no time: the video stands on its last frame, so does the time.
+            if (v.IsEnded) return Math.Max(_lastReportedMs, _startedAtMs);
+            var time = v.TimeMs;
+            if (time > 0) return _lastReportedMs = time;
+            return _startedAtMs;
+        }
+    }
+
+    private long _lastReportedMs;
 
     /// <summary>Another viewer of this item moved on: continue from there, paused or playing as this one was.</summary>
     public void ContinueAt(int ms)
@@ -739,6 +767,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             _video.TogglePause();
             IsRunning = !IsRunning;
+            StaysPaused = !IsRunning;
             Notice = "";
             return;
         }

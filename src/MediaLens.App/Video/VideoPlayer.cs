@@ -122,6 +122,8 @@ public sealed class VideoPlayer : IDisposable
     }
 
     public bool IsPlaying => _player.IsPlaying;
+    /// <summary>Played to the end: libVLC reports no time any more.</summary>
+    public bool IsEnded => _ended;
     public long TimeMs => _player.Time;
     public long LengthMs => _player.Length;
 

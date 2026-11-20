@@ -360,12 +360,18 @@ public partial class MainWindow : Window
         var index = _vm.Tiles.IndexOf(tile);
         if (index < 0) return;
         if (_panelPlayer != null && _panelPlayer.Plays(_vm.Tiles)) _panelPlayer.GoTo(index);
-        else SetPanelPlayer(_vm.CreatePreview(index));
+        else
+        {
+            // Other results: a paused panel stays paused.
+            var paused = _panelPlayer?.StaysPaused == true;
+            SetPanelPlayer(_vm.CreatePreview(index), paused);
+        }
     }
 
-    private void SetPanelPlayer(PlayerViewModel player)
+    private void SetPanelPlayer(PlayerViewModel player, bool staysPaused = false)
     {
         ClosePanelPlayer();
+        player.StaysPaused = staysPaused;
         _panelPlayer = player;
         player.PropertyChanged += OnPanelPlayerChanged;
         player.CloseRequested += ClosePanelPlayer;
