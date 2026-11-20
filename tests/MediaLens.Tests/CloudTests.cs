@@ -43,6 +43,7 @@ public class CloudTests
         var cloudDir = Path.Combine(lib.Root, "cloud");
         var service = new CloudService(lib.Paths, lib.Db, lib.Repo);
         var cloud = await service.AddFolderAsync("Backup", cloudDir, "correct horse battery", ct);
+        service.BackupCloud = cloud;
         var mirror = service.AddMirror(source.Id, cloud.Id);
         await service.MirrorAsync(mirror.Id, null, ct);
 
@@ -131,6 +132,9 @@ public class CloudTests
                 // No password to think up: the key is made here and travels in the recovery string.
                 var cloud = await service.AddFolderAsync("Backup", cloudDir, null, ct);
                 Assert.True(cloud.Encrypted);
+                // Adding a cloud does not move the library into it: that is a choice of its own.
+                Assert.Null(service.BackupCloud);
+                service.BackupCloud = cloud;
                 await service.MirrorAsync(service.AddMirror(source.Id, cloud.Id).Id, null, ct);
                 Assert.Equal("OK", service.Backup.LastResult);
                 Assert.DoesNotContain(Directory.GetFiles(cloudDir, "*", SearchOption.AllDirectories),

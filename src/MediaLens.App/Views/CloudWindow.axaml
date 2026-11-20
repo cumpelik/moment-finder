@@ -7,7 +7,7 @@
         x:Class="MediaLens.App.Views.CloudWindow"
         x:DataType="vm:CloudViewModel"
         Title="Cloud and backup"
-        Width="1040" Height="860" MinWidth="760" MinHeight="520"
+        Width="980" Height="720" MinWidth="760" MinHeight="520"
         WindowStartupLocation="CenterOwner">
 
     <DockPanel Margin="16">
@@ -19,66 +19,7 @@
         </Border>
 
         <TextBlock DockPanel.Dock="Top" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,12"
-                   Text="Mirror your folders into a cloud and keep the library itself there. Files and their names are encrypted on this computer before the upload: the provider stores only noise. The key is part of your recovery string." />
-
-        <!-- The library in the cloud, and the way back -->
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,16,*" Margin="0,0,0,14">
-            <Border Classes="card">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="LIBRARY BACKUP" Classes="heading" Margin="0" />
-                    <TextBlock Text="{Binding BackupSummary}" TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasClouds}">
-                        <TextBlock Text="Into" VerticalAlignment="Center" />
-                        <ComboBox ItemsSource="{Binding Clouds}" SelectedItem="{Binding BackupCloud}" MinWidth="180">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate DataType="c:CloudInfo">
-                                    <TextBlock Text="{Binding Name}" />
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
-                    </StackPanel>
-                    <WrapPanel IsVisible="{Binding HasClouds}">
-                        <Button Command="{Binding BackUpNowCommand}" Margin="0,0,6,6">Back up now</Button>
-                        <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" Margin="0,0,6,6"
-                                ToolTip.Tip="One string that brings the whole library back on any computer">Show my recovery string</Button>
-                    </WrapPanel>
-                    <StackPanel Spacing="6" IsVisible="{Binding RecoveryText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                        <TextBox Text="{Binding RecoveryText}" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="84" FontFamily="monospace" FontSize="11" />
-                        <WrapPanel>
-                            <Button Click="OnCopyRecovery" Margin="0,0,6,6">Copy</Button>
-                            <Button Click="OnSaveRecovery" Margin="0,0,6,6">Save to a file...</Button>
-                        </WrapPanel>
-                        <TextBlock Foreground="#F59E0B" TextWrapping="Wrap" FontSize="12"
-                                   Text="Keep it where you keep passwords, not on this computer only. With it a new computer has your library back; without it the backup cannot be read. Anybody who has it can read everything." />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Classes="card">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="BRING A LIBRARY BACK (NEW OR SECOND COMPUTER)" Classes="heading" Margin="0" />
-                    <TextBox Text="{Binding RestoreText}" PlaceholderText="Paste your recovery string here" TextWrapping="Wrap" MaxHeight="64"
-                             FontFamily="monospace" FontSize="11" />
-                    <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding !Busy}" HorizontalAlignment="Left">Find my library</Button>
-                    <StackPanel Spacing="8" IsVisible="{Binding HasFoundBackups}">
-                        <ListBox ItemsSource="{Binding FoundBackups}" SelectedItem="{Binding SelectedBackup}" MaxHeight="90">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate DataType="c:LibraryRestore+Found">
-                                    <TextBlock Text="{Binding Title}" />
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                        <CheckBox IsChecked="{Binding RestoreThumbnails}"
-                                  ToolTip.Tip="Without them the library is here sooner, and the thumbnails are made again from the originals">With thumbnails</CheckBox>
-                        <TextBlock Classes="muted small" TextWrapping="Wrap"
-                                   Text="It replaces the library on this computer (kept beside it as library.before-restore.db). Folders that are not on this computer are browsed from the cloud; nothing is downloaded until you open it." />
-                        <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding !Busy}" HorizontalAlignment="Left">Bring this library back</Button>
-                    </StackPanel>
-                    <Button Classes="accent" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}" HorizontalAlignment="Left">Restart MediaLens to open it</Button>
-                </StackPanel>
-            </Border>
-        </Grid>
-        <TextBlock DockPanel.Dock="Top" Foreground="#F97066" TextWrapping="Wrap" Margin="0,0,0,12" IsVisible="{Binding RcloneMissing}"
-                   Text="rclone was not found. The installer brings it along; for a development build install rclone (rclone.org)." />
+                   Text="Mirror your folders into a cloud. Files and their names are encrypted on this computer before the upload: the provider stores only noise. Where the library itself (settings, names, search data) is kept is chosen in Settings, Library backup." />
 
         <Grid ColumnDefinitions="*,16,*">
             <!-- Clouds -->

@@ -39,7 +39,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           cloud import-index <cloud id>    names, people and buckets from the cloud's index backup
           mirror add <source id> <cloud id>
           mirror run [mirror id]
-          backup run                       the library (index, search data, thumbnails, clouds) into its cloud
+          backup cloud <cloud id>          choose the cloud the library itself is kept in (0: none)
+          backup run                       the library (index, search data, thumbnails, clouds) into that cloud
           recovery show                    the recovery string: brings the library back on any computer
           recovery restore <string>        bring a library back (the newest backup the string leads to)
           bucket list
@@ -253,9 +254,18 @@ switch (args[0])
         return 0;
     }
 
+    case "backup" when args.Length >= 3 && args[1] == "cloud":
+    {
+        var chosen = host.Cloud.Clouds().FirstOrDefault(c => c.Id.ToString() == args[2]);
+        if (chosen == null && args[2] != "0") return Fail("No such cloud (see cloud list)");
+        host.Cloud.BackupCloud = chosen;
+        Console.WriteLine(chosen == null ? "The library is not backed up" : $"The library is kept in {chosen.Name}");
+        return 0;
+    }
+
     case "backup" when args.Length >= 2 && args[1] == "run":
     {
-        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Add a cloud first (cloud add-s3, add-folder...)");
+        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Choose the cloud for the library first (backup cloud <cloud id>)");
         try
         {
             await host.Cloud.Backup.RunAsync(cloud, full: true, new Progress<string>(what => Console.Write($"\r  {what,-50}")), ct);
@@ -270,7 +280,7 @@ switch (args[0])
 
     case "recovery" when args.Length >= 2 && args[1] == "show":
     {
-        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Add a cloud first (cloud add-s3, add-folder...)");
+        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Choose the cloud for the library first (backup cloud <cloud id>)");
         Console.WriteLine(await host.Cloud.RecoveryStringAsync(cloud, ct));
         return 0;
     }

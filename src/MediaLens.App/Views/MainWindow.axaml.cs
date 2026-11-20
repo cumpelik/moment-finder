@@ -307,6 +307,15 @@ public partial class MainWindow : Window
 
     private void OnOpenCloud(object? sender, RoutedEventArgs e) => OpenCloud();
 
+    private void OnOpenLibraryBackup(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        SettingsButton.Flyout?.Hide();
+        var window = new LibraryBackupWindow { DataContext = _vm.CreateCloudViewModel() };
+        window.AddCloudRequested += OpenCloud;
+        window.ShowDialog(this);
+    }
+
     private void OpenCloud()
     {
         if (_vm == null) return;

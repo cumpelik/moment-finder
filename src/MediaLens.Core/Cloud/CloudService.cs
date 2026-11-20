@@ -209,14 +209,13 @@ public sealed class CloudService
         return RecoveryString.Encode(new Recovery(cloud.Name, root, remotes));
     }
 
-    /// <summary>The cloud the library is backed up to: the chosen one, otherwise the first.</summary>
+    /// <summary>
+    /// The cloud the library itself (settings, names, search data, thumbnails) is backed up to. Chosen by the user,
+    /// possibly another one than the photos and videos go to; adding a cloud does not choose it. Null: not backed up.
+    /// </summary>
     public CloudInfo? BackupCloud
     {
-        get
-        {
-            var clouds = Clouds();
-            return clouds.FirstOrDefault(c => c.Id.ToString() == _db.GetSetting("backup_cloud_id")) ?? clouds.OrderBy(c => c.Id).FirstOrDefault();
-        }
+        get => _db.GetSetting("backup_cloud_id") is { Length: > 0 } id ? Clouds().FirstOrDefault(c => c.Id.ToString() == id) : null;
         set => _db.SetSetting("backup_cloud_id", value?.Id.ToString());
     }
 
@@ -321,10 +320,10 @@ public sealed class CloudService
             await Rclone.CopyAsync(mirror.SourceRoot, target,
                 ["--exclude", ".*/**", "--exclude", ".*", "--exclude", "@eaDir/**", "--exclude", "$RECYCLE.BIN/**", "--exclude", "#recycle/**"],
                 progress, ct);
-            // Recorded before the library goes along, so the backup knows this folder is in the cloud.
+            // Recorded before the library is backed up, so the backup knows this folder is in the cloud.
             Done("OK");
-            // The library: whole to the cloud chosen for it, elsewhere the index (names, people, buckets).
-            await Backup.RunAsync(cloud, full: cloud.Id == BackupCloud?.Id, null, ct);
+            // The library follows, into the cloud chosen for it (which may be another one, or none).
+            if (BackupCloud is { } home) await Backup.RunAsync(home, full: true, null, ct);
             result = "OK";
         }
         catch (Exception e) when (e is RcloneException or IOException)

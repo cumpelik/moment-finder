@@ -20,10 +20,12 @@ and then work offline. Windows, Linux and macOS.
 - **Cloud and backup** (via rclone): OneDrive, Google Drive, S3 (Amazon, IDrive e2, Backblaze, Wasabi, MinIO...)
   or a NAS folder. Everything is encrypted on this computer before the upload (rclone crypt: contents and names)
   with a key the application makes itself. Mirrors upload new and changed files of a source every few hours,
-  into a folder named after the computer, and never delete in the cloud. The **library itself** is backed up too:
-  index (names, people, buckets, sources, settings), search vectors, thumbnails and the clouds' settings.
-- **Recovery string**: one string (Backup, Show my recovery string) holds the way to the storage and the key.
-  On a new or second computer, paste it (Backup, or the start screen of an empty library): the library comes
+  into a folder named after the computer, and never delete in the cloud.
+- **Library backup** (Settings, Library backup): the library itself, that is index (names, people, buckets,
+  sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a cloud you choose for it,
+  which can be another one than the photos go to. Adding a cloud does not choose it.
+- **Recovery string**: one string (shown there) holds the way to that storage and the key.
+  On a new or second computer, paste it (same window, or the start screen of an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
   size-limited cache when opened. Whoever has the string can read the backup; without it nobody can.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
@@ -92,7 +94,7 @@ medialens bucket export "Fotokniha" ~/Desktop/fotokniha
 medialens cloud add-onedrive Backup --password ...
 medialens mirror add <source> <cloud> / mirror run
 medialens cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>
-medialens backup run / recovery show / recovery restore <string>
+medialens backup cloud <cloud> / backup run / recovery show / recovery restore <string>
 ```
 
 (`dotnet run --project src/MediaLens.Cli -- <command>` in a development build.)

@@ -70,6 +70,7 @@ public sealed partial class CloudViewModel : ObservableObject
 
     public ObservableCollection<LibraryRestore.Found> FoundBackups { get; } = [];
     public bool HasClouds => Clouds.Count > 0;
+    public bool HasBackupCloud => BackupCloud != null;
     public bool HasFoundBackups => FoundBackups.Count > 0;
 
     [ObservableProperty] private string _backupSummary = "";
@@ -88,17 +89,30 @@ public sealed partial class CloudViewModel : ObservableObject
 
     partial void OnBackupCloudChanged(CloudInfo? value)
     {
-        if (_reloading || value == null) return;
+        OnPropertyChanged(nameof(HasBackupCloud));
+        if (_reloading || value == null || value.Id == _host.Cloud.BackupCloud?.Id) return;
+        // Chosen: the library goes there now, and the way back is shown right away.
         _host.Cloud.BackupCloud = value;
-        RecoveryText = "";
         UpdateBackupSummary();
+        _host.Mirrors.BackupNow();
+        _ = ShowRecovery();
+    }
+
+    /// <summary>The library is not backed up any more; what is in the cloud stays.</summary>
+    [RelayCommand]
+    private void StopBackup()
+    {
+        _host.Cloud.BackupCloud = null;
+        RecoveryText = "";
+        Reload();
+        Status = "The library is not backed up now. What was uploaded stays in the cloud.";
     }
 
     private void UpdateBackupSummary()
     {
         var backup = _host.Cloud.Backup;
         BackupSummary = _host.Cloud.BackupCloud is not { } cloud
-            ? "Add a cloud below. The library (names, people, buckets, search data, thumbnails, settings, your clouds) is then backed up into it by itself, and one recovery string brings it back on any computer."
+            ? Clouds.Count == 0 ? "No cloud yet: add one first." : "Not backed up: on this computer only."
             : backup.LastAt is { } at
                 ? $"Backed up to {cloud.Name}: {at.LocalDateTime:d. M. yyyy H:mm}" + (backup.LastResult is { } r && r != "OK" ? $". The last try failed: {r}" : ".")
                 : backup.LastResult is { } failed && failed != "OK" ? $"Not backed up to {cloud.Name} yet: {failed}" : $"Not backed up to {cloud.Name} yet; it starts by itself.";
@@ -116,7 +130,7 @@ public sealed partial class CloudViewModel : ObservableObject
         RunAsync("Making the recovery string...", async ct =>
         {
             RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
-            Status = "Copy the recovery string or save it to a file, and keep it somewhere safe.";
+            Status = "Copy the recovery string or save it to a file, and keep it somewhere safe. The library is being backed up meanwhile.";
         });
 
     private Recovery? _recovery;
@@ -209,7 +223,6 @@ public sealed partial class CloudViewModel : ObservableObject
     {
         // No password to think up: the encryption key is made here and is part of the recovery string.
         string? password = null;
-        var first = Clouds.Count == 0;
         var name = string.IsNullOrWhiteSpace(Name) ? Kinds[KindIndex].Split(' ')[0] : Name.Trim();
         return RunAsync(IsSignIn ? "Sign in in the browser window that opened..." : "Connecting...", async ct =>
         {
@@ -221,12 +234,7 @@ public sealed partial class CloudViewModel : ObservableObject
                 _ => await _host.Cloud.AddFolderAsync(name, Folder, password, ct),
             };
             SecretKey = "";
-            Status = $"{cloud.Name} added.";
-            if (!first) return;
-            // From now on there is something to lose: the library backs up, and the way back is shown right away.
-            RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
-            _host.Mirrors.BackupNow();
-            Status = $"{cloud.Name} added and the library is being backed up into it. Save the recovery string above now.";
+            Status = $"{cloud.Name} added. Mirror a folder into it on the right; to keep the library itself there, choose it in Settings, Library backup.";
         });
     }
 
@@ -309,7 +317,7 @@ public sealed partial class CloudViewModel : ObservableObject
             var file = await _host.Cloud.DownloadIndexAsync(cloud.Id, ct);
             if (file == null)
             {
-                Status = "This cloud has no index backup yet (it is uploaded with every mirror run).";
+                Status = "This cloud holds no library backup (Settings, Library backup chooses where the library is kept).";
                 return;
             }
             var r = await Task.Run(() => new IndexImport(_host.Db).Import(file), ct);
