@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -15,7 +16,10 @@ public partial class MainWindow : Window
 {
     private MainViewModel? _vm;
 
-    private UniformGridLayout TileLayout => (UniformGridLayout)Repeater.Layout!;
+    private UniformGridLayout TileLayout => (UniformGridLayout)Resources["TileLayout"]!;
+    private UniformGridLayout GroupTileLayout => (UniformGridLayout)Resources["GroupTileLayout"]!;
+    private const double TileGap = 6;
+    private PreviewMode _layoutMode = PreviewMode.Window;
 
     public MainWindow()
     {
@@ -70,12 +74,61 @@ public partial class MainWindow : Window
         ClosePanelPlayer();
     }
 
-    private void ApplyTileSize()
+    private void ApplyTileSize() => ApplyLayouts();
+
+    private PreviewMode LayoutMode => _vm is { ShowPreviewPanel: true } vm ? vm.PreviewMode : PreviewMode.Window;
+
+    /// <summary>
+    /// Window: a grid of tiles of the slider's size. Below: one row scrolling sideways, the tiles as high as
+    /// the strip. Right: one column, the tiles as wide as it. The layout scales the tiles to the space itself,
+    /// so dragging the splitter or resizing the window just makes them bigger or smaller.
+    /// </summary>
+    private void ApplyLayouts()
     {
         if (_vm == null) return;
-        TileLayout.MinItemWidth = _vm.TileSize;
-        TileLayout.MinItemHeight = _vm.TileSize;
+        var mode = LayoutMode;
+        // Another arrangement: new layouts (one changed in place keeps the old arrangement's state and fails).
+        if (mode != _layoutMode)
+        {
+            _layoutMode = mode;
+            Resources["TileLayout"] = NewTileLayout(mode);
+            Resources["GroupTileLayout"] = NewTileLayout(mode);
+            Resources["GroupLayout"] = mode == PreviewMode.Below
+                ? new StackLayout { Orientation = Orientation.Horizontal, Spacing = 20 }
+                : new StackLayout { Orientation = Orientation.Vertical };
+            var below = mode == PreviewMode.Below;
+            BrowseArea.Classes.Set("strip", below);
+            GridScroll.HorizontalScrollBarVisibility = below ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+            GridScroll.VerticalScrollBarVisibility = below ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        }
+        if (mode == PreviewMode.Window)
+            foreach (var layout in new[] { TileLayout, GroupTileLayout })
+            {
+                layout.MinItemWidth = _vm.TileSize;
+                layout.MinItemHeight = _vm.TileSize;
+            }
     }
+
+    /// <summary>A grid; or one row / column whose tiles grow with it, keeping 4:3.</summary>
+    private static UniformGridLayout NewTileLayout(PreviewMode mode) => mode switch
+    {
+        PreviewMode.Below => new UniformGridLayout
+        {
+            // Placed top to bottom with one per column: the columns go sideways.
+            Orientation = Orientation.Vertical, MaximumRowsOrColumns = 1, ItemsStretch = UniformGridLayoutItemsStretch.Uniform,
+            MinItemWidth = 40, MinItemHeight = 30, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
+        },
+        PreviewMode.Right => new UniformGridLayout
+        {
+            Orientation = Orientation.Horizontal, MaximumRowsOrColumns = 1, ItemsStretch = UniformGridLayoutItemsStretch.Uniform,
+            MinItemWidth = 40, MinItemHeight = 30, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
+        },
+        _ => new UniformGridLayout
+        {
+            MinItemWidth = 180, MinItemHeight = 180, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
+            ItemsStretch = UniformGridLayoutItemsStretch.Fill,
+        },
+    };
 
     // ---- grid ----
 
@@ -106,6 +159,7 @@ public partial class MainWindow : Window
     /// <summary>Tiles per row, for Up / Down.</summary>
     private int Columns()
     {
+        if (LayoutMode != PreviewMode.Window) return 1;
         var width = GridScroll.Viewport.Width;
         var tile = TileLayout.MinItemWidth + TileLayout.MinColumnSpacing;
         return Math.Max(1, (int)((width + TileLayout.MinColumnSpacing) / tile));
@@ -366,8 +420,10 @@ public partial class MainWindow : Window
                 cols[0].Width = star;
                 cols[2].Width = none;
                 ClosePanelPlayer();
+                ApplyLayouts();
                 return;
         }
+        ApplyLayouts();
         if (_vm.AnchorTile is { } tile)
         {
             ShowInPanel(tile);

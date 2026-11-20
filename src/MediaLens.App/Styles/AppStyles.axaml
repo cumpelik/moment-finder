@@ -65,6 +65,14 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
+    <!-- A group of results: under each other in the grid, side by side in the strip under the viewer -->
+    <Style Selector="DockPanel.group">
+        <Setter Property="Margin" Value="0,4,0,14" />
+    </Style>
+    <Style Selector="Grid.strip DockPanel.group">
+        <Setter Property="Margin" Value="0" />
+    </Style>
+
     <!-- One of a few buttons of which one is on (where the viewer shows) -->
     <Style Selector="Button.segment">
         <Setter Property="Padding" Value="8,5" />
