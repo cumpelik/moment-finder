@@ -263,10 +263,6 @@
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
                     <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
                               ToolTip.Tip="Show the results in groups: by day, month, year or person" />
-                    <ToggleButton IsChecked="{Binding ShowWholePicture}" VerticalAlignment="Center"
-                                  ToolTip.Tip="Whole pictures instead of squares cut out of them">
-                        <mi:MaterialIcon Kind="ImageAspectRatio" />
-                    </ToggleButton>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
                     <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
@@ -289,7 +285,7 @@
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->
             <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10" IsVisible="{Binding IsGridMode}">
-                <Panel Classes.whole="{Binding ShowWholePicture}">
+                <Panel>
                     <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding FlatTiles}" Layout="{StaticResource TileLayout}"
                                    ItemTemplate="{StaticResource TileTemplate}" IsVisible="{Binding !IsGrouped}" />
                     <ItemsRepeater x:Name="GroupRepeater" ItemsSource="{Binding Groups}" IsVisible="{Binding IsGrouped}">

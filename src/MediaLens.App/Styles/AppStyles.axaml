@@ -50,11 +50,8 @@
     </Style>
 
     <!-- Thumbnail tiles -->
-    <!-- A thumbnail: a square cut out of the picture, or the whole picture -->
+    <!-- A thumbnail shows the whole picture, nothing cut off -->
     <Style Selector="Image.thumb">
-        <Setter Property="Stretch" Value="UniformToFill" />
-    </Style>
-    <Style Selector="Panel.whole Image.thumb">
         <Setter Property="Stretch" Value="Uniform" />
     </Style>
 

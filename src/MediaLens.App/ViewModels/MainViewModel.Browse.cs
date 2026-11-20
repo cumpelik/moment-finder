@@ -48,8 +48,6 @@ public sealed partial class MainViewModel
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsGrouped), nameof(FlatTiles))] private GroupOption _groupBy = null!;
     [ObservableProperty] private ObservableCollection<TileGroup> _groups = [];
-    /// <summary>Tiles show the whole picture instead of a square cut out of it.</summary>
-    [ObservableProperty] private bool _showWholePicture;
 
     public bool IsGrouped => GroupBy.Mode != GroupMode.None;
     /// <summary>The plain grid gets the tiles only when the results are not grouped (two grids would load every thumbnail twice).</summary>
@@ -68,12 +66,9 @@ public sealed partial class MainViewModel
         ResultsReset?.Invoke();
     }
 
-    partial void OnShowWholePictureChanged(bool value) => _host.Db.SetSetting("tile_whole", value ? "1" : "0");
-
     private void LoadBrowseSettings()
     {
         _groupBy = GroupOptions.FirstOrDefault(o => o.Mode.ToString() == _host.Db.GetSetting("group_by")) ?? GroupOptions[0];
-        _showWholePicture = _host.Db.GetSetting("tile_whole") == "1";
     }
 
     /// <summary>Days and months newest first; a text search keeps its best matches first inside a group.</summary>
