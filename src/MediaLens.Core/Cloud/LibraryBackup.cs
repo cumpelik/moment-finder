@@ -6,8 +6,9 @@ namespace MediaLens.Cloud;
 /// <summary>
 /// The library in the cloud: the index (names, people, buckets, sources, settings), the search vectors, the
 /// thumbnails and people crops, and the clouds' settings. Everything a new computer needs to show the library
-/// as it was, without analyzing anything again. Originals are the mirrors' business; models and the playing
-/// copies of 360 videos are made again.
+/// as it was, without analyzing anything again. The clouds' settings hold access keys and are always stored
+/// encrypted; the rest is stored the way the cloud is (plain when the library's cloud is). Originals are the
+/// mirrors' business; models and the playing copies of 360 videos are made again.
 /// </summary>
 public sealed class LibraryBackup
 {
@@ -39,7 +40,7 @@ public sealed class LibraryBackup
     /// </summary>
     public async Task RunAsync(CloudInfo cloud, bool full, IProgress<string>? progress, CancellationToken ct)
     {
-        var root = CloudService.Join(await _cloud.BackupRootAsync(cloud, ct), _cloud.Device.Folder);
+        var root = CloudService.Join(_cloud.BackupRoot(cloud), _cloud.Device.Folder);
         var tmp = Path.Combine(_paths.CacheDir, "backup");
         if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
         Directory.CreateDirectory(tmp);
@@ -67,7 +68,9 @@ public sealed class LibraryBackup
                     await _cloud.Rclone.UploadAsync(copy, CloudService.Join(root, VectorsName), ct);
                 }
                 var clouds = Path.Combine(_paths.DataDir, CloudsName);
-                if (File.Exists(clouds)) await _cloud.Rclone.UploadAsync(clouds, CloudService.Join(root, CloudsName), ct);
+                // The access keys of every cloud: into the encrypted place, whatever the cloud is.
+                if (File.Exists(clouds))
+                    await _cloud.Rclone.UploadAsync(clouds, CloudService.Join(await _cloud.KeysRootAsync(cloud, ct), $"{_cloud.Device.Folder}/{CloudsName}"), ct);
                 await _cloud.Rclone.CopyAsync(_paths.ThumbDir, CloudService.Join(root, ThumbsName), [],
                     new Progress<Rclone.CopyProgress>(p => progress?.Report($"thumbnails {p.Percent}%")), ct);
             }

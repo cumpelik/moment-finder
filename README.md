@@ -21,15 +21,16 @@ and then work offline. Windows, Linux and macOS.
   sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a storage you give there:
   IDrive e2 (two keys; its address is found by them) or another S3 compatible storage (address, two keys), with
   a bucket that is made if it is not there,
-  Amazon S3, OneDrive, Google Drive or a folder. Everything is encrypted on this computer before the upload
-  (rclone crypt: contents and names) with a key the application makes itself.
+  Amazon S3, OneDrive, Google Drive or a folder. It is stored there as it is (it is of use to MediaLens only);
+  the one thing that must not be readable, the access keys of your clouds, is encrypted on this computer before
+  the upload (rclone crypt) with a key the application makes itself.
 - **Mirrors of folders** (originals into a cloud, under a folder named after the computer, never deleting
   there) and cloud folders as sources: command line only for now; in the application they will come back as
   an option of a source.
-- **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and the key.
+- **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
   On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
-  size-limited cache when opened. Whoever has the string can read the backup; without it nobody can.
+  size-limited cache when opened. Whoever has the string gets into the storage.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
 - **Moved files**: a photo or video moved or renamed (also to another source) is recognized by its content
   and keeps its thumbnail, people, buckets and analysis.

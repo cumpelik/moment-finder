@@ -129,16 +129,22 @@ public class CloudTests
                 lib.Db.SetSetting("tile_size", "222");
 
                 var service = new CloudService(lib.Paths, lib.Db, lib.Repo);
-                // No password to think up: the key is made here and travels in the recovery string.
-                var cloud = await service.AddFolderAsync("Backup", cloudDir, null, ct);
-                Assert.True(cloud.Encrypted);
+                // The library's cloud stores it as it is; a second cloud (for photos) is encrypted, its key made here.
+                var cloud = await service.AddFolderAsync("Library", cloudDir, null, ct, encrypt: false);
+                Assert.False(cloud.Encrypted);
+                var photos = await service.AddFolderAsync("Photos", cloudDir + "-photos", null, ct);
+                Assert.True(photos.Encrypted);
                 // Adding a cloud does not move the library into it: that is a choice of its own.
                 Assert.Null(service.BackupCloud);
                 service.BackupCloud = cloud;
                 await service.MirrorAsync(service.AddMirror(source.Id, cloud.Id).Id, null, ct);
                 Assert.Equal("OK", service.Backup.LastResult);
-                Assert.DoesNotContain(Directory.GetFiles(cloudDir, "*", SearchOption.AllDirectories),
-                    f => f.Contains("IMG_", StringComparison.Ordinal) || f.Contains("library", StringComparison.Ordinal) || f.Contains("rclone", StringComparison.Ordinal));
+                var stored = Directory.GetFiles(cloudDir, "*", SearchOption.AllDirectories);
+                Assert.Contains(stored, f => Path.GetFileName(f) == "library.db");
+                Assert.Contains(stored, f => Path.GetFileName(f) == "scene.vec");
+                // The clouds' settings hold the keys of every cloud: nowhere readable, by name or by content.
+                Assert.DoesNotContain(stored, f => f.Contains("rclone", StringComparison.Ordinal));
+                Assert.DoesNotContain(stored, f => new FileInfo(f).Length < 100_000 && File.ReadAllText(f).Contains("type = crypt", StringComparison.Ordinal));
                 recoveryText = await service.RecoveryStringAsync(cloud, ct);
             }
             // The old computer is gone, with the folder of photos.
@@ -166,6 +172,9 @@ public class CloudTests
             Assert.Equal(SourceKinds.Cloud, cloudSource.Kind);
             var service2 = new CloudService(other.Paths, db, repo);
             Assert.Empty(service2.Mirrors());
+            // Both clouds are known again, with their keys.
+            Assert.Equal(["Library", "Photos"], service2.Clouds().Select(c => c.Name));
+            await service2.Rclone.TestAsync(service2.Clouds().Single(c => c.Name == "Photos").Remote, ct);
             var scan = await new LibraryScanner(repo, service2.Rclone).ScanAsync(cloudSource, null, ct);
             Assert.Equal((0, 0, 0, 2), (scan.Added, scan.Changed, scan.Missing, scan.Total));
             var restored = repo.Query(new MediaFilter()).Single(i => i.Id == itemId);
@@ -176,7 +185,8 @@ public class CloudTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+            foreach (var dir in new[] { cloudDir, cloudDir + "-photos" })
+                try { Directory.Delete(dir, true); } catch (IOException) { }
         }
     }
 }

@@ -6,10 +6,14 @@ namespace MediaLens.Cloud;
 
 /// <summary>
 /// All that another computer needs to find the library backup: how to reach the storage (the rclone remotes with
-/// their keys and the encryption key) and where in it the backups are. The rest (other clouds, sources, names,
-/// settings) is in the backup itself.
+/// their access keys and the key of what is encrypted) and where in it the backups are. The rest (other clouds,
+/// sources, names, settings) is in the backup itself.
 /// </summary>
-public sealed record Recovery(string Name, string BackupRoot, Dictionary<string, Dictionary<string, string>> Remotes);
+public sealed record Recovery(string Name, string BackupRoot, Dictionary<string, Dictionary<string, string>> Remotes, string? KeysRoot = null)
+{
+    /// <summary>Where the clouds' access keys are (encrypted); with the backup itself when that is encrypted as a whole.</summary>
+    public string Keys => KeysRoot ?? BackupRoot;
+}
 
 /// <summary>The recovery string: the Recovery as compressed JSON in letters that survive a copy and paste.</summary>
 public static class RecoveryString

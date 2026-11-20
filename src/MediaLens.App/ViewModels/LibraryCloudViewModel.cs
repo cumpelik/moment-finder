@@ -157,12 +157,14 @@ public sealed partial class LibraryCloudViewModel : ObservableObject
         return RunAsync(IsSignIn ? "Sign in in the browser window that opened..." : "Connecting...", async ct =>
         {
             var aws = kind.Provider == "AWS";
+            // The library is stored as it is (index, search data, thumbnails: of use to MediaLens only); what must
+            // not be readable, the access keys of the clouds, is encrypted by the backup itself.
             var cloud = kind.IsS3
                 ? await _host.Cloud.AddS3Async(kind.Title, new S3Settings(kind.Provider, aws || !kind.NeedsAddress ? "" : Endpoint.Trim(), aws ? Endpoint.Trim() : "",
-                    AccessKey.Trim(), SecretKey.Trim(), Bucket.Trim()), null, ct)
-                : kind.Title == "OneDrive" ? await _host.Cloud.AddOneDriveAsync(kind.Title, null, ct)
-                : kind.Title == "Google Drive" ? await _host.Cloud.AddGoogleDriveAsync(kind.Title, null, ct)
-                : await _host.Cloud.AddFolderAsync("Folder", Folder.Trim(), null, ct);
+                    AccessKey.Trim(), SecretKey.Trim(), Bucket.Trim()), null, ct, encrypt: false)
+                : kind.Title == "OneDrive" ? await _host.Cloud.AddOneDriveAsync(kind.Title, null, ct, encrypt: false)
+                : kind.Title == "Google Drive" ? await _host.Cloud.AddGoogleDriveAsync(kind.Title, null, ct, encrypt: false)
+                : await _host.Cloud.AddFolderAsync("Folder", Folder.Trim(), null, ct, encrypt: false);
             SecretKey = "";
             _host.Cloud.BackupCloud = cloud;
             RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);

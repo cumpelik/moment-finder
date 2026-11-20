@@ -43,11 +43,12 @@ public sealed class MirrorInfo
 public sealed record S3Settings(string Provider, string Endpoint, string Region, string AccessKey, string SecretKey, string Bucket);
 
 /// <summary>
-/// Clouds, mirrors and cloud sources. A cloud is an rclone remote wrapped in a crypt remote: this computer
-/// encrypts contents and names before the upload, with a key the application makes itself (it travels in the
-/// recovery string), so the provider only ever stores noise. A mirror copies a local source into the cloud (new
-/// and changed files, never deleting there), under a folder named after this computer. The library itself is
-/// backed up there too (LibraryBackup), so another computer gets everything back from the recovery string.
+/// Clouds, mirrors and cloud sources. A cloud is an rclone remote, plain or wrapped in a crypt remote (this
+/// computer then encrypts contents and names before the upload, with a key the application makes itself, so
+/// the provider only stores noise). A mirror copies a local source into the cloud (new and changed files, never
+/// deleting there), under a folder named after this computer. The library itself is backed up to the cloud
+/// chosen for it (LibraryBackup): index, search data and thumbnails as they are, the access keys of the clouds
+/// always encrypted. Another computer gets everything back from the recovery string.
 /// </summary>
 public sealed class CloudService
 {
@@ -114,7 +115,11 @@ public sealed class CloudService
 
     private static string NewRemoteName() => "ml" + Guid.NewGuid().ToString("N")[..8];
 
-    public async Task<CloudInfo> AddS3Async(string name, S3Settings s3, string? password, CancellationToken ct)
+    /// <summary>
+    /// The four ways to add a cloud share this: encrypted with the given password, or with a key made here when
+    /// there is none; with encrypt false the files are stored as they are (readable at the provider).
+    /// </summary>
+    public async Task<CloudInfo> AddS3Async(string name, S3Settings s3, string? password, CancellationToken ct, bool encrypt = true)
     {
         var remote = NewRemoteName();
         var parameters = new Dictionary<string, string>
@@ -162,11 +167,11 @@ public sealed class CloudService
             await DeleteRemotesAsync(remote, CancellationToken.None);
             throw;
         }
-        return await FinishAsync(name, "s3", remote, $"{bucket}/{HomeFolder}", password, ct);
+        return await FinishAsync(name, "s3", remote, $"{bucket}/{HomeFolder}", password, encrypt, ct);
     }
 
     /// <summary>Opens the browser for the Microsoft sign-in, then finds the user's drive.</summary>
-    public async Task<CloudInfo> AddOneDriveAsync(string name, string? password, CancellationToken ct)
+    public async Task<CloudInfo> AddOneDriveAsync(string name, string? password, CancellationToken ct, bool encrypt = true)
     {
         var token = await Rclone.AuthorizeAsync("onedrive", ct);
         var (driveId, driveType) = await OneDriveOfAsync(token, ct);
@@ -177,7 +182,7 @@ public sealed class CloudService
             ["drive_id"] = driveId,
             ["drive_type"] = driveType,
         }, ct);
-        return await FinishAsync(name, "onedrive", remote, $"{remote}:{HomeFolder}", password, ct);
+        return await FinishAsync(name, "onedrive", remote, $"{remote}:{HomeFolder}", password, encrypt, ct);
     }
 
     private static async Task<(string Id, string Type)> OneDriveOfAsync(string tokenJson, CancellationToken ct)
@@ -191,7 +196,7 @@ public sealed class CloudService
     }
 
     /// <summary>Opens the browser for the Google sign-in.</summary>
-    public async Task<CloudInfo> AddGoogleDriveAsync(string name, string? password, CancellationToken ct)
+    public async Task<CloudInfo> AddGoogleDriveAsync(string name, string? password, CancellationToken ct, bool encrypt = true)
     {
         var token = await Rclone.AuthorizeAsync("drive", ct);
         var remote = NewRemoteName();
@@ -200,15 +205,15 @@ public sealed class CloudService
             ["scope"] = "drive",
             ["token"] = token,
         }, ct);
-        return await FinishAsync(name, "drive", remote, $"{remote}:{HomeFolder}", password, ct);
+        return await FinishAsync(name, "drive", remote, $"{remote}:{HomeFolder}", password, encrypt, ct);
     }
 
     /// <summary>A folder as the "cloud": a NAS, an external disk, or the folder of a sync client.</summary>
-    public async Task<CloudInfo> AddFolderAsync(string name, string folder, string? password, CancellationToken ct)
+    public async Task<CloudInfo> AddFolderAsync(string name, string folder, string? password, CancellationToken ct, bool encrypt = true)
     {
         var remote = NewRemoteName();
         await Rclone.CreateRemoteAsync(remote, "local", new Dictionary<string, string>(), ct);
-        return await FinishAsync(name, "folder", remote, $"{remote}:{folder.Replace('\\', '/')}", password, ct);
+        return await FinishAsync(name, "folder", remote, $"{remote}:{folder.Replace('\\', '/')}", password, encrypt, ct);
     }
 
     /// <summary>An encryption key nobody has to think up or remember: it is part of the recovery string.</summary>
@@ -222,27 +227,31 @@ public sealed class CloudService
         ["directory_name_encryption"] = "true",
     };
 
+    /// <summary>Where the library backups of a cloud are, a folder for each computer.</summary>
+    public string BackupRoot(CloudInfo cloud) => Join(cloud.Remote, IndexFolder);
+
     /// <summary>
-    /// Where the library backups of a cloud are. A cloud from before encryption was always on stores its mirrors
-    /// readable; the library backup (it holds the keys of every cloud) still goes through an encrypted layer of its own.
+    /// Where the access keys of the clouds are backed up (rclone.conf of each computer): always encrypted. In an
+    /// encrypted cloud that is the backup itself; in a plain one an encrypted folder of its own beside it, with a
+    /// key made here that travels in the recovery string.
     /// </summary>
-    public async Task<string> BackupRootAsync(CloudInfo cloud, CancellationToken ct)
+    public async Task<string> KeysRootAsync(CloudInfo cloud, CancellationToken ct)
     {
-        if (cloud.Encrypted) return Join(cloud.Remote, IndexFolder);
-        var layer = cloud.Remote.Split(':')[0][..10] + "b";
+        if (cloud.Encrypted) return BackupRoot(cloud);
+        var layer = cloud.Remote.Split(':')[0][..10] + "k";
         if (!(await Rclone.DumpAsync(ct)).ContainsKey(layer))
-            await Rclone.CreateRemoteAsync(layer, "crypt", CryptOver(Join(cloud.Remote, IndexFolder), NewKey()), ct);
+            await Rclone.CreateRemoteAsync(layer, "crypt", CryptOver(Join(cloud.Remote, IndexFolder + "-keys"), NewKey()), ct);
         return layer + ":";
     }
 
     /// <summary>What another computer needs to find this library in the cloud: see RecoveryString.</summary>
     public async Task<string> RecoveryStringAsync(CloudInfo cloud, CancellationToken ct)
     {
-        var root = await BackupRootAsync(cloud, ct);
+        var keys = await KeysRootAsync(cloud, ct);
         var prefix = cloud.Remote.Split(':')[0][..10];
-        var remotes = (await Rclone.DumpAsync(ct)).Where(r => r.Key == prefix || r.Key == prefix + "c" || r.Key == prefix + "b")
+        var remotes = (await Rclone.DumpAsync(ct)).Where(r => r.Key == prefix || r.Key == prefix + "c" || r.Key == prefix + "k")
             .ToDictionary(r => r.Key, r => r.Value);
-        return RecoveryString.Encode(new Recovery(cloud.Name, root, remotes));
+        return RecoveryString.Encode(new Recovery(cloud.Name, BackupRoot(cloud), remotes, keys));
     }
 
     /// <summary>
@@ -255,21 +264,16 @@ public sealed class CloudService
         set => _db.SetSetting("backup_cloud_id", value?.Id.ToString());
     }
 
-    private async Task<CloudInfo> FinishAsync(string name, string kind, string baseRemote, string basePath, string? password, CancellationToken ct)
+    private async Task<CloudInfo> FinishAsync(string name, string kind, string baseRemote, string basePath, string? password, bool encrypt,
+        CancellationToken ct)
     {
         var remote = basePath;
-        // Always encrypted; a password is only given to read a cloud encrypted with one (an older setup, plain rclone).
+        // A password is only given to read a cloud encrypted with one (an older setup, plain rclone).
         var generated = string.IsNullOrEmpty(password);
-        password = generated ? NewKey() : password;
+        if (encrypt)
         {
             var crypt = baseRemote + "c";
-            await Rclone.CreateRemoteAsync(crypt, "crypt", new Dictionary<string, string>
-            {
-                ["remote"] = basePath,
-                ["password"] = password,
-                ["filename_encryption"] = "standard",
-                ["directory_name_encryption"] = "true",
-            }, ct);
+            await Rclone.CreateRemoteAsync(crypt, "crypt", CryptOver(basePath, generated ? NewKey() : password!), ct);
             remote = crypt + ":";
         }
         try
@@ -289,7 +293,7 @@ public sealed class CloudService
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var id = c.ExecuteScalar<long>(
             "INSERT INTO cloud(name, kind, remote, encrypted, created_at) VALUES(@name, @kind, @remote, @encrypted, @now) RETURNING id",
-            new { name, kind, remote, encrypted = password is { Length: > 0 }, now });
+            new { name, kind, remote, encrypted = encrypt, now });
         return Clouds().First(x => x.Id == id);
     }
 
@@ -308,7 +312,7 @@ public sealed class CloudService
 
     private async Task DeleteRemotesAsync(string baseRemote, CancellationToken ct)
     {
-        foreach (var r in new[] { baseRemote + "c", baseRemote + "b", baseRemote })
+        foreach (var r in new[] { baseRemote + "c", baseRemote + "k", baseRemote })
         {
             try { await Rclone.DeleteRemoteAsync(r, ct); } catch (RcloneException) { }
         }
@@ -387,12 +391,12 @@ public sealed class CloudService
     public async Task<List<string>> FoldersAsync(long cloudId, CancellationToken ct)
     {
         var cloud = Clouds().First(x => x.Id == cloudId);
-        var computers = (await Rclone.DirsAsync(await BackupRootAsync(cloud, ct), ct))
+        var computers = (await Rclone.DirsAsync(BackupRoot(cloud), ct))
             .Select(d => d.LastIndexOf('-') is > 0 and var dash ? d[..dash] : d).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var folders = new List<string>();
         foreach (var top in await Rclone.DirsAsync(cloud.Remote, ct))
         {
-            if (top == IndexFolder) continue;
+            if (top.StartsWith(IndexFolder, StringComparison.Ordinal)) continue;
             if (!computers.Contains(top)) folders.Add(top);
             else folders.AddRange((await Rclone.DirsAsync(Join(cloud.Remote, top), ct)).Select(sub => $"{top}/{sub}"));
         }
@@ -425,7 +429,7 @@ public sealed class CloudService
         var local = Path.Combine(_paths.CacheDir, $"index-{cloudId}.db");
         try
         {
-            var root = await BackupRootAsync(cloud, ct);
+            var root = BackupRoot(cloud);
             var newest = (await Rclone.ListAsync(root, 2, ct)).Where(f => Path.GetFileName(f.Path) == LibraryBackup.DbName)
                 .OrderByDescending(f => f.ModTime).FirstOrDefault();
             // Backups made before every computer had its own folder.

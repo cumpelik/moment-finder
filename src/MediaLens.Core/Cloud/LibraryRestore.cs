@@ -62,11 +62,17 @@ public sealed class LibraryRestore
             progress?.Report("search data");
             await _rclone.DownloadAsync(CloudService.Join(root, LibraryBackup.VectorsName), Path.Combine(pending, LibraryBackup.VectorsName), ct);
         }
-        // The clouds as that computer knew them; a backup without them still has the one of the recovery string.
-        if (files.Contains(LibraryBackup.CloudsName))
-            await _rclone.DownloadAsync(CloudService.Join(root, LibraryBackup.CloudsName), Path.Combine(pending, LibraryBackup.CloudsName), ct);
-        else
+        // The clouds as that computer knew them (kept encrypted); a backup without them still has the one of the
+        // recovery string.
+        try
+        {
+            await _rclone.DownloadAsync(CloudService.Join(recovery.Keys, $"{backup.Folder}/{LibraryBackup.CloudsName}"),
+                Path.Combine(pending, LibraryBackup.CloudsName), ct);
+        }
+        catch (RcloneException)
+        {
             File.Copy(_config, Path.Combine(pending, LibraryBackup.CloudsName), true);
+        }
         if (thumbnails)
             await _rclone.CopyAsync(CloudService.Join(root, LibraryBackup.ThumbsName), Path.Combine(pending, LibraryBackup.ThumbsName), ["--transfers", "8"],
                 new Progress<Rclone.CopyProgress>(p => progress?.Report($"thumbnails {p.Percent}%")), ct);
