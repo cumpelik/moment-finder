@@ -142,10 +142,10 @@
                     <mi:MaterialIcon Kind="CreationOutline" Width="28" Height="28" VerticalAlignment="Top" Margin="0,2,12,0"
                                      Foreground="{DynamicResource SelectionBrush}" />
                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                        <TextBlock Text="Turn on the AI" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding AiSetupTitle}" FontSize="15" FontWeight="SemiBold" />
                         <TextBlock Classes="muted" Text="{Binding AiSetupText}" TextWrapping="Wrap" />
                         <ProgressBar Value="{Binding DownloadProgress}" IsVisible="{Binding IsDownloadingModel}" Margin="0,6,0,0" />
-                        <TextBlock Classes="muted small" Text="{Binding ModelText}" IsVisible="{Binding ModelText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        <TextBlock Classes="muted small" Text="{Binding DownloadText}" IsVisible="{Binding DownloadText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                     </StackPanel>
                     <Button Grid.Column="2" Command="{Binding DownloadModelCommand}" VerticalAlignment="Top" Margin="16,10,0,0"
                             Classes.accent="{Binding !IsDownloadingModel}" MinWidth="170" HorizontalContentAlignment="Center">

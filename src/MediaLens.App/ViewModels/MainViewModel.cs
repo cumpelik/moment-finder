@@ -57,6 +57,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private double _downloadProgress;
     /// <summary>The invitation to download the models, shown above the results until they are installed.</summary>
     [ObservableProperty] private string _aiSetupText = "";
+    [ObservableProperty] private string _aiSetupTitle = "";
+    /// <summary>Progress or the outcome of the model download, in the banner.</summary>
+    [ObservableProperty] private string _downloadText = "";
 
     [ObservableProperty] private string _mirrorText = "";
     [ObservableProperty] private int _slideSeconds = 5;
@@ -457,6 +460,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         else if (hasText)
         {
             text += " best matches";
+            var phrase = QueryParser.Parse(SearchText, _host.Search.People).Text;
+            var english = _host.Search.QueryPhrase(phrase);
+            if (!string.Equals(english.Trim('.', ' '), phrase.Trim('.', ' '), StringComparison.OrdinalIgnoreCase))
+                text += $" for \"{english.Trim('.', ' ').ToLowerInvariant()}\"";
             var stats = _host.Repo.Stats(Indexer.AnalysisVersion);
             if (stats.Analyzed < stats.Total)
                 text += $" (the AI has looked at {stats.Analyzed:N0} of {stats.Total:N0} so far, search again later for more)";
@@ -569,8 +576,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var missing = ModelCatalog.All.Where(m => !_host.Models.IsInstalled(m)).ToList();
         if (missing.Count > 0)
         {
-            AiSetupText = $"Search by what is in the picture (skier, beach at sunset, birthday cake) and recognize people across the years. " +
-                $"The AI models are a one-time download of {missing.Sum(m => m.TotalSize) / 1048576} MB, then everything runs offline on this computer.";
+            var size = missing.Sum(m => m.TotalSize) / 1048576;
+            AiSetupTitle = missing.Count == ModelCatalog.All.Count ? "Turn on the AI" : "Better AI";
+            AiSetupText = missing.Count == ModelCatalog.All.Count
+                ? $"Search by what is in the picture (skier, beach at sunset, birthday cake) and recognize people across the years. " +
+                  $"The AI models are a one-time download of {size} MB, then everything runs offline on this computer."
+                : $"New AI models are available: {string.Join(", ", missing.Select(m => m.Title))}. A download of {size} MB.";
             ModelText = "";
             CanDownloadModel = true;
         }
@@ -617,7 +628,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 await _host.Models.DownloadAsync(model, new Progress<(long Done, long Total)>(p =>
                 {
                     DownloadProgress = 100.0 * (before + p.Done) / total;
-                    ModelText = $"Downloading {model.Title}: {(before + p.Done) / 1048576} / {total / 1048576} MB";
+                    DownloadText = $"Downloading {model.Title}: {(before + p.Done) / 1048576} / {total / 1048576} MB";
                 }), _downloadCts.Token);
                 before += model.TotalSize;
             }
@@ -625,11 +636,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException)
         {
-            ModelText = "Download stopped; it continues where it ended next time.";
+            DownloadText = "Download stopped; it continues where it ended next time.";
         }
         catch (Exception e)
         {
-            ModelText = "Download failed: " + e.Message;
+            DownloadText = "Download failed: " + e.Message;
         }
         finally
         {

@@ -32,6 +32,12 @@ public sealed class SearchService
 
     public bool CanSearchText => _model != null && _index != null;
 
+    /// <summary>Translates a phrase into English (the search model understands English far better); null until installed.</summary>
+    public Func<string, string>? Translate { get; set; }
+
+    /// <summary>The phrase the search model gets for this text: the English translation when it is available.</summary>
+    public string QueryPhrase(string text) => Translate is { } t ? t(text) : text;
+
     /// <summary>
     /// Filters by the scope (source, bucket) and the filter words; with text, orders by similarity to the text
     /// and keeps the results close to the best one. Without text, newest first (bucket: bucket order).
@@ -58,7 +64,7 @@ public sealed class SearchService
         }
 
         var byId = items.ToDictionary(i => i.Id);
-        var vector = EmbedQuery(model, query.Text);
+        var vector = Translate is { } translate ? model.EmbedText(translate(query.Text)) : EmbedQuery(model, query.Text);
         var hits = index.Search(vector, byId.Keys.ToHashSet(), MaxTextResults);
         if (hits.Count == 0) return [];
 
@@ -70,9 +76,9 @@ public sealed class SearchService
     }
 
     /// <summary>
-    /// The phrase alone and as a photo caption, averaged. A single Czech word ("dort", "moře") alone is a weak
-    /// query, as a caption it works; the average keeps the rest intact. Chosen on a small labeled sample:
-    /// better than either form alone, "a photo of" or other caption words.
+    /// Without the translator: the phrase alone and as a photo caption, averaged. A single Czech word ("dort",
+    /// "moře") alone is a weak query, as a caption it works better; still far behind the English translation
+    /// (on a labeled sample of 43 photos, precision 0.2 against 0.88 with the translation).
     /// </summary>
     internal static float[] EmbedQuery(ISceneModel model, string text)
     {
@@ -85,6 +91,10 @@ public sealed class SearchService
         return sum;
     }
 
-    public float RelativeCutoff { get; set; } = 0.05f;
+    /// <summary>
+    /// Results this far below the best one are dropped. With English queries a match scores about 0.1 to 0.15
+    /// and the rest 0.03 to 0.07; 0.04 kept precision 0.88 and recall 0.80 on the labeled sample.
+    /// </summary>
+    public float RelativeCutoff { get; set; } = 0.04f;
     public float AbsoluteFloor { get; set; } = 0.02f;
 }

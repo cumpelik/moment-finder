@@ -44,6 +44,20 @@ public static class ModelCatalog
         "MIT",
         [new("osnet_ain_x1_0_msmt17.onnx", "https://huggingface.co/mprib/osnet-ain-x1-0-msmt17-onnx/resolve/main/osnet_ain_x1_0_msmt17.onnx", 8_742_442)]);
 
+    private const string OpusCsEnRepo = "https://huggingface.co/Xenova/opus-mt-cs-en/resolve/main/";
+
+    /// <summary>The search model understands English far better than Czech: Czech queries are translated first.</summary>
+    public static readonly ModelInfo CzechToEnglish = new(
+        "opus-mt-cs-en",
+        "OPUS-MT Czech to English (search in Czech)",
+        "Apache-2.0",
+        [
+            new("encoder_model_quantized.onnx", OpusCsEnRepo + "onnx/encoder_model_quantized.onnx", 51_623_838),
+            new("decoder_model_quantized.onnx", OpusCsEnRepo + "onnx/decoder_model_quantized.onnx", 58_556_230),
+            new("source.spm", OpusCsEnRepo + "source.spm", 829_548),
+            new("vocab.json", OpusCsEnRepo + "vocab.json", 1_721_470),
+        ]);
+
     public static readonly IReadOnlyList<ModelInfo> PeopleModels = [Faces, Persons, Reid];
-    public static readonly IReadOnlyList<ModelInfo> All = [Siglip2Base, Faces, Persons, Reid];
+    public static readonly IReadOnlyList<ModelInfo> All = [Siglip2Base, CzechToEnglish, Faces, Persons, Reid];
 }

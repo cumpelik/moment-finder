@@ -1,6 +1,7 @@
 using Dapper;
 using MediaLens.Analysis;
 using MediaLens.Analysis.Siglip;
+using MediaLens.Analysis.Translation;
 using MediaLens.Buckets;
 using MediaLens.Cloud;
 using MediaLens.Data;
@@ -31,6 +32,7 @@ public sealed class LibraryHost : IDisposable
 
     public SiglipModel? SceneModel { get; private set; }
     public FlatVectorIndex? SceneIndex { get; private set; }
+    public MarianTranslator? Translator { get; private set; }
 
     public LibraryHost(AppPaths? paths = null)
     {
@@ -71,6 +73,11 @@ public sealed class LibraryHost : IDisposable
     /// <summary>Loads the search model when it is downloaded; until then the library works without text search.</summary>
     public bool TryLoadSceneModel()
     {
+        if (Translator == null && Models.IsInstalled(ModelCatalog.CzechToEnglish))
+        {
+            Translator = new MarianTranslator(Models.DirOf(ModelCatalog.CzechToEnglish));
+            Search.Translate = Translator.Translate;
+        }
         if (SceneModel != null) return true;
         if (!SceneModelInstalled) return false;
         var model = new SiglipModel(Models.DirOf(ModelCatalog.Siglip2Base));
@@ -93,6 +100,7 @@ public sealed class LibraryHost : IDisposable
         Mirrors.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();
+        Translator?.Dispose();
         PeopleModel?.Dispose();
     }
 }

@@ -100,6 +100,7 @@ media and evaluates the filters first. Face and body embeddings are stored with 
 | Model | Use | License |
 |---|---|---|
 | SigLIP 2 base patch16 224 (ONNX by onnx-community) | search by description | Apache 2.0 |
+| Helsinki-NLP OPUS-MT cs-en (ONNX by Xenova) | Czech queries translated to English first, which the search model understands much better | Apache 2.0 |
 | InsightFace buffalo_l: SCRFD 10G + ArcFace R50 | faces | weights for non-commercial use only |
 | YOLOX-s | people detection | Apache 2.0 |
 | OSNet-AIN x1.0 MSMT17 | recognizing people by clothes | MIT |
