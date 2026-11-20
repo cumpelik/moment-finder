@@ -549,7 +549,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (_host.Repo.Get(mediaId) is not { } item) return;
         var tile = timeMs > 0 ? new TileViewModel(item, timeMs) : Tiles.FirstOrDefault(t => t.Item.Id == mediaId) ?? new TileViewModel(item, 0);
         var player = CreatePlayer([tile], 0, autoPlay: false);
-        player.ShowPeople = showPeople;
+        // Opened to say who someone is: the boxes for this viewer, the remembered choice stays.
+        if (showPeople) player.ShowPeopleHere();
         player.PauseOnOpen = showPeople;
         PlayerRequested?.Invoke(player, true);
     }
@@ -590,7 +591,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var initial = !VideoHighlightsOnly ? whole
             : personIds.Count > 0 ? choices.FirstOrDefault(c => c.Kind == MomentKind.Person && c.PersonIds.SequenceEqual(personIds)) ?? whole
             : hasText ? choices.First(c => c.Kind == MomentKind.Match) : whole;
-        return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume, _playbackRate, _loopVideos), this,
+        return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume, _playbackRate, _loopVideos, _host.Db.GetSetting("show_people") == "1"), this,
             videoIds.Count > 0 ? choices : [whole], initial);
     }
 
@@ -602,6 +603,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Slow motion and loop stay for the next viewer while the app runs (an analysis goes over several videos).</summary>
     public void RememberPlayback(double rate, bool loop) => (_playbackRate, _loopVideos) = (rate, loop);
+
+    /// <summary>Who is who stays on for the next viewer and the next start, until it is switched off.</summary>
+    public void RememberShowPeople(bool on) => _host.Db.SetSetting("show_people", on ? "1" : "0");
 
     public void SaveVolume(int volume) => _host.Db.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
 

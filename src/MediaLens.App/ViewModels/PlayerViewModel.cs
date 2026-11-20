@@ -15,7 +15,7 @@ namespace MediaLens.App.ViewModels;
 public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? MatchMoments = null);
 
 /// <summary>Rate and Loop: what the previous viewer had, so an analysis session keeps them.</summary>
-public sealed record PlayerSettings(int SlideSeconds, int Volume, double Rate = 1, bool Loop = false);
+public sealed record PlayerSettings(int SlideSeconds, int Volume, double Rate = 1, bool Loop = false, bool ShowPeople = false);
 
 public enum MomentKind { Whole, Match, Person }
 
@@ -122,6 +122,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _volume = settings.Volume;
         _rate = settings.Rate;
         _loop = settings.Loop;
+        _showPeople = settings.ShowPeople;
         MomentChoices = momentChoices;
         _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
@@ -219,7 +220,21 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
-    partial void OnShowPeopleChanged(bool value) => LoadPeople();
+    private bool _notRemembered;
+
+    partial void OnShowPeopleChanged(bool value)
+    {
+        LoadPeople();
+        if (!_notRemembered) _main.RememberShowPeople(value);
+    }
+
+    /// <summary>The boxes on for this viewer only (opened from a card of Who is this).</summary>
+    public void ShowPeopleHere()
+    {
+        _notRemembered = true;
+        ShowPeople = true;
+        _notRemembered = false;
+    }
 
     /// <summary>While a name is typed for a box the video waits, then goes on if it was playing.</summary>
     public bool HoldForDialog()
