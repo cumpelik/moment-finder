@@ -267,7 +267,15 @@ public sealed class Indexer : IDisposable
         var done = (int)stats.Analyzed;
         var device = model.Device;
 
-        var photos = batch.Where(i => !i.IsVideo).ToList();
+        // 360 photos: views all around, like the frames of a 360 video.
+        foreach (var photo in batch.Where(i => !i.IsVideo && Fisheye360.IsDualFisheye(i.FullPath)))
+        {
+            var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(photo.FullPath, 2048)), ct);
+            await Embed360Async(photo, [(0, lens0, lens1)], model, index, ct);
+            _repo.SetAnalysisVersion(photo.Id, AnalysisVersion);
+            Report(new IndexerStatus(IndexerPhase.Analysis, $"Analyzing ({device})", ++done, (int)stats.Total, false));
+        }
+        var photos = batch.Where(i => !i.IsVideo && !Fisheye360.IsDualFisheye(i.FullPath)).ToList();
         if (photos.Count > 0)
         {
             var vectors = await Task.Run(() => model.EmbedImages(photos.Select(p => _paths.ThumbPath(p.Id)).ToList()), ct);
@@ -323,12 +331,59 @@ public sealed class Indexer : IDisposable
         return true;
     }
 
+    /// <summary>A 360 item for the search: four views around at every moment, each one a row (the best one counts).</summary>
+    private async Task Embed360Async(MediaItem item, List<(int TimeMs, RgbImage Lens0, RgbImage Lens1)> moments, ISceneModel model,
+        IVectorIndex index, CancellationToken ct)
+    {
+        var dir = Path.Combine(_paths.CacheDir, "views", item.Id.ToString());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var files = new List<(int TimeMs, string Path)>();
+            foreach (var (time, lens0, lens1) in moments)
+                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100).ToList(), ct))
+                {
+                    var file = Path.Combine(dir, $"{time}_{(int)yaw}.jpg");
+                    view.SaveJpeg(file, 85);
+                    files.Add((time, file));
+                }
+            var rows = new List<VectorRow>();
+            foreach (var chunk in files.Chunk(8))
+            {
+                var vectors = await Task.Run(() => model.EmbedImages(chunk.Select(c => c.Path).ToList()), ct);
+                for (var i = 0; i < chunk.Length; i++) rows.Add(new VectorRow(item.Id, chunk[i].TimeMs, vectors[i]));
+            }
+            if (rows.Count > 0) index.Put(item.Id, rows);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
     private async Task AnalyzeVideoAsync(MediaItem video, ISceneModel model, IVectorIndex index, CancellationToken ct)
     {
         var duration = (video.DurationMs ?? 0) / 1000.0;
         // About 40 frames per video, at least every 30 s, at most every 2 s.
         var interval = Math.Clamp(duration / 40, 2, 30);
         var dir = Path.Combine(_paths.CacheDir, "frames", video.Id.ToString());
+        if (Fisheye360.IsDualFisheye(video.FullPath))
+        {
+            try
+            {
+                var dual = duration > 0
+                    ? await FFmpeg.ExtractDualFramesAsync(await Cloud.MediaFiles.LocalPathAsync(video, ct), interval, 60, dir, 512, ct)
+                    : [];
+                var moments = new List<(int, RgbImage, RgbImage)>();
+                foreach (var f in dual) moments.Add((f.TimeMs, RgbImage.Load(f.Lens0, 512), RgbImage.Load(f.Lens1, 512)));
+                await Embed360Async(video, moments, model, index, ct);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            return;
+        }
         try
         {
             var frames = duration > 0

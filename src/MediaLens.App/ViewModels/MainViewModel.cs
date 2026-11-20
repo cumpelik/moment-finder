@@ -75,6 +75,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(LibraryHost host)
     {
         _host = host;
+        Video.SecondLens.CacheDir = Path.Combine(host.Paths.CacheDir, "360");
         Thumbnails = new ThumbnailLoader(host.Indexer, host.Paths);
         People = new PeopleViewModel(host, () => Dispatcher.UIThread.Post(RebuildSidebar));
         host.Identity.Changed += () => Dispatcher.UIThread.Post(() =>

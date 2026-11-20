@@ -38,9 +38,30 @@ public partial class PlayerView : UserControl
         Root.PointerMoved += OnPointerMoved;
         Root.PointerWheelChanged += (_, e) =>
         {
-            if (e.Delta.Y > 0) _vm?.Previous();
+            // A 360 picture zooms; otherwise the wheel goes through the items.
+            if (_vm is { Is360: true } vm) vm.Look(0, 0, e.Delta.Y > 0 ? 0.9 : 1.1);
+            else if (e.Delta.Y > 0) _vm?.Previous();
             else if (e.Delta.Y < 0) _vm?.Next();
         };
+        // Dragging a 360 picture turns the view (like grabbing the scene).
+        // A box is asked about on release, so a drag that starts on a person still turns a 360 view.
+        Root.AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (!e.GetCurrentPoint(Root).Properties.IsLeftButtonPressed) return;
+            _pressAt = e.GetPosition(Root);
+            _pressedBox = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Control>().Select(c => c.Tag).OfType<long>().FirstOrDefault();
+            if (_vm is not { Is360: true }) return;
+            _dragFrom = _pressAt;
+            e.Pointer.Capture(Root);
+        }, RoutingStrategies.Tunnel);
+        Root.AddHandler(PointerReleasedEvent, (_, e) =>
+        {
+            _dragFrom = null;
+            e.Pointer.Capture(null);
+            var moved = e.GetPosition(Root) - _pressAt;
+            if (_pressedBox is > 0 and var id && Math.Abs(moved.X) + Math.Abs(moved.Y) < 6) AskWho(id);
+            _pressedBox = null;
+        }, RoutingStrategies.Tunnel);
         // A double click on the picture; quick clicks on a control (one frame further) are not one.
         Root.DoubleTapped += (_, e) =>
         {
@@ -186,14 +207,16 @@ public partial class PlayerView : UserControl
         };
         ToolTip.SetTip(frame, "Click: who is it?");
         ToolTip.SetTip(label, "Click: who is it?");
-        frame.PointerPressed += (_, e) => AskWho(e, detectionId);
-        label.PointerPressed += (_, e) => AskWho(e, detectionId);
+        frame.Tag = detectionId;
+        label.Tag = detectionId;
         return (frame, label, text);
     }
 
-    private async void AskWho(PointerPressedEventArgs e, long detectionId)
+    private Point _pressAt;
+    private long? _pressedBox;
+
+    private async void AskWho(long detectionId)
     {
-        e.Handled = true;
         if (_vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) return;
         var wasRunning = vm.HoldForDialog();
         var box = vm.PeopleBoxes().FirstOrDefault(b => b.DetectionId == detectionId);
@@ -208,8 +231,17 @@ public partial class PlayerView : UserControl
         KeyboardWanted?.Invoke();
     }
 
+    private Point? _dragFrom;
+
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        if (_dragFrom is { } from && _vm is { Is360: true } vm)
+        {
+            var at = e.GetPosition(Root);
+            var degreesPerPixel = vm.ViewFov / Math.Max(1, Root.Bounds.Width);
+            vm.Look(-(at.X - from.X) * degreesPerPixel, (at.Y - from.Y) * degreesPerPixel);
+            _dragFrom = at;
+        }
         var p = e.GetPosition(this);
         // Some platforms send a move without a move (e.g. when the image changes).
         if (Math.Abs(p.X - _lastPointer.X) + Math.Abs(p.Y - _lastPointer.Y) < 3) return;

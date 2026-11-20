@@ -34,14 +34,57 @@ public sealed class PeopleAnalyzer
             return;
         }
         var path = await Cloud.MediaFiles.LocalPathAsync(item, ct);
+        if (Fisheye360.IsDualFisheye(path))
+        {
+            var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(path, 2 * Lens360Size)), ct);
+            var around = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: false), ct);
+            Save(item.Id, Frame(around, EquirectWidth, EquirectHeight, 0, null));
+            return;
+        }
         var image = await Task.Run(() => RgbImage.Load(path, PhotoSize), ct);
         var found = await Task.Run(() => _model.Analyze(image), ct);
-        var items = Frame(found, image, 0, null);
+        var items = Frame(found, image.Width, image.Height, 0, null);
         Save(item.Id, items);
     }
 
     /// <summary>Detections of one image, faces linked to the body they belong to.</summary>
-    private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, RgbImage image, int timeMs, int[]? tracks)
+    // ---- 360 ----
+
+    /// <summary>Boxes of 360 media live on the equirectangular map; this is its size in "pixels" for the detections.</summary>
+    private const int EquirectWidth = 4000;
+    private const int EquirectHeight = 2000;
+    private const int Lens360Size = 1440;
+    private const int Views360 = 6;
+    private const int View360Size = 768;
+    private const double View360Fov = 100;
+
+    /// <summary>
+    /// People in a 360 picture: six perspective views around (neighbours overlap), each analyzed like a photo, the
+    /// boxes put on the equirectangular map and the doubles of the overlaps dropped.
+    /// </summary>
+    private List<DetectedObject> Analyze360(RgbImage lens0, RgbImage lens1, bool includeWeak)
+    {
+        var all = new List<DetectedObject>();
+        foreach (var (yaw, view) in Fisheye360.ViewsAround(lens0, lens1, Views360, View360Size, View360Size, View360Fov))
+            foreach (var d in _model.Analyze(view, includeWeak))
+            {
+                var (u, v, w, h) = Fisheye360.ViewBoxToEquirect(yaw, Fisheye360.DefaultPitch, View360Fov, View360Size, View360Size,
+                    d.Box.X, d.Box.Y, d.Box.W, d.Box.H);
+                // Near a view's edge the picture is stretched: the same person in the next view counts more.
+                var central = 1 - Math.Abs(d.Box.CenterX / View360Size - 0.5f);
+                all.Add(new DetectedObject
+                {
+                    Kind = d.Kind, Box = new Box(u * EquirectWidth, v * EquirectHeight, w * EquirectWidth, h * EquirectHeight),
+                    Score = d.Score, Quality = d.Quality * central, Embedding = d.Embedding, Crop = d.Crop, Weak = d.Weak,
+                });
+            }
+        var kept = new List<DetectedObject>();
+        foreach (var d in all.OrderByDescending(d => d.Quality))
+            if (!kept.Any(k => k.Kind == d.Kind && Fisheye360.WrappedIou(k.Box, d.Box, EquirectWidth) > 0.4f)) kept.Add(d);
+        return kept;
+    }
+
+    private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, int width, int height, int timeMs, int[]? tracks)
     {
         var list = new List<(NewDetection, RgbImage?)>();
         var faces = found.Select((d, i) => (d, i)).Where(x => x.d.Kind == DetectionKind.Face).ToList();
@@ -62,8 +105,8 @@ public sealed class PeopleAnalyzer
         for (var i = 0; i < found.Count; i++)
         {
             var d = found[i];
-            list.Add((new NewDetection(d.Kind, timeMs, d.Box.X / image.Width, d.Box.Y / image.Height,
-                d.Box.W / image.Width, d.Box.H / image.Height, d.Score, d.Quality, d.Embedding,
+            list.Add((new NewDetection(d.Kind, timeMs, d.Box.X / width, d.Box.Y / height,
+                d.Box.W / width, d.Box.H / height, d.Score, d.Quality, d.Embedding,
                 // A face rides on the track of its body: one track, one person.
                 tracks?[linkOf.TryGetValue(i, out var lb) ? lb : i], linkOf.TryGetValue(i, out var b) ? b : null), d.Crop));
         }
@@ -89,15 +132,31 @@ public sealed class PeopleAnalyzer
         var dir = Path.Combine(_paths.CacheDir, "people-frames", video.Id.ToString(CultureInfo.InvariantCulture));
         try
         {
-            var frames = await FFmpeg.ExtractFramesAsync(await Cloud.MediaFiles.LocalPathAsync(video, ct), interval, 90, dir, FrameSize, ct, keyframesOnly: false);
-            var perFrame = new List<(int TimeMs, RgbImage Image, IReadOnlyList<DetectedObject> Found)>();
-            foreach (var frame in frames)
+            var source = await Cloud.MediaFiles.LocalPathAsync(video, ct);
+            var perFrame = new List<(int TimeMs, int Width, int Height, IReadOnlyList<DetectedObject> Found)>();
+            if (Fisheye360.IsDualFisheye(source))
             {
-                ct.ThrowIfCancellationRequested();
-                var n = int.Parse(Path.GetFileNameWithoutExtension(frame), CultureInfo.InvariantCulture) - 1;
-                var image = await Task.Run(() => RgbImage.Load(frame, FrameSize), ct);
-                var found = await Task.Run(() => _model.Analyze(image, includeWeak: true), ct);
-                perFrame.Add(((int)(n * interval * 1000), image, found));
+                // Keyframes only (two 4K streams); six views per moment.
+                foreach (var frame in await FFmpeg.ExtractDualFramesAsync(source, interval, 90, dir, Lens360Size, ct))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var lens0 = await Task.Run(() => RgbImage.Load(frame.Lens0, Lens360Size), ct);
+                    var lens1 = await Task.Run(() => RgbImage.Load(frame.Lens1, Lens360Size), ct);
+                    var found = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: true), ct);
+                    perFrame.Add((frame.TimeMs, EquirectWidth, EquirectHeight, found));
+                }
+            }
+            else
+            {
+                var frames = await FFmpeg.ExtractFramesAsync(source, interval, 90, dir, FrameSize, ct, keyframesOnly: false);
+                foreach (var frame in frames)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var n = int.Parse(Path.GetFileNameWithoutExtension(frame), CultureInfo.InvariantCulture) - 1;
+                    var image = await Task.Run(() => RgbImage.Load(frame, FrameSize), ct);
+                    var found = await Task.Run(() => _model.Analyze(image, includeWeak: true), ct);
+                    perFrame.Add(((int)(n * interval * 1000), image.Width, image.Height, found));
+                }
             }
 
             var tracks = VideoTracker.Track(perFrame.Select(f => f.Found).ToList());
@@ -106,14 +165,14 @@ public sealed class PeopleAnalyzer
             {
                 var keep = Enumerable.Range(0, perFrame[f].Found.Count).Where(i => !perFrame[f].Found[i].Weak || tracks[f][i] != 0).ToList();
                 if (keep.Count == perFrame[f].Found.Count) continue;
-                perFrame[f] = (perFrame[f].TimeMs, perFrame[f].Image, keep.Select(i => perFrame[f].Found[i]).ToList());
+                perFrame[f] = (perFrame[f].TimeMs, perFrame[f].Width, perFrame[f].Height, keep.Select(i => perFrame[f].Found[i]).ToList());
                 tracks[f] = keep.Select(i => tracks[f][i]).ToArray();
             }
             var all = new List<(NewDetection Det, RgbImage? Crop, int Frame)>();
             for (var f = 0; f < perFrame.Count; f++)
             {
                 var offset = all.Count;
-                foreach (var (det, crop) in Frame(perFrame[f].Found, perFrame[f].Image, perFrame[f].TimeMs, tracks[f]))
+                foreach (var (det, crop) in Frame(perFrame[f].Found, perFrame[f].Width, perFrame[f].Height, perFrame[f].TimeMs, tracks[f]))
                     all.Add((det with { LinkedIndex = det.LinkedIndex + offset }, crop, f));
             }
             // The path of each track: its body in every frame, its face where no body was found.

@@ -121,6 +121,19 @@ public sealed class VideoPlayer : IDisposable
         };
     }
 
+    /// <summary>Which video stream plays (a 360 video has one per lens); null the default one.</summary>
+    public int? VideoTrack { get; init; }
+    /// <summary>The second lens of a 360 video plays silently next to the first.</summary>
+    public bool NoAudio { get; init; }
+    /// <summary>Frames go to RawFrame (for the 360 view) instead of the Frame bitmap.</summary>
+    public bool RawFrames { get; init; }
+    /// <summary>Raw BGRA pixels of a new frame, on the UI thread; the array is reused, copy what is needed.</summary>
+    public event Action<byte[], int, int>? RawFrame;
+    /// <summary>A player that does what this one does (the second lens of a 360 video): play, pause, seek, speed.</summary>
+    public VideoPlayer? Partner { get; set; }
+    /// <summary>What the partner plays (the second lens copied into a file of its own).</summary>
+    public string? PartnerPath { get; set; }
+
     public bool IsPlaying => _player.IsPlaying;
     /// <summary>Played to the end: libVLC reports no time any more.</summary>
     public bool IsEnded => _ended;
@@ -139,6 +152,9 @@ public sealed class VideoPlayer : IDisposable
         var media = _media = new VlcMedia(_libVlc!, path, FromType.FromPath);
         if (startMs > 0)
             media.AddOption(":start-time=" + (startMs / 1000.0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (VideoTrack is { } track) media.AddOption(":video-track=" + track.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (NoAudio) media.AddOption(":no-audio");
+        if (Partner != null && PartnerPath != null) Partner.Play(PartnerPath, startMs);
         _starting = true;
         _pauseOnFrame = false;
         var generation = ++_requested;
@@ -157,6 +173,7 @@ public sealed class VideoPlayer : IDisposable
 
     public void TogglePause()
     {
+        Partner?.TogglePause();
         var media = _media;
         Run(() =>
         {
@@ -182,22 +199,29 @@ public sealed class VideoPlayer : IDisposable
         set
         {
             _rate = value;
+            if (Partner != null) Partner.Rate = value;
             Run(() => _player.SetRate(value));
         }
     }
 
     /// <summary>One frame further, while paused.</summary>
-    public void NextFrame() => Run(_player.NextFrame);
+    public void NextFrame()
+    {
+        Partner?.NextFrame();
+        Run(_player.NextFrame);
+    }
 
     /// <summary>Pauses now, or on the first frame of a video that is just starting (not before, the picture would stay black).</summary>
     public void Pause()
     {
+        Partner?.Pause();
         if (_starting) _pauseOnFrame = true;
         else Run(() => _player.SetPause(true));
     }
 
     public void Seek(long ms)
     {
+        Partner?.Seek(ms);
         if (_ended && _path != null)
         {
             // After the end: open it again at that moment and stand there, like a seek on a paused video.
@@ -220,6 +244,7 @@ public sealed class VideoPlayer : IDisposable
     /// <summary>In the queue, so a following Play cannot be overtaken.</summary>
     public void Stop()
     {
+        Partner?.Stop();
         _starting = false;
         _pauseOnFrame = false;
         Run(_player.Stop);
@@ -282,6 +307,10 @@ public sealed class VideoPlayer : IDisposable
             if (!_frameDirty || _width == 0) return;
             _frameDirty = false;
             frameOf = _frameOf;
+            if (RawFrames)
+                RawFrame?.Invoke(_latest, _width, _height);
+            else
+            {
             if (Frame == null || Frame.PixelSize.Width != _width || Frame.PixelSize.Height != _height)
                 Frame = new WriteableBitmap(new PixelSize(_width, _height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
             using var fb = Frame.Lock();
@@ -291,6 +320,7 @@ public sealed class VideoPlayer : IDisposable
             else
                 for (var y = 0; y < _height; y++)
                     Marshal.Copy(_latest, y * rowBytes, fb.Address + y * fb.RowBytes, rowBytes);
+            }
         }
         FrameUpdated?.Invoke();
         if (frameOf != _requested) return;
@@ -311,6 +341,7 @@ public sealed class VideoPlayer : IDisposable
 
     public void Dispose()
     {
+        Partner?.Dispose();
         var player = _player;
         var media = _media;
         // libVLC must stop before the buffer goes away; after the queued commands, so closing the window is instant.

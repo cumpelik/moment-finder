@@ -69,11 +69,15 @@ public static class FileTypes
     {
         ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif",
         ".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf",
+        // 360 photos of Insta360 (both lenses side by side)
+        ".insp",
     };
 
     public static readonly HashSet<string> Video = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".mts", ".m2ts", ".3gp", ".webm", ".wmv", ".mpg", ".mpeg",
+        // 360 videos of Insta360 (two lens streams); their .lrv proxies are left out
+        ".insv",
     };
 
     public static MediaKind? KindOf(string path)

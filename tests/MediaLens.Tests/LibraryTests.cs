@@ -108,6 +108,27 @@ public class LibraryTests
         Assert.Equal(["d.jpg", "a.jpg"], lib.Repo.Query(new MediaFilter { Spans = [Month(2023, 7), Month(2024, 12)] }).Select(i => i.FileName));
     }
 
+    /// <summary>360: a box found in a perspective view goes onto the map and comes back to the same place in that view.</summary>
+    [Fact]
+    public void Fisheye360BoxesRoundTrip()
+    {
+        var (u, v, w, h) = Media.Fisheye360.ViewBoxToEquirect(120, -10, 100, 800, 600, 300, 200, 100, 250);
+        var back = Media.Fisheye360.EquirectBoxToView(120, -10, 100, 800, 600, u, v, w, h)!.Value;
+        // A box of a box: it comes back a little larger (the map bends the outline), never shifted.
+        Assert.InRange(back.X, 280, 302);
+        Assert.InRange(back.Y, 180, 202);
+        Assert.InRange(back.W, 98, 130);
+        Assert.InRange(back.H, 248, 285);
+        // Behind the viewer: not in the view at all.
+        Assert.Null(Media.Fisheye360.EquirectBoxToView(-60, -10, 100, 800, 600, u, v, w, h));
+        // A box across the seam behind the camera keeps its center on the map.
+        var (su, _, sw, _) = Media.Fisheye360.ViewBoxToEquirect(180, -10, 100, 800, 600, 350, 200, 100, 250);
+        Assert.InRange(su + sw / 2, 0, 1);
+        // Straight ahead is lens 0, straight behind lens 1, both in the middle of their circle.
+        Assert.Equal((0, 0.5, 0.5), Media.Fisheye360.ToLens(0, 0, 1));
+        Assert.Equal((1, 0.5, 0.5), Media.Fisheye360.ToLens(0, 0, -1));
+    }
+
     [Fact]
     public void PlaceNamesNearestVillage()
     {

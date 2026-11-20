@@ -188,6 +188,85 @@ public static class FFmpeg
         return Directory.GetFiles(outDir, "*.jpg").Order(StringComparer.Ordinal).ToArray();
     }
 
+    /// <summary>A moment of a 360 video: the two lens images at that time.</summary>
+    public sealed record DualFrame(int TimeMs, string Lens0, string Lens1);
+
+    /// <summary>
+    /// The two lenses of a dual fisheye video (Insta360: two video streams) at about intervalSeconds apart, keyframes
+    /// only (decoding two 4K streams fully is several times slower than real time). Times are the keyframes' own.
+    /// </summary>
+    public static async Task<List<DualFrame>> ExtractDualFramesAsync(string file, double intervalSeconds, int maxFrames, string outDir, int size,
+        CancellationToken ct = default)
+    {
+        if (FfmpegPath.Value is not { } ffmpeg || FfprobePath.Value is not { } ffprobe) return [];
+        Directory.CreateDirectory(outDir);
+        // The keyframes and the same choice as the select filter below: at least an interval after the last one taken.
+        var (_, packets, _) = await RunAsync(ffprobe,
+            ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", file], ct);
+        var keyframes = packets.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Split(','))
+            .Where(p => p.Length >= 2 && p[1].Contains('K') && double.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            .Select(p => double.Parse(p[0], CultureInfo.InvariantCulture)).Order().ToList();
+        var times = new List<double>();
+        foreach (var t in keyframes)
+            if (times.Count == 0 || t - times[^1] >= intervalSeconds - 0.01)
+                times.Add(t);
+        if (times.Count > maxFrames) times = times.Take(maxFrames).ToList();
+        if (times.Count == 0) return [];
+        var interval = (intervalSeconds - 0.01).ToString("0.###", CultureInfo.InvariantCulture);
+        var select = $"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{interval})',scale={size}:{size}";
+        await RunAsync(ffmpeg,
+        [
+            "-v", "error", "-y", "-skip_frame", "nokey", "-i", file,
+            "-filter_complex", $"[0:v:0]{select}[a];[0:v:1]{select}[b]",
+            "-map", "[a]", "-fps_mode", "passthrough", "-frames:v", times.Count.ToString(CultureInfo.InvariantCulture), "-q:v", "3",
+            Path.Combine(outDir, "a_%04d.jpg"),
+            "-map", "[b]", "-fps_mode", "passthrough", "-frames:v", times.Count.ToString(CultureInfo.InvariantCulture), "-q:v", "3",
+            Path.Combine(outDir, "b_%04d.jpg"),
+        ], ct);
+        var result = new List<DualFrame>();
+        for (var i = 0; i < times.Count; i++)
+        {
+            var a = Path.Combine(outDir, $"a_{i + 1:D4}.jpg");
+            var b = Path.Combine(outDir, $"b_{i + 1:D4}.jpg");
+            if (File.Exists(a) && File.Exists(b)) result.Add(new DualFrame((int)Math.Round(times[i] * 1000), a, b));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// One video stream copied into a file of its own (no re-encoding, as fast as the disk): libVLC plays only the
+    /// first video stream of an Insta360 file, the second lens is played from this copy.
+    /// </summary>
+    public static async Task<bool> CopyVideoStreamAsync(string file, int stream, string outFile, CancellationToken ct = default)
+    {
+        if (FfmpegPath.Value is not { } ffmpeg) return false;
+        Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
+        var tmp = outFile + ".part";
+        var (code, _, _) = await RunAsync(ffmpeg,
+            ["-v", "error", "-y", "-i", file, "-map", $"0:v:{stream}", "-c", "copy", "-f", "mp4", tmp], ct);
+        if (code != 0 || !File.Exists(tmp)) return false;
+        File.Move(tmp, outFile, true);
+        return true;
+    }
+
+    /// <summary>The two lens images of a dual fisheye video at a moment (for a thumbnail).</summary>
+    public static async Task<DualFrame?> ExtractDualFrameAsync(string file, double atSeconds, string outDir, int size, CancellationToken ct = default)
+    {
+        if (FfmpegPath.Value is not { } ffmpeg) return null;
+        Directory.CreateDirectory(outDir);
+        var a = Path.Combine(outDir, "a.jpg");
+        var b = Path.Combine(outDir, "b.jpg");
+        await RunAsync(ffmpeg,
+        [
+            "-v", "error", "-y", "-ss", atSeconds.ToString("0.###", CultureInfo.InvariantCulture), "-i", file,
+            "-filter_complex", $"[0:v:0]scale={size}:{size}[a];[0:v:1]scale={size}:{size}[b]",
+            "-map", "[a]", "-frames:v", "1", "-q:v", "3", a,
+            "-map", "[b]", "-frames:v", "1", "-q:v", "3", b,
+        ], ct);
+        return File.Exists(a) && File.Exists(b) ? new DualFrame((int)(atSeconds * 1000), a, b) : null;
+    }
+
     private static async Task<(int Code, string StdOut, string StdErr)> RunAsync(string exe, IEnumerable<string> args, CancellationToken ct)
     {
         var psi = new ProcessStartInfo(exe)

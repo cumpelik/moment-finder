@@ -57,6 +57,8 @@ public sealed class ThumbnailLoader
 
     private async Task<string?> HitFrameAsync(MediaItem item, int atMs, CancellationToken ct)
     {
+        // A 360 frame would be a fisheye circle: the thumbnail (forward view) stands for it.
+        if (Media.Fisheye360.IsDualFisheye(item.FullPath)) return await _indexer.EnsureThumbnailAsync(item, ct);
         var path = Path.Combine(_paths.CacheDir, "hits", $"{item.Id}_{atMs}.jpg");
         if (File.Exists(path)) return path;
         var tmp = Path.ChangeExtension(path, Guid.NewGuid().ToString("N") + ".jpg");

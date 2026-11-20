@@ -17,6 +17,12 @@ public static class ImageCodec
         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
         // Written aside and moved, so a reader never sees half a file and two writers do not collide.
         var tmp = Path.ChangeExtension(outPath, Guid.NewGuid().ToString("N") + ".jpg");
+        if (Fisheye360.IsDualFisheye(item.FullPath))
+        {
+            var ok = await Create360ThumbnailAsync(item, tmp, ct);
+            if (ok) File.Move(tmp, outPath, true);
+            return ok;
+        }
         if (item.IsVideo)
         {
             var duration = (item.DurationMs ?? 0) / 1000.0;
@@ -38,6 +44,32 @@ public static class ImageCodec
             File.Move(tmp, outPath, true);
             return true;
         }, ct);
+    }
+
+    /// <summary>A 360 item's thumbnail: the forward view, as it opens.</summary>
+    private static async Task<bool> Create360ThumbnailAsync(MediaItem item, string outJpeg, CancellationToken ct)
+    {
+        RgbImage lens0, lens1;
+        if (item.IsVideo)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "medialens-360-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var duration = (item.DurationMs ?? 0) / 1000.0;
+                var frame = await FFmpeg.ExtractDualFrameAsync(item.FullPath, duration > 0 ? Math.Min(1.0, duration * 0.1) : 0, dir, 768, ct);
+                if (frame == null) return false;
+                (lens0, lens1) = (RgbImage.Load(frame.Lens0, 768), RgbImage.Load(frame.Lens1, 768));
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch (IOException) { }
+            }
+        }
+        else
+            (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(item.FullPath, 1536)), ct);
+        await Task.Run(() => Fisheye360.RenderView(lens0, lens1, 0, Fisheye360.DefaultPitch, Fisheye360.DefaultFov, (int)ThumbSize, (int)ThumbSize * 3 / 4)
+            .SaveJpeg(outJpeg, 82), ct);
+        return true;
     }
 
     /// <summary>The photo turned upright and scaled down to fit the box (never up).</summary>

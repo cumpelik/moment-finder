@@ -40,6 +40,11 @@
                 <ProgressBar IsIndeterminate="True" />
             </StackPanel>
         </Border>
+        <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,110" Padding="14,8" CornerRadius="6"
+                Background="#CC000000" IsHitTestVisible="False"
+                IsVisible="{Binding Lens360Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding Lens360Text}" Foreground="White" FontSize="14" />
+        </Border>
         <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                    Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
 

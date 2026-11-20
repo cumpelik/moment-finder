@@ -143,7 +143,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _positionTimer.Tick += (_, _) => UpdateVideoPosition();
     }
 
-    public WriteableBitmap? VideoFrame => _video?.Frame;
+    public WriteableBitmap? VideoFrame => Is360 ? _view360?.Output : _video?.Frame;
 
     public int Count => _entries.Count;
     public PlaylistEntry Current => _entries[Index];
@@ -160,6 +160,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         BeginLoading();
         // The previous video's last frame must not stand under the new video's boxes.
         VideoReady = false;
+        Is360 = Media.Fisheye360.IsDualFisheye(item.FullPath);
         Title = item.FileName;
         Detail = $"{item.Taken:d. M. yyyy H:mm}" + (item.Camera is { } c ? $"  ·  {c}" : "");
         PositionText = PositionLabel();
@@ -186,9 +187,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 if (AutoPlay) _slideTimer.Start();
                 return;
             }
+            // A 360 video plays both lenses (two players) into the look-around view; a flat one into a bitmap.
+            if (_video != null && _video.RawFrames != Is360)
+            {
+                _video.Dispose();
+                _video = null;
+            }
             if (_video == null)
             {
-                _video = new VideoPlayer { Volume = Volume, Rate = (float)Rate };
+                _video = Is360 ? New360Player() : new VideoPlayer { Volume = Volume, Rate = (float)Rate };
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
                 _video.Started += () =>
@@ -209,6 +216,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _playingPath = item.FullPath;
+                if (Is360) Start360(item, item.FullPath, version);
                 _video.Play(item.FullPath, TakeStart(entry));
                 HoldIfWanted();
                 _positionTimer.Start();
@@ -319,6 +327,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
         _paths = ShowPeople && Current.Item.IsVideo ? _main.People.TrackPaths(Current.Item.Id) : [];
+        _pathsOf = ShowPeople ? Current.Item.Id : -1;
         _names = ShowPeople ? _main.People.Names() : [];
         _hidden = ShowPeople ? _main.People.HiddenPersonIds() : [];
         PeopleHint = !ShowPeople ? "" :
@@ -345,6 +354,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 .Where(d => d.Kind == Analysis.DetectionKind.Body || d.LinkedId == null)
                 .Where(d => d.PersonId is not { } p || !_hidden.Contains(p))
                 .Select(d => Box(d, d.X, d.Y, d.W, d.H, bodiesWithFace.Contains(d.Id) ? _detections.First(f => f.LinkedId == d.Id) : null))
+                .OfType<PeopleBox>()
                 .ToList();
         }
         // Only on a paused video, if the user prefers that.
@@ -375,7 +385,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var seen = parts.Select(t => (t.Who, At: Where(t.Path, now, interval))).FirstOrDefault(t => t.At != null);
             if (seen.At is { } inside)
             {
-                boxes.Add(Box(seen.Who, inside.X, inside.Y, inside.W, inside.H, null));
+                if (Box(seen.Who, inside.X, inside.Y, inside.W, inside.H, null) is { } shown) boxes.Add(shown);
                 continue;
             }
             var (before, after) = (parts.LastOrDefault(t => t.Path[^1].TimeMs <= now), parts.FirstOrDefault(t => t.Path[0].TimeMs > now));
@@ -383,12 +393,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var (p0, p1) = (before.Path[^1], after.Path[0]);
             if (p1.TimeMs - p0.TimeMs > bridge || now < p0.TimeMs) continue;
             var t = (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs);
-            boxes.Add(Box(before.Who, p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t, null));
+            if (Box(before.Who, p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t, null)
+                is { } bridged) boxes.Add(bridged);
         }
         foreach (var (path, who) in tracks.Where(t => t.Who.PersonId == null))
         {
             if (Where(path, now, interval) is not { } b) continue;
-            boxes.Add(Box(who, b.X, b.Y, b.W, b.H, null));
+            if (Box(who, b.X, b.Y, b.W, b.H, null) is { } box) boxes.Add(box);
         }
         return boxes;
     }
@@ -412,13 +423,21 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         return (p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t);
     }
 
-    private PeopleBox Box(People.DetectionRow d, float x, float y, float w, float h, People.DetectionRow? face)
+    /// <summary>A box in content pixels; for 360 media from the map into the current view, null when not in it.</summary>
+    private PeopleBox? Box(People.DetectionRow d, float x, float y, float w, float h, People.DetectionRow? face)
     {
+        double bx = x * ContentWidth, by = y * ContentHeight, bw = w * ContentWidth, bh = h * ContentHeight;
+        if (Is360)
+        {
+            if (_view360 is not { } view ||
+                Media.Fisheye360.EquirectBoxToView(view.Yaw, view.Pitch, view.Fov, view.Width, view.Height, x, y, w, h) is not { } r) return null;
+            (bx, by, bw, bh) = r;
+        }
         var who = d.PersonId == null && face?.PersonId != null ? face : d;
         var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :
             who.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?";
         var personId = who.PersonId ?? who.SuggestPersonId;
-        return new PeopleBox(d.Id, x * ContentWidth, y * ContentHeight, w * ContentWidth, h * ContentHeight, label,
+        return new PeopleBox(d.Id, bx, by, bw, bh, label,
             who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId,
             personId is { } id && _names.TryGetValue(id, out var name) ? name : null);
     }
@@ -473,6 +492,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (version != _loadVersion || _video == null) return;
             Error = null;
             _playingPath = path;
+            if (Is360) Start360(entry.Item, path, version);
             _video.Play(path, TakeStart(entry));
             HoldIfWanted();
             _positionTimer.Start();
@@ -489,6 +509,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private async Task ShowPhotoAsync(PlaylistEntry entry, int version)
     {
+        if (Is360)
+        {
+            await Show360PhotoAsync(entry, version);
+            return;
+        }
         var decoded = await DecodeAsync(entry.Item);
         if (version != _loadVersion) return;
         if (decoded == null)
@@ -529,7 +554,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         foreach (var stale in _prefetch.Keys.ToList())
             if (Math.Abs(_entries.FindIndex(e => e.Item.Id == stale) - Index) > 2) _prefetch.Remove(stale);
-        if (Index + 1 < Count && _entries[Index + 1].Item is { IsVideo: false } next && !_prefetch.ContainsKey(next.Id))
+        if (Index + 1 < Count && _entries[Index + 1].Item is { IsVideo: false } next && !_prefetch.ContainsKey(next.Id)
+            && !Media.Fisheye360.IsDualFisheye(next.FullPath))
             _prefetch[next.Id] = DecodeAsync(next);
     }
 
@@ -565,6 +591,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var time = NowMs;
         if (length > 0) VideoLength = length;
         if (time >= 0) VideoPosition = time;
+        Keep360InStep();
         IsRunning = _video.IsPlaying;
         VideoTimeText = $"{Format.Duration(Math.Max(0, time))} / {Format.Duration(Math.Max(0, length))}";
         if (ShowPeople && time / 500 != _peopleTimeBucket)

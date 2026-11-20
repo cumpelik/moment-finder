@@ -23,6 +23,10 @@ and then work offline. Windows, Linux and macOS.
   only with the password, also with plain rclone. A cloud folder can be browsed as a source (files are
   fetched on demand into a size-limited cache) or restored. The index (names, people, buckets) is backed up
   with each mirror run; Import names brings it into another library, matched by file content.
+- **360 photos and videos** (Insta360 .insv / .insp originals): drag to look around, the wheel zooms; the search
+  and the people analysis look at six views around, and with only someone's moments the view turns to them.
+  The second lens of a video is copied into a file of its own on first opening (libVLC plays only the first video
+  stream), kept in a size-limited cache.
 - **Apple Photos** (macOS): with "Download Originals to this Mac" the originals of the Photos library are
   regular files; Sources + offers the library (needs the Photos or Full Disk Access permission).
 
