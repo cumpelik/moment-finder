@@ -51,8 +51,7 @@
             <StackPanel Spacing="10">
                 <TextBlock Text="{Binding PrepareText}" Foreground="White" FontSize="15" TextWrapping="Wrap" />
                 <ProgressBar Value="{Binding PrepareProgress}" Minimum="0" Maximum="100" />
-                <TextBlock Foreground="#B0FFFFFF" FontSize="12" TextWrapping="Wrap"
-                           Text="Once, then it plays smoothly from a lighter copy. You can look at other videos meanwhile." />
+                <TextBlock Foreground="#B0FFFFFF" FontSize="12" TextWrapping="Wrap" Text="{Binding PrepareHint}" />
                 <Button Command="{Binding StopPreparingCommand}" HorizontalAlignment="Right">Stop</Button>
             </StackPanel>
         </Border>
@@ -72,33 +71,37 @@
                     <TextBlock Grid.Column="1" Text="{Binding VideoTimeText}" VerticalAlignment="Center" Margin="12,0,0,0"
                                FontFeatures="tnum" />
                 </Grid>
-                <!-- Title on the left, all controls in one row on the right: fits the panel as well as the full screen -->
-                <Grid ColumnDefinitions="*,Auto">
-                    <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,12,0">
-                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding MomentText}" FontSize="12" Foreground="#F59E0B"
-                                   IsVisible="{Binding MomentText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
-                        <Button Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
+                <!-- Playing on the left (large), the title in the middle, tools on the right in groups -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" Margin="0,0,20,0">
+                        <Button Classes="transport" Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
                             <mi:MaterialIcon Kind="SkipPrevious" />
                         </Button>
-                        <Button Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / pause; with photos a slideshow (Space)">
+                        <Button Classes="transport play" Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / pause; with photos a slideshow (Space)">
                             <Panel>
                                 <mi:MaterialIcon Kind="Play" IsVisible="{Binding !IsRunning}" />
                                 <mi:MaterialIcon Kind="Pause" IsVisible="{Binding IsRunning}" />
                             </Panel>
                         </Button>
-                        <Button Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
+                        <Button Classes="transport" Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
                             <mi:MaterialIcon Kind="SkipNext" />
                         </Button>
-                        <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="6,0,12,0" />
+                        <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="4,0,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2" Margin="0,0,16,0">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding MomentText}" FontSize="12" Foreground="#F59E0B" TextTrimming="CharacterEllipsis"
+                                   IsVisible="{Binding MomentText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        <TextBlock Text="{Binding LoopText}" FontSize="12" Foreground="#F59E0B" TextTrimming="CharacterEllipsis"
+                                   IsVisible="{Binding LoopText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
                         <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding ShowMomentChoices}"
-                                  VerticalAlignment="Center" MinWidth="150" Margin="0,0,4,0" Focusable="False"
+                                  VerticalAlignment="Center" MinWidth="150" Focusable="False"
                                   ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
-                        <!-- Looking at a technique: frame by frame, slow motion, loop -->
-                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,6,0">
+                        <!-- Looking at a technique: frame by frame, slow motion, loop (of a part chosen with Start / End) -->
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}">
                             <Button Command="{Binding NextFrameCommand}" IsEnabled="{Binding !IsRunning}" ToolTip.Tip="One frame further (.), when paused">
                                 <mi:MaterialIcon Kind="StepForward" />
                             </Button>
@@ -116,11 +119,17 @@
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
-                            <ToggleButton IsChecked="{Binding Loop}" ToolTip.Tip="Loop: the video (or the person's moments) again and again (L)">
+                            <ToggleButton IsChecked="{Binding Loop}" ToolTip.Tip="Loop: again and again (L); Start and End choose the part">
                                 <mi:MaterialIcon Kind="Repeat" />
                             </ToggleButton>
+                            <Button Command="{Binding SetLoopStartCommand}" ToolTip.Tip="The loop starts here">
+                                <TextBlock Text="Start" FontSize="12" />
+                            </Button>
+                            <Button Command="{Binding SetLoopEndCommand}" ToolTip.Tip="The loop ends here">
+                                <TextBlock Text="End" FontSize="12" />
+                            </Button>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}">
                             <Button Command="{Binding ToggleMuteCommand}" ToolTip.Tip="Sound on / off (Up / Down: volume)" Focusable="False">
                                 <Panel>
                                     <mi:MaterialIcon Kind="VolumeHigh" IsVisible="{Binding !IsMuted}" />
@@ -129,25 +138,27 @@
                             </Button>
                             <Slider Minimum="0" Maximum="100" Value="{Binding Volume}" Width="70" VerticalAlignment="Center" Focusable="False" />
                         </StackPanel>
-                        <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show the people (I) and say who is who"
-                                      Padding="8,4">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <mi:MaterialIcon Kind="AccountBoxOutline" Width="20" Height="20" />
-                                <TextBlock Text="Who is who" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </ToggleButton>
-                        <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
-                            <Panel>
-                                <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />
-                                <mi:MaterialIcon Kind="Basket" IsVisible="{Binding InBucket}" Foreground="{DynamicResource BucketBadgeBrush}" />
-                            </Panel>
-                        </Button>
-                        <Button x:Name="FullScreenButton" ToolTip.Tip="Full screen (F)">
-                            <mi:MaterialIcon Kind="Fullscreen" />
-                        </Button>
-                        <Button x:Name="CloseButton" Command="{Binding CloseCommand}" ToolTip.Tip="Close (Esc)">
-                            <mi:MaterialIcon Kind="Close" />
-                        </Button>
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                            <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show the people (I) and say who is who"
+                                          Padding="8,4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <mi:MaterialIcon Kind="AccountBoxOutline" Width="20" Height="20" />
+                                    <TextBlock Text="Who is who" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
+                                <Panel>
+                                    <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />
+                                    <mi:MaterialIcon Kind="Basket" IsVisible="{Binding InBucket}" Foreground="{DynamicResource BucketBadgeBrush}" />
+                                </Panel>
+                            </Button>
+                            <Button x:Name="FullScreenButton" ToolTip.Tip="Full screen (F)">
+                                <mi:MaterialIcon Kind="Fullscreen" />
+                            </Button>
+                            <Button x:Name="CloseButton" Command="{Binding CloseCommand}" ToolTip.Tip="Close (Esc)">
+                                <mi:MaterialIcon Kind="Close" />
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </StackPanel>

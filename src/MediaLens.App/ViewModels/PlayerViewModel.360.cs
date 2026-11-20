@@ -60,6 +60,7 @@ public sealed partial class PlayerViewModel
     [ObservableProperty] private bool _preparing360;
     [ObservableProperty] private string _prepareText = "";
     [ObservableProperty] private double _prepareProgress;
+    [ObservableProperty] private string _prepareHint = "Once, then it plays smoothly from a lighter copy. You can look at other videos meanwhile.";
 
     /// <summary>Called with the position updates: the progress of the copy on the card.</summary>
     private void UpdatePrepare()
@@ -67,8 +68,11 @@ public sealed partial class PlayerViewModel
         if (!Preparing360 || Media.Proxy360.Progress(Current.Item) is not { } p) return;
         PrepareProgress = p.Done * 100;
         PrepareText = $"Preparing this 360 video for smooth playing: {p.Done * 100:0} %" +
-                      (p.Left is { } left ? $", about {Services.Format.Span(left)} left" : "") +
-                      (Media.FFmpeg.Encoder360 is { } encoder ? encoder == "libx264" ? " (on the processor)" : " (with the graphics card)" : "");
+                      (p.Left is { } left ? $", about {Services.Format.Span(left)} left" : "");
+        PrepareHint = "Once, then it plays smoothly from a lighter copy. You can look at other videos meanwhile." +
+                      (Media.FFmpeg.Encoder360 is { } encoder
+                          ? encoder == "libx264" ? " No supported graphics card was found, so the processor does it." : " Your graphics card is doing it."
+                          : "");
     }
 
     /// <summary>Stop: no copy now; the front lens plays as it can (opening the video again prepares it again).</summary>

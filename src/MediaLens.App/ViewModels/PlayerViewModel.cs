@@ -171,6 +171,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _moment = 0;
         _insideMoment = false;
         Notice = "";
+        // A chosen part belongs to its video.
+        SetLoopRange(null, null);
         if (item.IsVideo)
         {
             Photo = null;
@@ -580,7 +582,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             _moment = 0;
             _insideMoment = false;
             MomentText = MomentLabel();
-            _video.Play(_playingPath, StartOf(Current));
+            _video.Play(_playingPath, _loopStartMs ?? StartOf(Current));
             IsRunning = true;
             return;
         }
@@ -604,6 +606,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
         // Only the moments: at the end of one jump to the next, after the last one go on (or stop when browsing).
         // Right after a switch libVLC may still report the previous video's time: act only once inside the moment.
+        if (KeepInLoop(time)) return;
         if (Moments is not { } moments || _moment >= moments.Count) return;
         var (start, end) = moments[_moment];
         if (!_insideMoment)
@@ -750,7 +753,62 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _main.RememberPlayback(value, Loop);
     }
 
-    partial void OnLoopChanged(bool value) => _main.RememberPlayback(Rate, value);
+    partial void OnLoopChanged(bool value)
+    {
+        _main.RememberPlayback(Rate, value);
+        // Loop off: the chosen part goes too.
+        if (!value) SetLoopRange(null, null);
+    }
+
+    // ---- loop of a part (Start / End) ----
+
+    private int? _loopStartMs;
+    private int? _loopEndMs;
+
+    /// <summary>"Loop 0:12 to 0:18" under the title while a part is chosen.</summary>
+    [ObservableProperty] private string _loopText = "";
+
+    private void SetLoopRange(int? start, int? end)
+    {
+        (_loopStartMs, _loopEndMs) = (start, end);
+        LoopText = (start, end) switch
+        {
+            ({ } a, { } b) => $"Loop {Format.Duration(a)} to {Format.Duration(b)}",
+            ({ } a, null) => $"Loop from {Format.Duration(a)} (End sets where it turns back)",
+            (null, { } b) => $"Loop up to {Format.Duration(b)}",
+            _ => "",
+        };
+    }
+
+    /// <summary>The loop starts at the current moment (and loop goes on).</summary>
+    [RelayCommand]
+    private void SetLoopStart()
+    {
+        if (!IsVideo) return;
+        var now = (int)NowMs;
+        SetLoopRange(now, _loopEndMs is { } end && end > now + 200 ? end : null);
+        Loop = true;
+    }
+
+    /// <summary>The loop ends at the current moment: it turns back to the start right away.</summary>
+    [RelayCommand]
+    private void SetLoopEnd()
+    {
+        if (!IsVideo) return;
+        var now = (int)NowMs;
+        var start = _loopStartMs is { } s && s < now - 200 ? s : (int?)null;
+        Loop = true;
+        SetLoopRange(start, now);
+        SeekVideo(start ?? 0);
+    }
+
+    /// <summary>Past the end of the chosen part: back to its start.</summary>
+    private bool KeepInLoop(long time)
+    {
+        if (!Loop || _loopEndMs is not { } end || time < end) return false;
+        SeekVideo(_loopStartMs ?? 0);
+        return true;
+    }
 
     [RelayCommand]
     private void SetRate(string rate) =>
