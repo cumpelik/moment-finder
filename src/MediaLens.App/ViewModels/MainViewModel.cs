@@ -84,6 +84,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (IsPersonScope && !ShowPersonFaces) _ = RunSearchAsync(keepSelection: true);
             if (IsPersonScope && ShowPersonFaces && CurrentScope is { } p) People.LoadPerson(p.Id);
             if (IsGroupsMode) People.LoadClusters();
+            // The matching finished after the review opened: the new suggestions are there now.
+            if (IsReviewMode && !People.HasReview) People.LoadReview();
         });
         _searchDebounce = new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) =>
         {
@@ -562,14 +564,31 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
     {
         var (personIds, names, hasText) = CurrentQuery();
-        var segments = personIds.Count > 0 ? _host.People.PersonSegments(personIds) : [];
         var entries = tiles.Select(t => new PlaylistEntry(t.Item, t.StartMs,
-            !t.Item.IsVideo ? null :
-            personIds.Count > 0 ? segments.GetValueOrDefault(t.Item.Id) :
-            hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)] : null)).ToList();
-        return new PlayerViewModel(entries, index, autoPlay,
-            new PlayerSettings(SlideSeconds, VideoHighlightsOnly, names.Count > 0 ? string.Join(" + ", names) : null), this);
+            t.Item.IsVideo && hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)] : null)).ToList();
+
+        // What the videos can play: whole, the matching part, the searched people, anybody else in them.
+        var whole = new MomentChoice("Whole videos", MomentKind.Whole, []);
+        var choices = new List<MomentChoice> { whole };
+        if (hasText) choices.Add(new MomentChoice("Only the matching part", MomentKind.Match, []));
+        if (personIds.Count > 1) choices.Add(new MomentChoice($"Only {string.Join(" + ", names)}", MomentKind.Person, personIds));
+        var personNames = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
+        var videoIds = entries.Where(e => e.Item.IsVideo).Select(e => e.Item.Id).ToList();
+        if (videoIds.Count > 0)
+            foreach (var id in personIds.Concat(_host.People.PersonsIn(videoIds)).Distinct())
+                if (personNames.TryGetValue(id, out var name))
+                    choices.Add(new MomentChoice($"Only {name}", MomentKind.Person, [id]));
+        var initial = !VideoHighlightsOnly ? whole
+            : personIds.Count > 0 ? choices.FirstOrDefault(c => c.Kind == MomentKind.Person && c.PersonIds.SequenceEqual(personIds)) ?? whole
+            : hasText ? choices.First(c => c.Kind == MomentKind.Match) : whole;
+        return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume), this,
+            videoIds.Count > 0 ? choices : [whole], initial);
     }
+
+    /// <summary>The viewer's volume, kept for the next time.</summary>
+    public int Volume => int.TryParse(_host.Db.GetSetting("volume"), CultureInfo.InvariantCulture, out var v) ? v : 80;
+
+    public void SaveVolume(int volume) => _host.Db.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>A video found by a description: how long it plays from the matching frame.</summary>
     private const int MatchMomentMs = 12_000;

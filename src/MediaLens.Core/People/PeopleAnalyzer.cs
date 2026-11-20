@@ -70,9 +70,9 @@ public sealed class PeopleAnalyzer
         return list;
     }
 
-    private void Save(long mediaId, List<(NewDetection Det, RgbImage? Crop)> items)
+    private void Save(long mediaId, List<(NewDetection Det, RgbImage? Crop)> items, IReadOnlyList<NewTrackBox>? paths = null)
     {
-        var ids = _repo.ReplaceDetections(mediaId, items.Select(x => x.Det).ToList());
+        var ids = _repo.ReplaceDetections(mediaId, items.Select(x => x.Det).ToList(), paths);
         for (var i = 0; i < ids.Count; i++)
             items[i].Crop?.SaveJpeg(_paths.PeopleCropPath(ids[i]), 82);
     }
@@ -108,7 +108,12 @@ public sealed class PeopleAnalyzer
                 foreach (var (det, crop) in Frame(perFrame[f].Found, perFrame[f].Image, perFrame[f].TimeMs, tracks[f]))
                     all.Add((det with { LinkedIndex = det.LinkedIndex + offset }, crop, f));
             }
-            Save(video.Id, KeepRepresentatives(all));
+            // The path of each track: its body in every frame, its face where no body was found.
+            var paths = all.Where(x => x.Det.Track != null)
+                .GroupBy(x => (x.Det.Track!.Value, x.Frame))
+                .Select(g => g.OrderBy(x => x.Det.Kind == DetectionKind.Body ? 0 : 1).First().Det)
+                .Select(d => new NewTrackBox(d.Track!.Value, d.TimeMs, d.X, d.Y, d.W, d.H)).ToList();
+            Save(video.Id, KeepRepresentatives(all), paths);
         }
         finally
         {

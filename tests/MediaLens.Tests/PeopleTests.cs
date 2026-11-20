@@ -122,6 +122,28 @@ public class PeopleTests
         Assert.Empty(repo.UnnamedClusters()); // figure groups are not groups of faces
     }
 
+    /// <summary>A new analysis keeps other moments of a track: the name goes with the track passing the same place.</summary>
+    [Fact]
+    public async Task ConfirmedNameSurvivesReanalysisThroughTheTrackPath()
+    {
+        using var lib = new TestLibrary();
+        lib.AddPhoto("v.jpg");
+        await lib.ScanAsync(lib.AddSource());
+        var id = lib.Repo.Query(new MediaFilter()).Single().Id;
+        var repo = new PeopleRepository(lib.Db);
+        var first = repo.ReplaceDetections(id, [Body(Emb(5), time: 3000, track: 0)], [new NewTrackBox(0, 3000, 0.3f, 0.1f, 0.3f, 0.8f)]);
+        repo.Confirm(first, repo.CreatePerson("Greta").Id);
+
+        // Now the track keeps the frames at 1 s and 6 s; at 3 s only its path is stored.
+        repo.ReplaceDetections(id, [Body(Emb(5), time: 1000, track: 0), Body(Emb(5), time: 6000, track: 0)],
+            [new NewTrackBox(0, 1000, 0.2f, 0.1f, 0.3f, 0.8f), new NewTrackBox(0, 3000, 0.31f, 0.1f, 0.3f, 0.8f), new NewTrackBox(0, 6000, 0.4f, 0.1f, 0.3f, 0.8f)]);
+        var dets = repo.DetectionsOfMedia(id);
+        Assert.Single(dets, d => d.Confirmed && d.PersonId != null);
+        Assert.Equal(3, repo.TrackPaths(id).Count);
+        new IdentityService(repo).Recompute();
+        Assert.All(repo.DetectionsOfMedia(id), d => Assert.NotNull(d.PersonId));
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

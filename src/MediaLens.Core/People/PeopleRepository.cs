@@ -31,6 +31,12 @@ public sealed class Person
 public sealed record NewDetection(DetectionKind Kind, int TimeMs, float X, float Y, float W, float H, float Score,
     float Quality, float[] Embedding, int? Track, int? LinkedIndex);
 
+/// <summary>Where a person of a video (Track as in NewDetection) is in one analyzed frame.</summary>
+public sealed record NewTrackBox(int Track, int TimeMs, float X, float Y, float W, float H);
+
+/// <summary>A stored point of a track's path.</summary>
+public sealed record TrackBox(long Track, int TimeMs, float X, float Y, float W, float H);
+
 /// <summary>A stored detection as the identity matching and the UI see it.</summary>
 public sealed class DetectionRow
 {
@@ -150,9 +156,9 @@ public sealed class PeopleRepository
 
     /// <summary>
     /// Replaces the detections of a media item (new analysis). What the user confirmed survives when a new
-    /// detection lies at the same place (same frame, boxes overlapping).
+    /// detection lies at the same place (same frame, boxes overlapping), or a new track passes through it.
     /// </summary>
-    public List<long> ReplaceDetections(long mediaId, IReadOnlyList<NewDetection> detections)
+    public List<long> ReplaceDetections(long mediaId, IReadOnlyList<NewDetection> detections, IReadOnlyList<NewTrackBox>? paths = null)
     {
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
@@ -161,10 +167,12 @@ public sealed class PeopleRepository
             new { mediaId }, tx).ToList();
         c.Execute("DELETE FROM detection WHERE media_id=@mediaId", new { mediaId }, tx);
         var ids = new List<long>();
+        var carriedOld = new HashSet<long>();
         foreach (var d in detections)
         {
             var carried = old.FirstOrDefault(o => o.Kind == (long)d.Kind && o.TimeMs == d.TimeMs &&
                 new Box((float)o.X, (float)o.Y, (float)o.W, (float)o.H).Iou(new Box(d.X, d.Y, d.W, d.H)) > 0.5f);
+            if (carried.Id != 0) carriedOld.Add(carried.Id);
             ids.Add(c.ExecuteScalar<long>("""
                 INSERT INTO detection(media_id, time_ms, kind, x, y, w, h, score, quality, track, embedding,
                                       person_id, assign_source, confidence, confirmed)
@@ -194,8 +202,56 @@ public sealed class PeopleRepository
             if (!firstOfTrack.TryGetValue(t, out var first)) firstOfTrack[t] = first = ids[i];
             c.Execute("UPDATE detection SET track=@first WHERE id=@id", new { first, id = ids[i] }, tx);
         }
+        c.Execute("DELETE FROM track_box WHERE media_id=@mediaId", new { mediaId }, tx);
+        foreach (var p in paths ?? [])
+        {
+            if (!firstOfTrack.TryGetValue(p.Track, out var track)) continue;
+            c.Execute("INSERT INTO track_box(media_id, track, time_ms, x, y, w, h) VALUES(@mediaId, @track, @TimeMs, @X, @Y, @W, @H)",
+                new { mediaId, track, p.TimeMs, p.X, p.Y, p.W, p.H }, tx);
+        }
+        // A confirmation whose detection is gone: the new track passing through the same place takes it.
+        foreach (var o in old.Where(o => !carriedOld.Contains(o.Id)))
+        {
+            var box = new Box((float)o.X, (float)o.Y, (float)o.W, (float)o.H);
+            var hit = (paths ?? []).Where(p => p.TimeMs == o.TimeMs && firstOfTrack.ContainsKey(p.Track))
+                .Select(p =>
+                {
+                    var path = new Box(p.X, p.Y, p.W, p.H);
+                    // A confirmed face: the path is its body, the face sits in its upper part.
+                    var faceInside = o.Kind == (long)DetectionKind.Face && path.Contains(box.X + box.W / 2, box.Y + box.H / 2) &&
+                                     box.Y + box.H / 2 < path.Y + path.H * 0.5f;
+                    return (p.Track, Iou: Math.Max(box.Iou(path), faceInside ? 0.6f : 0f));
+                })
+                .Where(x => x.Iou > 0.5f).OrderByDescending(x => x.Iou).FirstOrDefault();
+            if (hit.Iou == 0) continue;
+            var target = Enumerable.Range(0, detections.Count).Where(i => detections[i].Track == hit.Track)
+                .OrderByDescending(i => (long)detections[i].Kind == o.Kind).ThenByDescending(i => detections[i].Quality).First();
+            c.Execute("UPDATE detection SET person_id=@PersonId, assign_source=@source, confidence=1, confirmed=1 WHERE id=@id AND confirmed=0",
+                new { o.PersonId, source = (int)AssignSource.User, id = ids[target] }, tx);
+        }
         tx.Commit();
         return ids;
+    }
+
+    /// <summary>The paths of the people of a video, by track and time.</summary>
+    public List<TrackBox> TrackPaths(long mediaId)
+    {
+        using var c = _db.Open();
+        return c.Query<(long Track, long TimeMs, double X, double Y, double W, double H)>(
+                "SELECT track, time_ms, x, y, w, h FROM track_box WHERE media_id=@mediaId ORDER BY track, time_ms", new { mediaId })
+            .Select(r => new TrackBox(r.Track, (int)r.TimeMs, (float)r.X, (float)r.Y, (float)r.W, (float)r.H)).ToList();
+    }
+
+    /// <summary>The named people seen in these media, for choosing whose moments to play.</summary>
+    public List<long> PersonsIn(IEnumerable<long> mediaIds)
+    {
+        var ids = mediaIds.ToList();
+        if (ids.Count == 0) return [];
+        using var c = _db.Open();
+        return c.Query<long>("""
+            SELECT d.person_id FROM detection d JOIN person p ON p.id=d.person_id AND p.hidden=0
+            WHERE d.media_id IN @ids GROUP BY d.person_id ORDER BY COUNT(DISTINCT d.media_id) DESC
+            """, new { ids }).ToList();
     }
 
     /// <summary>All detections with their media's event and time, for the identity matching.</summary>

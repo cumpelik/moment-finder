@@ -52,6 +52,11 @@ public partial class PlayerWindow : Window
         _vm.PeopleChanged += DrawPeople;
         _vm.Start();
         ShowOverlay();
+        // The keys (Esc, arrows, space) belong to the viewer, not to the window it was opened from. Opened by
+        // a double click, the release of the second click activates the main window again: once more later.
+        Root.Focusable = true;
+        TakeKeyboard();
+        DispatcherTimer.RunOnce(TakeKeyboard, TimeSpan.FromMilliseconds(350));
     }
 
     protected override void OnClosed(EventArgs e)
@@ -115,6 +120,7 @@ public partial class PlayerWindow : Window
                 e.Handled = true;
                 var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.Names());
                 if (name != null) _vm.NameDetection(id, name);
+                TakeKeyboard();
             };
             Canvas.SetLeft(frame, box.X);
             Canvas.SetTop(frame, box.Y);
@@ -137,6 +143,13 @@ public partial class PlayerWindow : Window
         Root.Cursor = Cursor.Default;
         _hideOverlay.Stop();
         _hideOverlay.Start();
+    }
+
+    private void TakeKeyboard()
+    {
+        if (!IsVisible) return;
+        Activate();
+        Root.Focus();
     }
 
     private void ToggleFullScreen() =>

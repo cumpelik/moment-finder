@@ -159,6 +159,16 @@ public sealed class Database
         """,
         // People analysis 2 changed only videos: photos stay as they are.
         "UPDATE media SET people_version=2 WHERE kind=1 AND people_version=1;",
+        // Where each person of a video is in every analyzed frame (detections keep only a few of them).
+        """
+        CREATE TABLE track_box(
+            media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+            track INTEGER NOT NULL,
+            time_ms INTEGER NOT NULL,
+            x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL);
+        CREATE INDEX track_box_media ON track_box(media_id, track, time_ms);
+        UPDATE media SET people_version=3 WHERE kind=1 AND people_version=2;
+        """,
     ];
 
     private static void Migrate(SqliteConnection c)

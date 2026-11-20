@@ -11,11 +11,18 @@ using MediaLens.Media;
 
 namespace MediaLens.App.ViewModels;
 
-/// <summary>An item to show; for a video found by a search or a person, the moments that matter.</summary>
-public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? Moments = null);
+/// <summary>An item to show; for a video found by a description, the part that matches.</summary>
+public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? MatchMoments = null);
 
-/// <summary>OnlyMoments: videos play only their Moments (the person, the matching part), then go on.</summary>
-public sealed record PlayerSettings(int SlideSeconds, bool OnlyMoments, string? MomentsOf = null);
+public sealed record PlayerSettings(int SlideSeconds, int Volume);
+
+public enum MomentKind { Whole, Match, Person }
+
+/// <summary>What the videos play: whole, the part matching the search, or only the moments of some people.</summary>
+public sealed record MomentChoice(string Label, MomentKind Kind, IReadOnlyList<long> PersonIds)
+{
+    public override string ToString() => Label;
+}
 
 /// <summary>
 /// The full-screen viewer: browsing (arrows) or a slideshow (photos for N seconds, videos to the end or only
@@ -34,6 +41,14 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private bool _seeking;
     private int _moment;
     private bool _insideMoment;
+    private readonly Dictionary<string, Dictionary<long, List<(int StartMs, int EndMs)>>> _personMoments = new();
+
+    /// <summary>The choices of what the videos play; the view shows them only when there is more than "whole".</summary>
+    public IReadOnlyList<MomentChoice> MomentChoices { get; }
+    public bool HasMomentChoices => MomentChoices.Count > 1;
+    [ObservableProperty] private MomentChoice _momentChoice;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMuted))] private int _volume;
+    public bool IsMuted => Volume == 0;
 
     public PixelSize ScreenSize { get; set; } = new(1920, 1080);
 
@@ -59,6 +74,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>The people layer must be redrawn (other item, other moment of the video, a new name).</summary>
     public event Action? PeopleChanged;
     private List<People.DetectionRow> _detections = [];
+    private Dictionary<long, List<People.TrackBox>> _paths = [];
     private Dictionary<long, string> _names = [];
     private long _peopleTimeBucket = -1;
 
@@ -66,13 +82,17 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>For the view: the video image must be invalidated / replaced.</summary>
     public event Action? VideoFrameChanged;
 
-    public PlayerViewModel(List<PlaylistEntry> entries, int index, bool autoPlay, PlayerSettings settings, MainViewModel main)
+    public PlayerViewModel(List<PlaylistEntry> entries, int index, bool autoPlay, PlayerSettings settings, MainViewModel main,
+        IReadOnlyList<MomentChoice> momentChoices, MomentChoice momentChoice)
     {
         _entries = entries;
         _settings = settings;
         _main = main;
         _index = index;
         _autoPlay = autoPlay;
+        _volume = settings.Volume;
+        MomentChoices = momentChoices;
+        _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
         _slideTimer.Tick += (_, _) =>
         {
@@ -117,11 +137,18 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             if (_video == null)
             {
-                _video = new VideoPlayer();
+                _video = new VideoPlayer { Volume = Volume };
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
             }
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
+            // Only someone's moments and they are not in this video: on to the next one.
+            if (AutoPlay && MomentChoice.Kind == MomentKind.Person && Moments == null)
+            {
+                _video.Stop();
+                Dispatcher.UIThread.Post(Next);
+                return;
+            }
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _video.Play(item.FullPath, StartOf(entry));
@@ -149,23 +176,42 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     partial void OnShowPeopleChanged(bool value)
     {
         LoadPeople();
-        // In a video the people are known at sampled moments: stop at the nearest one so the boxes fit.
-        if (value && IsVideo && _video != null && _detections.Count > 0)
+        // Saying who is who is easier on a still picture.
+        if (value && IsVideo) _video?.Pause();
+    }
+
+    partial void OnVolumeChanged(int value)
+    {
+        if (_video != null) _video.Volume = value;
+        _main.SaveVolume(value);
+    }
+
+    /// <summary>Another choice of what to play: continue with its next moment in this video.</summary>
+    partial void OnMomentChoiceChanged(MomentChoice value)
+    {
+        _moment = 0;
+        _insideMoment = false;
+        if (!IsVideo || _video == null) return;
+        if (Moments is not { } moments)
         {
-            var now = _video.TimeMs;
-            var nearest = _detections.MinBy(d => Math.Abs(d.TimeMs - now))!.TimeMs;
-            _video.Pause();
-            if (Math.Abs(nearest - now) > 1000) _video.Seek(nearest);
+            MomentText = "";
+            if (AutoPlay && value.Kind == MomentKind.Person) Next();
+            return;
         }
+        var now = _video.TimeMs;
+        _moment = Math.Max(0, moments.FindIndex(m => m.EndMs > now));
+        if (moments.All(m => m.EndMs <= now)) _moment = 0;
+        if (now < moments[_moment].StartMs - 1500 || now > moments[_moment].EndMs) _video.Seek(moments[_moment].StartMs);
+        MomentText = MomentLabel();
     }
 
     private void LoadPeople()
     {
         _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
+        _paths = ShowPeople && Current.Item.IsVideo ? _main.People.TrackPaths(Current.Item.Id) : [];
         _names = ShowPeople ? _main.People.Names() : [];
         PeopleHint = !ShowPeople ? "" :
             _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
-            IsVideo ? "Click a person to say who it is. Space plays on; the boxes show at the moments the analysis looked at." :
             "Click a person to say who it is.";
         _peopleTimeBucket = -1;
         PeopleChanged?.Invoke();
@@ -173,19 +219,62 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public sealed record PeopleBox(long DetectionId, double X, double Y, double W, double H, string Label, bool Known, bool IsFace);
 
-    /// <summary>Boxes to draw now, in content pixels; for a video only those near the current time.</summary>
+    /// <summary>Boxes to draw now, in content pixels: one per person.</summary>
     public List<PeopleBox> PeopleBoxes()
     {
         if (!ShowPeople) return [];
+        if (!IsVideo)
+        {
+            // A face on a body is that person already: only the body gets a box.
+            var bodiesWithFace = _detections.Where(d => d.LinkedId != null).Select(d => d.LinkedId!.Value).ToHashSet();
+            return _detections
+                .Where(d => d.Kind == Analysis.DetectionKind.Body || d.LinkedId == null)
+                .Select(d => Box(d, d.X, d.Y, d.W, d.H, bodiesWithFace.Contains(d.Id) ? _detections.First(f => f.LinkedId == d.Id) : null))
+                .ToList();
+        }
         // Paused on the first frame, libVLC still says 0: the video was opened at its start time.
-        var now = IsVideo && _video != null ? (_video.TimeMs > 0 ? _video.TimeMs : StartOf(Current)) : 0;
-        return _detections
-            .Where(d => !IsVideo || Math.Abs(d.TimeMs - now) <= 1500)
-            .Select(d => new PeopleBox(d.Id, d.X * ContentWidth, d.Y * ContentHeight, d.W * ContentWidth, d.H * ContentHeight,
-                d.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (d.Confirmed ? "" : "?") :
-                d.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?",
-                d.PersonId != null, d.Kind == Analysis.DetectionKind.Face))
-            .ToList();
+        var now = _video != null && _video.TimeMs > 0 ? (int)_video.TimeMs : StartOf(Current);
+        var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
+        var boxes = new List<PeopleBox>();
+        foreach (var (track, path) in _paths)
+        {
+            if (Where(path, now, interval) is not { } b) continue;
+            // The name of the track: a confirmed detection first, then any assigned, then a suggestion.
+            var dets = _detections.Where(d => d.Track == track).ToList();
+            if (dets.Count == 0) continue;
+            var who = dets.OrderByDescending(d => d.Confirmed).ThenByDescending(d => d.PersonId != null).ThenByDescending(d => d.SuggestPersonId != null)
+                .ThenByDescending(d => d.Kind == Analysis.DetectionKind.Body).ThenByDescending(d => d.Quality).First();
+            boxes.Add(Box(who, b.X, b.Y, b.W, b.H, null));
+        }
+        return boxes;
+    }
+
+    /// <summary>Where a track is at a time: between two analyzed frames moved proportionally, around one held briefly.</summary>
+    private static (float X, float Y, float W, float H)? Where(List<People.TrackBox> path, int now, int interval)
+    {
+        var after = path.FindIndex(p => p.TimeMs >= now);
+        if (after == 0 || after < 0)
+        {
+            var edge = after == 0 ? path[0] : path[^1];
+            return Math.Abs(edge.TimeMs - now) <= interval / 2 ? (edge.X, edge.Y, edge.W, edge.H) : null;
+        }
+        var (p0, p1) = (path[after - 1], path[after]);
+        if (p1.TimeMs - p0.TimeMs > interval * 2)
+        {
+            var near = now - p0.TimeMs < p1.TimeMs - now ? p0 : p1;
+            return Math.Abs(near.TimeMs - now) <= interval / 2 ? (near.X, near.Y, near.W, near.H) : null;
+        }
+        var t = (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs);
+        return (p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t);
+    }
+
+    private PeopleBox Box(People.DetectionRow d, float x, float y, float w, float h, People.DetectionRow? face)
+    {
+        var who = d.PersonId == null && face?.PersonId != null ? face : d;
+        var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :
+            who.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?";
+        return new PeopleBox(d.Id, x * ContentWidth, y * ContentHeight, w * ContentWidth, h * ContentHeight, label,
+            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face);
     }
 
     public IReadOnlyList<string> Names() => _main.People.PersonNames();
@@ -305,17 +394,34 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         else _video.Pause();
     }
 
-    /// <summary>The moments to play of the current video, when the setting says so.</summary>
-    private IReadOnlyList<(int StartMs, int EndMs)>? Moments =>
-        _settings.OnlyMoments && IsVideo && Current.Moments is { Count: > 0 } m ? m : null;
+    /// <summary>The moments to play of the current video by the choice; null plays it whole.</summary>
+    private List<(int StartMs, int EndMs)>? Moments => IsVideo ? MomentsOf(Current) : null;
+
+    private List<(int StartMs, int EndMs)>? MomentsOf(PlaylistEntry entry)
+    {
+        var moments = MomentChoice.Kind switch
+        {
+            MomentKind.Match => entry.MatchMoments?.ToList(),
+            MomentKind.Person => PersonMoments(MomentChoice.PersonIds).GetValueOrDefault(entry.Item.Id),
+            _ => null,
+        };
+        return moments is { Count: > 0 } ? moments : null;
+    }
+
+    private Dictionary<long, List<(int StartMs, int EndMs)>> PersonMoments(IReadOnlyList<long> personIds)
+    {
+        var key = string.Join(",", personIds);
+        if (!_personMoments.TryGetValue(key, out var moments))
+            _personMoments[key] = moments = _main.People.PersonSegments(personIds);
+        return moments;
+    }
 
     private string MomentLabel() => Moments is { } m
-        ? $"{_settings.MomentsOf ?? "Matching part"}: {Math.Min(_moment + 1, m.Count)} / {m.Count}"
+        ? $"{MomentChoice.Label}: {Math.Min(_moment + 1, m.Count)} / {m.Count}"
         : "";
 
     /// <summary>Where a video starts: its first moment, or the matching frame.</summary>
-    private int StartOf(PlaylistEntry entry) =>
-        _settings.OnlyMoments && entry.Moments is { Count: > 0 } m ? m[0].StartMs : entry.StartMs;
+    private int StartOf(PlaylistEntry entry) => entry.Item.IsVideo && MomentsOf(entry) is { } m ? m[0].StartMs : entry.StartMs;
 
     /// <summary>The slider was dragged.</summary>
     public void SeekTo(double ms)
@@ -326,9 +432,19 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public void BeginSeek() => _seeking = true;
 
-    public void ChangeVolume(int delta)
+    public void ChangeVolume(int delta) => Volume = Math.Clamp(Volume + delta, 0, 100);
+
+    private int _volumeBeforeMute = 70;
+
+    [RelayCommand]
+    private void ToggleMute()
     {
-        if (_video != null) _video.Volume += delta;
+        if (Volume > 0)
+        {
+            _volumeBeforeMute = Volume;
+            Volume = 0;
+        }
+        else Volume = _volumeBeforeMute;
     }
 
     public void SeekBy(int seconds)

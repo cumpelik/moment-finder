@@ -58,6 +58,18 @@
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
                         <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,12,0" />
+                        <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding HasMomentChoices}"
+                                  VerticalAlignment="Center" MinWidth="170" Margin="0,0,8,0" Focusable="False"
+                                  ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,8,0">
+                            <Button Command="{Binding ToggleMuteCommand}" ToolTip.Tip="Sound on / off (Up / Down: volume)" Focusable="False">
+                                <Panel>
+                                    <mi:MaterialIcon Kind="VolumeHigh" IsVisible="{Binding !IsMuted}" />
+                                    <mi:MaterialIcon Kind="VolumeOff" IsVisible="{Binding IsMuted}" />
+                                </Panel>
+                            </Button>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding Volume}" Width="90" VerticalAlignment="Center" Focusable="False" />
+                        </StackPanel>
                         <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show the people (I) and say who is who"
                                       Padding="8,4">
                             <StackPanel Orientation="Horizontal" Spacing="6">

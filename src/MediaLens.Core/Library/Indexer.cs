@@ -24,8 +24,8 @@ public sealed class Indexer : IDisposable
 {
     /// <summary>Raised when the pipeline changes so old results must be computed again.</summary>
     public const int AnalysisVersion = 1;
-    /// <summary>2: a video track keeps its first and last detection (when the person is on screen).</summary>
-    public const int PeopleVersion = 2;
+    /// <summary>2: a video track keeps its first and last detection. 3: the path of every track (track_box).</summary>
+    public const int PeopleVersion = 3;
 
     private readonly AppPaths _paths;
     private readonly MediaRepository _repo;

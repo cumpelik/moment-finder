@@ -362,6 +362,12 @@ public sealed partial class PeopleViewModel : ObservableObject
 
     public List<DetectionRow> DetectionsOf(long mediaId) => _host.People.DetectionsOfMedia(mediaId);
 
+    public Dictionary<long, List<TrackBox>> TrackPaths(long mediaId) =>
+        _host.People.TrackPaths(mediaId).GroupBy(b => b.Track).ToDictionary(g => g.Key, g => g.ToList());
+
+    public Dictionary<long, List<(int StartMs, int EndMs)>> PersonSegments(IReadOnlyList<long> personIds) =>
+        _host.People.PersonSegments(personIds);
+
     public string? NameOf(long? personId) =>
         personId is { } id ? _host.People.ListPersons(true).FirstOrDefault(p => p.Id == id)?.Name : null;
 
