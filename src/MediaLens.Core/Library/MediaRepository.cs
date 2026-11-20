@@ -122,6 +122,41 @@ public sealed class MediaRepository
         tx.Commit();
     }
 
+    /// <summary>A row with the same content as a scanned file, and where it is (was).</summary>
+    public sealed class SameFile
+    {
+        public long Id { get; init; }
+        public long SourceId { get; init; }
+        public string RelPath { get; init; } = "";
+        public bool Missing { get; init; }
+        public string Kind { get; init; } = "";
+        public string Root { get; init; } = "";
+    }
+
+    public List<SameFile> SameContent(string quickHash, long size)
+    {
+        using var c = _db.Open();
+        return c.Query<SameFile>("""
+            SELECT m.id, m.source_id, m.rel_path, m.missing, s.kind, s.root
+            FROM media m JOIN source s ON s.id=m.source_id
+            WHERE m.quick_hash=@quickHash AND m.size=@size ORDER BY m.id
+            """, new { quickHash, size }).ToList();
+    }
+
+    /// <summary>The file is at another place now: the row follows, with all that hangs on its id.</summary>
+    public void Move(long id, long sourceId, string relPath, long mtime)
+    {
+        using var c = _db.Open();
+        c.Execute("UPDATE media SET source_id=@sourceId, rel_path=@relPath, mtime=@mtime, missing=0 WHERE id=@id",
+            new { id, sourceId, relPath, mtime });
+    }
+
+    public void SetMtime(long id, long mtime)
+    {
+        using var c = _db.Open();
+        c.Execute("UPDATE media SET mtime=@mtime WHERE id=@id", new { id, mtime });
+    }
+
     public void SetMissing(IEnumerable<long> ids, bool missing)
     {
         using var c = _db.Open();

@@ -38,6 +38,48 @@ public class LibraryTests
         Assert.Equal(Path.Combine(lib.MediaDir, "2023", "a.jpg"), a.FullPath);
     }
 
+    /// <summary>A file moved to another folder or source is the same item: its id and what hangs on it stay.</summary>
+    [Fact]
+    public async Task MovedFilesKeepTheirRow()
+    {
+        using var lib = new TestLibrary();
+        lib.AddPhoto("2023/a.jpg", color: "red");
+        lib.AddPhoto("2023/b.jpg", color: "blue");
+        lib.AddPhoto("2023/c.jpg", color: "green");
+        var source = lib.AddSource();
+        await lib.ScanAsync(source);
+        var ids = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        var buckets = new BucketService(lib.Db, lib.Repo);
+        var bucket = buckets.Create("Book");
+        buckets.Add(bucket.Id, [ids["a.jpg"]]);
+
+        // Into another folder, a rename, and a copy (the original stays).
+        Directory.CreateDirectory(Path.Combine(lib.MediaDir, "trip"));
+        File.Move(Path.Combine(lib.MediaDir, "2023/a.jpg"), Path.Combine(lib.MediaDir, "trip/a.jpg"));
+        File.Move(Path.Combine(lib.MediaDir, "2023/b.jpg"), Path.Combine(lib.MediaDir, "2023/B_renamed.jpg"));
+        File.Copy(Path.Combine(lib.MediaDir, "2023/c.jpg"), Path.Combine(lib.MediaDir, "trip/c_copy.jpg"));
+        var scan = await lib.ScanAsync(source);
+        Assert.Equal((1, 0, 0, 2), (scan.Added, scan.Changed, scan.Missing, scan.Moved));
+        var after = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.RelPath, i => i.Id);
+        Assert.Equal(ids["a.jpg"], after["trip/a.jpg"]);
+        Assert.Equal(ids["b.jpg"], after["2023/B_renamed.jpg"]);
+        Assert.NotEqual(ids["c.jpg"], after["trip/c_copy.jpg"]);
+        Assert.Equal(4, after.Count);
+        Assert.Equal("trip/a.jpg", Assert.Single(lib.Repo.Query(new MediaFilter { BucketId = bucket.Id })).RelPath);
+
+        // To another source, whichever of the two is scanned first.
+        var otherDir = Path.Combine(lib.Root, "other");
+        Directory.CreateDirectory(otherDir);
+        var other = lib.Repo.AddSource(SourceKinds.Local, otherDir, "other");
+        File.Move(Path.Combine(lib.MediaDir, "trip/a.jpg"), Path.Combine(otherDir, "a.jpg"));
+        Assert.Equal(1, (await lib.ScanAsync(other)).Moved);
+        Assert.Equal(0, (await lib.ScanAsync(source)).Missing);
+        File.Move(Path.Combine(otherDir, "a.jpg"), Path.Combine(lib.MediaDir, "back.jpg"));
+        Assert.Equal(1, (await lib.ScanAsync(other)).Missing);
+        Assert.Equal(1, (await lib.ScanAsync(source)).Moved);
+        Assert.Equal(ids["a.jpg"], lib.Repo.Query(new MediaFilter()).Single(i => i.RelPath == "back.jpg").Id);
+    }
+
     [Fact]
     public async Task VideoMetadataAndThumbnail()
     {

@@ -3,7 +3,8 @@ using MediaLens.Media;
 
 namespace MediaLens.Library;
 
-public sealed record ScanResult(int Added, int Changed, int Missing, int Total);
+/// <summary>Moved: files found again under another path or in another source; they keep everything known about them.</summary>
+public sealed record ScanResult(int Added, int Changed, int Missing, int Total, int Moved = 0);
 
 /// <summary>Walks a source and brings the index up to date. Only new and changed files are read.</summary>
 public sealed class LibraryScanner
@@ -58,6 +59,8 @@ public sealed class LibraryScanner
         todo = todo.Except(returned).ToList();
 
         var scanned = new ConcurrentBag<ScannedFile>();
+        var newPaths = todo.Where(t => t.IsNew).Select(t => t.Rel).ToHashSet(StringComparer.Ordinal);
+        var movedIds = new HashSet<long>();
         var done = 0;
         await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
             async (t, token) =>
@@ -81,19 +84,50 @@ public sealed class LibraryScanner
             });
         Flush();
 
-        var missing = known.Values.Where(k => !k.IsMissing && !seen.Contains(k.RelPath)).Select(k => k.Id).ToList();
+        var missing = known.Values.Where(k => !k.IsMissing && !seen.Contains(k.RelPath) && !movedIds.Contains(k.Id)).Select(k => k.Id).ToList();
         _repo.SetMissing(missing, true);
         _repo.SetLastScan(source.Id, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
-        var added = todo.Count(t => t.IsNew);
-        return new ScanResult(added, todo.Count - added, missing.Count, seen.Count);
+        var added = todo.Count(t => t.IsNew) - movedIds.Count;
+        return new ScanResult(added, todo.Count(t => !t.IsNew), missing.Count, seen.Count, movedIds.Count);
 
         void Flush()
         {
             var batch = new List<ScannedFile>();
             while (scanned.TryTake(out var f)) batch.Add(f);
-            lock (_repo) _repo.Upsert(source.Id, batch);
+            lock (_repo)
+            {
+                // A file under a path not seen before may be a known one that was moved: the same content, and the
+                // old place is gone. Its row moves along, with the thumbnail, the people, the buckets, everything.
+                var fresh = new List<ScannedFile>();
+                foreach (var f in batch)
+                {
+                    if (newPaths.Contains(f.RelPath) && MovedFrom(source, f, movedIds, seen) is { } old)
+                    {
+                        _repo.Move(old, source.Id, f.RelPath, f.Mtime);
+                        movedIds.Add(old);
+                    }
+                    else fresh.Add(f);
+                }
+                _repo.Upsert(source.Id, fresh);
+            }
         }
+    }
+
+    /// <summary>
+    /// The row of the same file at its earlier place, when that place is empty now: marked missing, or (another
+    /// source not scanned yet) no file there any more, or in this source a path this scan did not meet (also a
+    /// rename that only changes the case of letters). A file still at its old place makes this one a copy.
+    /// </summary>
+    private long? MovedFrom(Source source, ScannedFile file, HashSet<long> taken, HashSet<string>? seen)
+    {
+        if (file.QuickHash == null) return null;
+        var same = _repo.SameContent(file.QuickHash, file.Size).Where(c => !taken.Contains(c.Id)).ToList();
+        var gone = same.FirstOrDefault(c => c.Missing)
+                   ?? same.FirstOrDefault(c => c.SourceId == source.Id && seen != null && !seen.Contains(c.RelPath))
+                   ?? same.FirstOrDefault(c => c.SourceId != source.Id && c.Kind == SourceKinds.Local && Directory.Exists(c.Root) &&
+                                               !File.Exists(Path.Combine(c.Root, c.RelPath.Replace('/', Path.DirectorySeparatorChar))));
+        return gone?.Id;
     }
 
     /// <summary>
@@ -113,9 +147,16 @@ public sealed class LibraryScanner
             if (FileTypes.KindOf(f.Path) == null || IsIgnored(f.Path)) continue;
             seen.Add(f.Path);
             var mtime = f.ModTime.ToUnixTimeMilliseconds();
-            if (known.TryGetValue(f.Path, out var k) && k.Size == f.Size && k.Mtime == mtime && !k.IsMissing) continue;
+            if (known.TryGetValue(f.Path, out var k) && k.Size == f.Size && !k.IsMissing)
+            {
+                // The same place and size with another time (uploaded again, another computer's copy of the
+                // library): not worth fetching and analyzing again.
+                if (k.Mtime != mtime) _repo.SetMtime(k.Id, mtime);
+                continue;
+            }
             todo.Add(f);
         }
+        var movedIds = new HashSet<long>();
 
         var done = 0;
         foreach (var chunk in todo.Chunk(100))
@@ -141,16 +182,27 @@ public sealed class LibraryScanner
                 // The cloud's size and time decide what changed next time, not the cached copy's.
                 scanned.Add(probed with { Size = f.Size, Mtime = f.ModTime.ToUnixTimeMilliseconds() });
             }
-            _repo.Upsert(source.Id, scanned);
+            // Moved inside the cloud or from a local folder that is gone: the known row moves along.
+            var fresh = new List<ScannedFile>();
+            foreach (var f in scanned)
+            {
+                if (!known.ContainsKey(f.RelPath) && MovedFrom(source, f, movedIds, null) is { } old)
+                {
+                    _repo.Move(old, source.Id, f.RelPath, f.Mtime);
+                    movedIds.Add(old);
+                }
+                else fresh.Add(f);
+            }
+            _repo.Upsert(source.Id, fresh);
             done += chunk.Length;
             progress?.Report($"Reading {source.Name}: {done}/{todo.Count}");
         }
 
-        var missing = known.Values.Where(k => !k.IsMissing && !seen.Contains(k.RelPath)).Select(k => k.Id).ToList();
+        var missing = known.Values.Where(k => !k.IsMissing && !seen.Contains(k.RelPath) && !movedIds.Contains(k.Id)).Select(k => k.Id).ToList();
         _repo.SetMissing(missing, true);
         _repo.SetLastScan(source.Id, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var added = todo.Count(t => !known.ContainsKey(t.Path));
-        return new ScanResult(added, todo.Count - added, missing.Count, seen.Count);
+        return new ScanResult(added - movedIds.Count, todo.Count - added, missing.Count, seen.Count, movedIds.Count);
     }
 
     /// <summary>Folders of other applications (thumbnail caches, editors' previews) are not part of the library.</summary>
