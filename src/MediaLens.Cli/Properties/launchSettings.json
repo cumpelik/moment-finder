@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "medialens stats": {
+      "commandName": "Project",
+      "commandLineArgs": "stats"
+    }
+  }
+}
