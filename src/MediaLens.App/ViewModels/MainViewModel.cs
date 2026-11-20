@@ -671,12 +671,46 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     // ---- background work ----
 
+    // ---- how long the background work takes ----
+
+    private IndexerPhase _phase;
+    private DateTime _phaseStarted;
+    /// <summary>Recent (time, done) points of the running phase: the speed over the last minutes, not since the start.</summary>
+    private readonly Queue<(DateTime At, int Done)> _progressSamples = new();
+
     private void OnIndexerStatus(IndexerStatus st)
     {
         IndexerPaused = st.Paused;
         IndexerBusy = st.Phase != IndexerPhase.Idle;
         IndexerProgress = st.Total > 0 ? 100.0 * st.Done / st.Total : 0;
-        IndexerText = st.Total > 0 ? $"{st.Message} {st.Done:N0} / {st.Total:N0}" : st.Message;
+        var now = DateTime.UtcNow;
+        if (st.Phase != _phase || st.Paused)
+        {
+            _phase = st.Phase;
+            _phaseStarted = now;
+            _progressSamples.Clear();
+        }
+        if (st.Total <= 0 || st.Phase == IndexerPhase.Idle)
+        {
+            IndexerText = st.Message;
+            return;
+        }
+        _progressSamples.Enqueue((now, st.Done));
+        while (_progressSamples.Count > 2 && now - _progressSamples.Peek().At > TimeSpan.FromMinutes(3)) _progressSamples.Dequeue();
+
+        var text = $"{st.Message} {st.Done:N0} / {st.Total:N0}";
+        var elapsed = now - _phaseStarted;
+        if (elapsed > TimeSpan.FromSeconds(5)) text += $"  \u00b7  {Format.Span(elapsed)} so far";
+        // An estimate once there is something to measure: a few items over at least 10 s.
+        var (firstAt, firstDone) = _progressSamples.Peek();
+        var span = (now - firstAt).TotalSeconds;
+        var made = st.Done - firstDone;
+        if (span >= 10 && made >= 3)
+        {
+            var left = TimeSpan.FromSeconds((st.Total - st.Done) / (made / span));
+            text += $"  \u00b7  about {Format.Span(left)} left";
+        }
+        IndexerText = text;
     }
 
     [RelayCommand]
