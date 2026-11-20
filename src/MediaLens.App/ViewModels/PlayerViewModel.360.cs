@@ -111,6 +111,7 @@ public sealed partial class PlayerViewModel
         }
         // The playing copy: one leveled picture of everything around.
         View.SetEquirect(pixels, width, height);
+        Follow();
         Render360();
     }
 
@@ -153,28 +154,56 @@ public sealed partial class PlayerViewModel
     {
         if (!Is360 || _video == null) return;
         UpdatePrepare();
-        if (MomentChoice.Kind != MomentKind.Person || DateTime.UtcNow - _lookedAt < TimeSpan.FromSeconds(4)) return;
-        if (PersonDirection(MomentChoice.PersonIds) is not { } target) return;
+        // A paused video gets no new frames: the view still turns to the person (after a seek, another choice).
+        if (!IsRunning && Follow()) Render360();
+    }
+
+    private readonly System.Diagnostics.Stopwatch _sinceFollow = new();
+
+    /// <summary>
+    /// With only someone's moments the view turns to that person, with every frame so it keeps up with a skier
+    /// passing by; not while the user looks around (and four seconds after).
+    /// </summary>
+    private bool Follow()
+    {
+        var dt = _sinceFollow.IsRunning ? Math.Min(0.5, _sinceFollow.Elapsed.TotalSeconds) : 0.25;
+        _sinceFollow.Restart();
+        if (MomentChoice.Kind != MomentKind.Person || DateTime.UtcNow - _lookedAt < TimeSpan.FromSeconds(4)) return false;
+        if (PersonDirection(MomentChoice.PersonIds) is not { } target) return false;
         var dyaw = ((target.Yaw - View.Yaw) % 360 + 540) % 360 - 180;
         var dpitch = target.Pitch - View.Pitch;
-        if (Math.Abs(dyaw) < 2 && Math.Abs(dpitch) < 2) return;
-        View.Look(View.Yaw + dyaw * 0.35, View.Pitch + dpitch * 0.35, View.Fov);
-        Render360();
+        if (Math.Abs(dyaw) < 0.2 && Math.Abs(dpitch) < 0.2) return false;
+        // Most of the way within a quarter of a second, whatever the frame rate: quick, without a jerk.
+        var part = 1 - Math.Exp(-dt / 0.2);
+        View.Look(View.Yaw + dyaw * part, View.Pitch + dpitch * part, View.Fov);
+        return true;
     }
 
     /// <summary>Where on the sphere one of these people is now (the center of their box), from the stored paths.</summary>
     private (double Yaw, double Pitch)? PersonDirection(IReadOnlyList<long> personIds)
     {
         if (_pathsOf != Current.Item.Id) LoadPaths();
-        var now = (int)NowMs;
-        var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
+        var now = (int)SmoothNowMs;
+        (double, double)? nearest = null;
+        var nearestMs = 5000;
         foreach (var (track, path) in _paths)
         {
-            var who = _detections.FirstOrDefault(d => d.Track == track && (d.PersonId ?? d.SuggestPersonId) is { } p && personIds.Contains(p));
-            if (who == null || Where(path, now, Math.Max(interval, 2000)) is not { } b) continue;
-            return Fisheye360.FromEquirect(b.X + b.W / 2, b.Y + b.H / 2);
+            if (!_detections.Any(d => d.Track == track && (d.PersonId ?? d.SuggestPersonId) is { } p && personIds.Contains(p))) continue;
+            // On the way between two analyzed frames, also when the analysis lost the person for a while in between.
+            var after = path.FindIndex(p => p.TimeMs >= now);
+            if (after > 0)
+            {
+                var (p0, p1) = (path[after - 1], path[after]);
+                var b = Between(p0, p1, (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs));
+                return Fisheye360.FromEquirect(b.X + b.W / 2, b.Y + b.H / 2);
+            }
+            // Before the first or after the last sight of them (a few seconds): where they were then.
+            var edge = after == 0 ? path[0] : path[^1];
+            if (Math.Abs(edge.TimeMs - now) >= nearestMs) continue;
+            nearestMs = Math.Abs(edge.TimeMs - now);
+            nearest = Fisheye360.FromEquirect(edge.X + edge.W / 2, edge.Y + edge.H / 2);
         }
-        return null;
+        return nearest;
     }
 
     private long _pathsOf = -1;

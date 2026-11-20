@@ -585,6 +585,17 @@ public partial class MainWindow : Window
 
     private async void OnReviewOther(object? sender, RoutedEventArgs e) => await ReviewOtherAsync();
 
+    private async void OnFacesSomeoneElse(object? sender, RoutedEventArgs e)
+    {
+        if (!_vm.People.AnyCropSelected)
+        {
+            await Dialogs.InfoAsync(this, "It is someone else", "Click the pictures that are another person first (Ctrl or Shift selects more), then this button.");
+            return;
+        }
+        var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.People.PersonNames());
+        if (!string.IsNullOrWhiteSpace(name)) _vm.People.MoveSelectedTo(name);
+    }
+
     private async Task ReviewOtherAsync()
     {
         if (_vm == null) return;

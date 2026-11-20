@@ -26,7 +26,9 @@ and then work offline. Windows, Linux and macOS.
 - **360 photos and videos** (Insta360 .insv / .insp originals): drag to look around, the wheel zooms; the search
   and the people analysis look at six views around, and with only someone's moments the view turns to them.
   The camera's gyroscope and accelerometer (in the file's trailer) level the picture: the horizon stays level and
-  people upright however the selfie stick is held, also for the analysis. Two 4K fisheye streams do not decode in
+  people upright however the selfie stick is held, also for the analysis. Somebody riding away is looked at
+  closer (a narrow view from the lenses at full detail) and lost pieces of their way are joined, so the view can
+  follow one person through a whole run. Two 4K fisheye streams do not decode in
   real time everywhere, so a light playing copy (one leveled 2880 x 1440 picture, encoded with the graphics card
   where ffmpeg has one) is made in the background, or first when a video is opened, with its progress and a Stop.
 - **Apple Photos** (macOS): with "Download Originals to this Mac" the originals of the Photos library are

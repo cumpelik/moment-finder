@@ -480,6 +480,7 @@
                 <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
                     <TextBlock Classes="muted" Text="{Binding People.PersonSummary}" TextWrapping="Wrap" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                        <Button Click="OnFacesSomeoneElse" ToolTip.Tip="The selected pictures are another person: say who">It is someone else...</Button>
                         <Button Command="{Binding People.RejectSelectedCommand}">Not this person</Button>
                         <Button Command="{Binding People.ConfirmSelectedCommand}">Confirm</Button>
                         <Button Command="{Binding People.SetCoverCommand}">Use as picture</Button>

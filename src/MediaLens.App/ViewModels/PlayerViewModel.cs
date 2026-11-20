@@ -436,8 +436,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var (p0, p1) = (before.Path[^1], after.Path[0]);
             if (p1.TimeMs - p0.TimeMs > bridge || now < p0.TimeMs) continue;
             var t = (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs);
-            if (Box(before.Who, p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t, null)
-                is { } bridged) boxes.Add(bridged);
+            var mid = Between(p0, p1, t);
+            if (Box(before.Who, mid.X, mid.Y, mid.W, mid.H, null) is { } bridged) boxes.Add(bridged);
         }
         foreach (var (path, who) in tracks.Where(t => t.Who.PersonId == null))
         {
@@ -448,7 +448,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Where a track is at a time: between two analyzed frames moved proportionally, around one held briefly.</summary>
-    private static (float X, float Y, float W, float H)? Where(List<People.TrackBox> path, int now, int interval)
+    private (float X, float Y, float W, float H)? Where(List<People.TrackBox> path, int now, int interval)
     {
         var after = path.FindIndex(p => p.TimeMs >= now);
         if (after == 0 || after < 0)
@@ -457,13 +457,25 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return Math.Abs(edge.TimeMs - now) <= interval / 2 ? (edge.X, edge.Y, edge.W, edge.H) : null;
         }
         var (p0, p1) = (path[after - 1], path[after]);
-        if (p1.TimeMs - p0.TimeMs > interval * 2)
+        // A 360 video: a person far away is found only now and then, and directions hold still, so the box goes
+        // on between two sightings some seconds apart.
+        if (p1.TimeMs - p0.TimeMs > (Is360 ? Math.Max(interval * 2, 8000) : interval * 2))
         {
             var near = now - p0.TimeMs < p1.TimeMs - now ? p0 : p1;
             return Math.Abs(near.TimeMs - now) <= interval / 2 ? (near.X, near.Y, near.W, near.H) : null;
         }
         var t = (float)(now - p0.TimeMs) / Math.Max(1, p1.TimeMs - p0.TimeMs);
-        return (p0.X + (p1.X - p0.X) * t, p0.Y + (p1.Y - p0.Y) * t, p0.W + (p1.W - p0.W) * t, p0.H + (p1.H - p0.H) * t);
+        return Between(p0, p1, t);
+    }
+
+    /// <summary>A box on the way from one to the other; on a 360 map the short way, across the seam behind the camera.</summary>
+    private (float X, float Y, float W, float H) Between(People.TrackBox p0, People.TrackBox p1, float t)
+    {
+        var w = p0.W + (p1.W - p0.W) * t;
+        var dx = p1.X + p1.W / 2 - (p0.X + p0.W / 2);
+        if (Is360 && dx > 0.5f) dx -= 1;
+        else if (Is360 && dx < -0.5f) dx += 1;
+        return (p0.X + p0.W / 2 + dx * t - w / 2, p0.Y + (p1.Y - p0.Y) * t, w, p0.H + (p1.H - p0.H) * t);
     }
 
     /// <summary>A box in content pixels; for 360 media from the map into the current view, null when not in it.</summary>
@@ -475,6 +487,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (_view360 is not { } view ||
                 Media.Fisheye360.EquirectBoxToView(view.Yaw, view.Pitch, view.Fov, view.Width, view.Height, x, y, w, h) is not { } r) return null;
             (bx, by, bw, bh) = r;
+            // A box larger than the view (who holds the camera, somebody right at it) is only lines across the
+            // picture, and so is one that is mostly outside: not drawn; zooming out shows it.
+            var inside = Math.Max(0, Math.Min(bx + bw, view.Width) - Math.Max(bx, 0)) * Math.Max(0, Math.Min(by + bh, view.Height) - Math.Max(by, 0));
+            if (bw > view.Width * 0.6 || inside < bw * bh * 0.3) return null;
         }
         var who = d.PersonId == null && face?.PersonId != null ? face : d;
         var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :

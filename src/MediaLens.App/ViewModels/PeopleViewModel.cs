@@ -364,7 +364,7 @@ public sealed partial class PeopleViewModel : ObservableObject
             PersonCrops.Add(crop);
         }
         PersonSummary = $"{Person.Name}: {rows.Count(r => r.Kind == DetectionKind.Face)} faces, {rows.Count(r => r.Kind == DetectionKind.Body)} figures. " +
-                        "Select the wrong ones and press Not this person (Delete).";
+                        "Select the wrong ones: It is someone else says who they are, Not this person (Delete) only takes them away.";
     }
 
     [RelayCommand]
@@ -376,6 +376,18 @@ public sealed partial class PeopleViewModel : ObservableObject
         _host.People.Reject(selected.Select(c => c.DetectionId), Person.Id);
         foreach (var c in selected) PersonCrops.Remove(c);
         AfterChange();
+    }
+
+    public bool AnyCropSelected => PersonCrops.Any(c => c.IsSelected);
+
+    /// <summary>The selected pictures are somebody else: they go to that person (on the whole track of a video).</summary>
+    public void MoveSelectedTo(string name)
+    {
+        if (Person == null || string.IsNullOrWhiteSpace(name)) return;
+        var selected = PersonCrops.Where(c => c.IsSelected).ToList();
+        if (selected.Count == 0) return;
+        foreach (var c in selected) NameDetection(c.DetectionId, name);
+        LoadPerson(Person.Id);
     }
 
     [RelayCommand]

@@ -84,6 +84,88 @@ public sealed class PeopleAnalyzer
         return kept;
     }
 
+    // ---- 360: a closer look at people who ride away ----
+
+    private const int LensZoomSize = 2880;
+    private const int ZoomViewSize = 768;
+    private const double ZoomFov = 36;
+    /// <summary>A body lower than this part of the map's height (about 12 degrees) is looked at closer.</summary>
+    private const float SmallBody = 0.07f;
+    private const int MaxZooms = 6;
+
+    /// <summary>Somebody seen lately in a 360 video: where on the map, how many frames ago, how large at most.</summary>
+    private sealed class Followed
+    {
+        public float U, V, Peak;
+        public int Missed;
+    }
+
+    /// <summary>Degrees between two points of the map (0..1), across the seam too.</summary>
+    private static double Apart(double u0, double v0, double u1, double v1)
+    {
+        var du = Math.Abs(u0 - u1) % 1;
+        if (du > 0.5) du = 1 - du;
+        var dv = v0 - v1;
+        return Math.Sqrt(du * 360 * du * 360 + dv * 180 * dv * 180);
+    }
+
+    /// <summary>
+    /// The six views around see a skier only to some distance: in the frame where a person seen before got small
+    /// or was not found any more, a narrow view (like a telephoto lens, from the lenses at full detail) is pointed
+    /// where they were. What it finds joins the frame; a small box of the same person is replaced by the closer look.
+    /// </summary>
+    private List<DetectedObject> LookCloser(List<DetectedObject> found, List<Followed> followed, FFmpeg.DualFrame frame, LensModel model, Rot3? level)
+    {
+        static (float U, float V) Center(DetectedObject d) => (d.Box.CenterX / EquirectWidth % 1, d.Box.CenterY / EquirectHeight);
+        var centers = new List<(float U, float V)>();
+        foreach (var f in followed.OrderByDescending(f => f.Peak))
+        {
+            var seen = found.Where(d => d.Kind == DetectionKind.Body && !d.Weak).Select(d => (d, c: Center(d)))
+                .Where(x => Apart(x.c.U, x.c.V, f.U, f.V) < 10).OrderByDescending(x => x.d.Box.H).FirstOrDefault();
+            if (seen.d != null && seen.d.Box.H / EquirectHeight >= SmallBody) continue;
+            if (centers.Any(c => Apart(c.U, c.V, f.U, f.V) < ZoomFov / 4)) continue;
+            centers.Add((f.U, f.V));
+            if (centers.Count == MaxZooms) break;
+        }
+        if (centers.Count > 0)
+        {
+            var big0 = RgbImage.Load(frame.Lens0, LensZoomSize);
+            var big1 = RgbImage.Load(frame.Lens1, LensZoomSize);
+            foreach (var (cu, cv) in centers)
+            {
+                var (yaw, pitch) = Fisheye360.FromEquirect(cu, cv);
+                var view = Fisheye360.RenderView(big0, big1, yaw, pitch, ZoomFov, ZoomViewSize, ZoomViewSize, model, level);
+                foreach (var d in _model.Analyze(view, includeWeak: true))
+                {
+                    // Cut by the edge of the narrow view: half a person, the wide views know better.
+                    if (d.Box.X < 2 || d.Box.Y < 2 || d.Box.Right > ZoomViewSize - 2 || d.Box.Bottom > ZoomViewSize - 2) continue;
+                    var (u, v, w, h) = Fisheye360.ViewBoxToEquirect(yaw, pitch, ZoomFov, ZoomViewSize, ZoomViewSize, d.Box.X, d.Box.Y, d.Box.W, d.Box.H);
+                    var closer = new DetectedObject
+                    {
+                        Kind = d.Kind, Box = new Box(u * EquirectWidth, v * EquirectHeight, w * EquirectWidth, h * EquirectHeight),
+                        Score = d.Score, Quality = d.Quality, Embedding = d.Embedding, Crop = d.Crop, Weak = d.Weak,
+                    };
+                    var same = found.FindIndex(k => k.Kind == d.Kind && Fisheye360.WrappedIou(k.Box, closer.Box, EquirectWidth) > 0.3f);
+                    if (same < 0) found.Add(closer);
+                    else if (found[same].Box.H / EquirectHeight < SmallBody * 1.5f && (!closer.Weak || found[same].Weak)) found[same] = closer;
+                }
+            }
+        }
+        // Who to look for in the next frame: everybody found now, and those missing for a few frames where they were.
+        foreach (var f in followed) f.Missed++;
+        foreach (var d in found.Where(d => d.Kind == DetectionKind.Body))
+        {
+            var (u, v) = Center(d);
+            var size = d.Box.H / EquirectHeight;
+            var known = followed.Where(f => Apart(f.U, f.V, u, v) < 10).OrderBy(f => Apart(f.U, f.V, u, v)).FirstOrDefault();
+            if (known != null) (known.U, known.V, known.Missed, known.Peak) = (u, v, 0, Math.Max(known.Peak, size));
+            // The dots in the distance that never came near are not followed.
+            else if (!d.Weak && size >= 0.05f) followed.Add(new Followed { U = u, V = v, Peak = size });
+        }
+        followed.RemoveAll(f => f.Missed > 6);
+        return found;
+    }
+
     private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, int width, int height, int timeMs, int[]? tracks)
     {
         var list = new List<(NewDetection, RgbImage?)>();
@@ -137,13 +219,16 @@ public sealed class PeopleAnalyzer
             if (Fisheye360.IsDualFisheye(source))
             {
                 // Keyframes only (two 4K streams); six views per moment.
-                foreach (var frame in await FFmpeg.ExtractDualFramesAsync(source, interval, 90, dir, Lens360Size, ct))
+                var followed = new List<Followed>();
+                foreach (var frame in await FFmpeg.ExtractDualFramesAsync(source, interval, 90, dir, LensZoomSize, ct))
                 {
                     ct.ThrowIfCancellationRequested();
                     var lens0 = await Task.Run(() => RgbImage.Load(frame.Lens0, Lens360Size), ct);
                     var lens1 = await Task.Run(() => RgbImage.Load(frame.Lens1, Lens360Size), ct);
-                    var found = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: true, Fisheye360.ModelOf(source),
-                        Fisheye360.LevelAt(source, frame.TimeMs / 1000.0)), ct);
+                    var model = Fisheye360.ModelOf(source);
+                    var level = Fisheye360.LevelAt(source, frame.TimeMs / 1000.0);
+                    var found = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: true, model, level), ct);
+                    found = await Task.Run(() => LookCloser(found, followed, frame, model, level), ct);
                     perFrame.Add((frame.TimeMs, EquirectWidth, EquirectHeight, found));
                 }
             }
@@ -161,6 +246,9 @@ public sealed class PeopleAnalyzer
             }
 
             var tracks = VideoTracker.Track(perFrame.Select(f => f.Found).ToList());
+            // Around a 360 camera directions stay put (the picture is leveled): a person lost for a few seconds and
+            // found again near there in the same clothes is the same person.
+            if (Fisheye360.IsDualFisheye(source)) VideoTracker.Stitch(perFrame.Select(f => f.Found).ToList(), tracks, EquirectWidth);
             // Weak detections that continue nobody are dropped (a shadow, a snow cannon at low confidence).
             for (var f = 0; f < perFrame.Count; f++)
             {
@@ -320,6 +408,53 @@ public static class VideoTracker
             result.Add(ids);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Pieces of one person's way joined: a track that begins a few frames after another one ended, near where it
+    /// ended (on a map mapWidth wide that wraps around), in the same clothes and about the same size.
+    /// </summary>
+    public static void Stitch(IReadOnlyList<IReadOnlyList<DetectedObject>> frames, List<int[]> tracks, float mapWidth)
+    {
+        const int maxGap = 8;
+        var ends = new Dictionary<int, (int First, int Last, DetectedObject Start, DetectedObject End)>();
+        for (var f = 0; f < frames.Count; f++)
+            for (var i = 0; i < frames[f].Count; i++)
+            {
+                var (id, d) = (tracks[f][i], frames[f][i]);
+                if (id == 0 || d.Kind != DetectionKind.Body) continue;
+                // The appearance of a weak view is not trusted: the ends are the strong detections where there are any.
+                if (!ends.TryGetValue(id, out var e)) ends[id] = (f, f, d, d);
+                else ends[id] = (e.First, f, e.Start.Weak && !d.Weak ? d : e.Start, d.Weak && !e.End.Weak && f - e.Last <= 2 ? e.End : d);
+            }
+        var joined = new Dictionary<int, int>();
+        foreach (var (id, part) in ends.OrderBy(e => e.Value.First))
+        {
+            var best = (Sim: 0f, Into: 0);
+            foreach (var (other, before) in ends)
+            {
+                var gap = part.First - before.Last;
+                if (other == id || joined.ContainsKey(other) || gap < 1 || gap > maxGap) continue;
+                var dx = Math.Abs(part.Start.Box.CenterX - before.End.Box.CenterX) % mapWidth;
+                if (dx > mapWidth / 2) dx = mapWidth - dx;
+                var dy = part.Start.Box.CenterY - before.End.Box.CenterY;
+                // Degrees on a 360 map: a person moves a little between the frames, not across the picture.
+                var apart = MathF.Sqrt(dx * dx + dy * dy) * 360 / mapWidth;
+                if (apart > 12 + 3 * gap) continue;
+                var size = MathF.Sqrt(part.Start.Box.W * part.Start.Box.H / MathF.Max(1, before.End.Box.W * before.End.Box.H));
+                if (size < 0.33f || size > 3f) continue;
+                var sim = TensorPrimitives.Dot(part.Start.Embedding, before.End.Embedding);
+                if (sim >= 0.6f && sim > best.Sim) best = (sim, other);
+            }
+            if (best.Into == 0) continue;
+            joined[id] = best.Into;
+            var into = ends[best.Into];
+            ends[best.Into] = (into.First, part.Last, into.Start, part.End);
+        }
+        if (joined.Count == 0) return;
+        foreach (var ids in tracks)
+            for (var i = 0; i < ids.Length; i++)
+                if (joined.TryGetValue(ids[i], out var into)) ids[i] = into;
     }
 
     /// <summary>The centers within the larger side of the earlier box: the same place, give or take a fall.</summary>

@@ -260,7 +260,8 @@ public partial class PlayerView : UserControl
             else
             {
                 label.ClearValue(Canvas.BottomProperty);
-                Canvas.SetTop(label, box.Y + 4 * scale);
+                // A box reaching above the picture (somebody close to a 360 camera) keeps its name in sight.
+                Canvas.SetTop(label, Math.Max(box.Y, 0) + 4 * scale);
             }
         }
         foreach (var gone in _boxes.Keys.Where(k => !seen.Contains(k)).ToList())
