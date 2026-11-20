@@ -590,12 +590,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var initial = !VideoHighlightsOnly ? whole
             : personIds.Count > 0 ? choices.FirstOrDefault(c => c.Kind == MomentKind.Person && c.PersonIds.SequenceEqual(personIds)) ?? whole
             : hasText ? choices.First(c => c.Kind == MomentKind.Match) : whole;
-        return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume), this,
+        return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume, _playbackRate, _loopVideos), this,
             videoIds.Count > 0 ? choices : [whole], initial);
     }
 
     /// <summary>The viewer's volume, kept for the next time.</summary>
     public int Volume => int.TryParse(_host.Db.GetSetting("volume"), CultureInfo.InvariantCulture, out var v) ? v : 80;
+
+    private double _playbackRate = 1;
+    private bool _loopVideos;
+
+    /// <summary>Slow motion and loop stay for the next viewer while the app runs (an analysis goes over several videos).</summary>
+    public void RememberPlayback(double rate, bool loop) => (_playbackRate, _loopVideos) = (rate, loop);
 
     public void SaveVolume(int volume) => _host.Db.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
 

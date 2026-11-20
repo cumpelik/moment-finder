@@ -14,7 +14,8 @@ namespace MediaLens.App.ViewModels;
 /// <summary>An item to show; for a video found by a description, the part that matches.</summary>
 public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? MatchMoments = null);
 
-public sealed record PlayerSettings(int SlideSeconds, int Volume);
+/// <summary>Rate and Loop: what the previous viewer had, so an analysis session keeps them.</summary>
+public sealed record PlayerSettings(int SlideSeconds, int Volume, double Rate = 1, bool Loop = false);
 
 public enum MomentKind { Whole, Match, Person }
 
@@ -119,6 +120,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _index = index;
         _autoPlay = autoPlay;
         _volume = settings.Volume;
+        _rate = settings.Rate;
+        _loop = settings.Loop;
         MomentChoices = momentChoices;
         _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
@@ -173,7 +176,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             if (_video == null)
             {
-                _video = new VideoPlayer { Volume = Volume };
+                _video = new VideoPlayer { Volume = Volume, Rate = (float)Rate };
                 _video.FrameUpdated += () => VideoFrameChanged?.Invoke();
                 _video.Ended += OnVideoEnded;
                 _video.Started += EndLoading;
@@ -188,6 +191,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             if (Cloud.MediaFiles.IsLocal(item))
             {
+                _playingPath = item.FullPath;
                 _video.Play(item.FullPath, StartOf(entry));
                 // Opened to say who someone is (from Who is this): a still picture at that moment.
                 if (PauseOnOpen)
@@ -345,6 +349,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
             if (version != _loadVersion || _video == null) return;
             Error = null;
+            _playingPath = path;
             _video.Play(path, StartOf(entry));
             _positionTimer.Start();
         }
@@ -416,6 +421,16 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVideoEnded()
     {
+        // Loop: the same video (or its first moment) again.
+        if (Loop && _video != null && _playingPath != null)
+        {
+            _moment = 0;
+            _insideMoment = false;
+            MomentText = MomentLabel();
+            _video.Play(_playingPath, StartOf(Current));
+            IsRunning = true;
+            return;
+        }
         if (AutoPlay) Next();
     }
 
@@ -447,6 +462,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (++_moment < moments.Count)
         {
             _video.Seek(moments[_moment].StartMs);
+            MomentText = MomentLabel();
+        }
+        else if (Loop)
+        {
+            // Loop: the moments of this video again from the first one.
+            _moment = 0;
+            _video.Seek(moments[0].StartMs);
             MomentText = MomentLabel();
         }
         else if (AutoPlay) Next();
@@ -500,6 +522,54 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     public void BeginSeek() => _seeking = true;
 
     public void ChangeVolume(int delta) => Volume = Math.Clamp(Volume + delta, 0, 100);
+
+    // ---- slow motion, loop, frame by frame (looking at a technique) ----
+
+    private static readonly double[] Rates = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2];
+    private string? _playingPath;
+
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(RateText), nameof(IsSlowOrFast))] private double _rate = 1;
+    /// <summary>The video (or the person's moments in it) plays again and again.</summary>
+    [ObservableProperty] private bool _loop;
+
+    public string RateText => Rate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "\u00d7";
+    public bool IsSlowOrFast => Rate != 1;
+
+    partial void OnRateChanged(double value)
+    {
+        if (_video != null) _video.Rate = (float)value;
+        _main.RememberPlayback(value, Loop);
+    }
+
+    partial void OnLoopChanged(bool value) => _main.RememberPlayback(Rate, value);
+
+    [RelayCommand]
+    private void SetRate(string rate) =>
+        Rate = double.Parse(rate, System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The next slower or faster speed ([ and ]).</summary>
+    public void StepRate(int direction)
+    {
+        var i = Array.IndexOf(Rates, Rate);
+        if (i < 0) i = Array.IndexOf(Rates, 1.0);
+        Rate = Rates[Math.Clamp(i + direction, 0, Rates.Length - 1)];
+    }
+
+    [RelayCommand]
+    public void ToggleLoop() => Loop = !Loop;
+
+    /// <summary>One frame further (.); pauses first.</summary>
+    [RelayCommand]
+    public void NextFrame()
+    {
+        if (!IsVideo || _video == null) return;
+        if (IsRunning)
+        {
+            _video.Pause();
+            IsRunning = false;
+        }
+        _video.NextFrame();
+    }
 
     private int _volumeBeforeMute = 70;
 

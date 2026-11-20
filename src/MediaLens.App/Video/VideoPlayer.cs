@@ -124,6 +124,7 @@ public sealed class VideoPlayer : IDisposable
         {
             _active = generation;
             _player.Play(media);
+            _player.SetRate(_rate);
             old?.Dispose();
         });
     }
@@ -146,6 +147,21 @@ public sealed class VideoPlayer : IDisposable
     }
 
     private volatile bool _pauseOnFrame;
+    private float _rate = 1;
+
+    /// <summary>Playback speed (0.1 to 2): slow motion for looking at a technique. Kept for the next videos.</summary>
+    public float Rate
+    {
+        get => _rate;
+        set
+        {
+            _rate = value;
+            Run(() => _player.SetRate(value));
+        }
+    }
+
+    /// <summary>One frame further, while paused.</summary>
+    public void NextFrame() => Run(_player.NextFrame);
 
     /// <summary>Pauses now, or on the first frame of a video that is just starting (not before, the picture would stay black).</summary>
     public void Pause()
@@ -245,6 +261,9 @@ public sealed class VideoPlayer : IDisposable
         if (_starting)
         {
             _starting = false;
+            // A new video may start at normal speed: the chosen one again.
+            var rate = _rate;
+            if (rate != 1) Run(() => _player.SetRate(rate));
             Started?.Invoke();
         }
         if (_pauseOnFrame)

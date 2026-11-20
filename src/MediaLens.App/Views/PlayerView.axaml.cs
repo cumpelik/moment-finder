@@ -194,6 +194,10 @@ public partial class PlayerView : UserControl
             case Key.Space: _vm.TogglePlay(); ShowOverlay(); break;
             case Key.B: _vm.AddToBucket(); ShowOverlay(); break;
             case Key.I: _vm.ShowPeople = !_vm.ShowPeople; break;
+            case Key.OemOpenBrackets: _vm.StepRate(-1); ShowOverlay(); break;
+            case Key.OemCloseBrackets: _vm.StepRate(1); ShowOverlay(); break;
+            case Key.L: _vm.ToggleLoop(); ShowOverlay(); break;
+            case Key.OemPeriod: _vm.NextFrame(); ShowOverlay(); break;
             case Key.Up: _vm.ChangeVolume(10); break;
             case Key.Down: _vm.ChangeVolume(-10); break;
             default: return false;

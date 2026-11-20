@@ -213,6 +213,18 @@ public partial class MainWindow : Window
             case Key.Space when _panelPlayer != null:
                 _panelPlayer.TogglePlay();
                 break;
+            case Key.OemOpenBrackets when _panelPlayer != null:
+                _panelPlayer.StepRate(-1);
+                break;
+            case Key.OemCloseBrackets when _panelPlayer != null:
+                _panelPlayer.StepRate(1);
+                break;
+            case Key.L when _panelPlayer != null:
+                _panelPlayer.ToggleLoop();
+                break;
+            case Key.OemPeriod when _panelPlayer != null:
+                _panelPlayer.NextFrame();
+                break;
             case Key.I when _panelPlayer != null:
                 _panelPlayer.ShowPeople = !_panelPlayer.ShowPeople;
                 break;
