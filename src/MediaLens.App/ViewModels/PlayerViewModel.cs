@@ -215,9 +215,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             if (Cloud.MediaFiles.IsLocal(item))
             {
-                _playingPath = item.FullPath;
-                if (Is360) Start360(item, item.FullPath, version);
-                _video.Play(item.FullPath, TakeStart(entry));
+                _playingPath = Is360 ? Path360(item, item.FullPath, version) : item.FullPath;
+                _video.Play(_playingPath, TakeStart(entry));
                 HoldIfWanted();
                 _positionTimer.Start();
             }
@@ -491,9 +490,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
             if (version != _loadVersion || _video == null) return;
             Error = null;
-            _playingPath = path;
-            if (Is360) Start360(entry.Item, path, version);
-            _video.Play(path, TakeStart(entry));
+            _playingPath = Is360 ? Path360(entry.Item, path, version) : path;
+            _video.Play(_playingPath, TakeStart(entry));
             HoldIfWanted();
             _positionTimer.Start();
         }

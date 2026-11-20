@@ -22,6 +22,7 @@ public sealed class AppPaths
         Directory.CreateDirectory(ThumbDir);
         Directory.CreateDirectory(VectorDir);
         Directory.CreateDirectory(CacheDir);
+        Media.Proxy360.Dir = Path.Combine(CacheDir, "360");
         Directory.CreateDirectory(ModelDir);
     }
 

@@ -25,8 +25,9 @@ and then work offline. Windows, Linux and macOS.
   with each mirror run; Import names brings it into another library, matched by file content.
 - **360 photos and videos** (Insta360 .insv / .insp originals): drag to look around, the wheel zooms; the search
   and the people analysis look at six views around, and with only someone's moments the view turns to them.
-  The second lens of a video is copied into a file of its own on first opening (libVLC plays only the first video
-  stream), kept in a size-limited cache.
+  Two 4K fisheye streams do not decode in real time without a graphics card, so a light playing copy (both lenses
+  side by side, 1536 px each, about a sixth of the size) is made in the background, or first when a video is opened;
+  until it is there the front lens plays. The copies are kept up to 20 GB.
 - **Apple Photos** (macOS): with "Download Originals to this Mac" the originals of the Photos library are
   regular files; Sources + offers the library (needs the Photos or Full Disk Access permission).
 

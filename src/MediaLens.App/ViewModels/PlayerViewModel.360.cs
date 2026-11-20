@@ -17,54 +17,81 @@ public sealed partial class PlayerViewModel
     /// <summary>The look-around picture: wide, the Viewbox fits it to the panel or the screen.</summary>
     private View360 View => _view360 ??= new View360(1600, 900);
 
-    /// <summary>The first lens of a 360 video (with the sound); the second joins when its file is ready.</summary>
+    /// <summary>A player of a 360 video: its frames go to the look-around view, not to a bitmap.</summary>
     private VideoPlayer New360Player()
     {
-        var first = new VideoPlayer { RawFrames = true, Volume = Volume, Rate = (float)Rate };
-        first.RawFrame += (pixels, w, h) => Lens(0, pixels, w, h);
-        return first;
+        var player = new VideoPlayer { RawFrames = true, Volume = Volume, Rate = (float)Rate };
+        player.RawFrame += OnFrame360;
+        return player;
     }
+
+    /// <summary>Playing the light copy (both lenses side by side) instead of the original's first lens.</summary>
+    private bool _playsProxy;
 
     /// <summary>
-    /// A 360 video opens with its first lens at once; the second is copied into a file of its own (libVLC plays
-    /// only the first video stream) and then plays silently in step.
+    /// What a 360 video plays: its light copy when it is there; otherwise the original's first lens (the view behind
+    /// the camera stays dark) while the copy is made, then the copy from the same moment.
     /// </summary>
-    private void Start360(Library.MediaItem item, string path, int version)
+    private string Path360(Library.MediaItem item, string original, int version)
     {
-        if (_video is not { } first) return;
-        first.Partner?.Dispose();
-        first.Partner = null;
-        first.PartnerPath = null;
         View.ClearLens(1);
-        Lens360Text = "Preparing the view behind the camera...";
-        _ = AttachSecondLensAsync(item, path, version);
+        if (Media.Proxy360.Ready(item) is { } proxy)
+        {
+            _playsProxy = true;
+            Lens360Text = "";
+            return proxy;
+        }
+        _playsProxy = false;
+        Lens360Text = "Preparing smooth 360 playing (the view behind the camera follows)...";
+        _ = SwitchToProxyAsync(item, version);
+        return original;
     }
 
-    private async Task AttachSecondLensAsync(Library.MediaItem item, string path, int version)
+    private async Task SwitchToProxyAsync(Library.MediaItem item, int version)
     {
-        var file = await SecondLens.GetAsync(item, path);
-        if (version != _loadVersion || _video is not { } first || file == null)
+        var proxy = await Media.Proxy360.GetAsync(item);
+        if (version != _loadVersion || _video is not { } player) return;
+        if (proxy == null)
         {
-            if (version == _loadVersion) Lens360Text = "";
+            Lens360Text = "";
             return;
         }
-        var second = new VideoPlayer { NoAudio = true, RawFrames = true, Rate = (float)Rate };
-        second.RawFrame += (pixels, w, h) => Lens(1, pixels, w, h);
-        first.Partner = second;
-        first.PartnerPath = file;
-        second.Play(file, NowMs);
-        if (!IsRunning) second.Pause();
+        var wasRunning = IsRunning;
+        _playsProxy = true;
+        _playingPath = proxy;
         Lens360Text = "";
+        player.Play(proxy, NowMs);
+        if (!wasRunning) player.Pause();
     }
 
-    /// <summary>While the second lens is being prepared (a few seconds the first time).</summary>
+    private void OnFrame360(byte[] pixels, int width, int height)
+    {
+        if (!_playsProxy)
+        {
+            Lens(0, pixels, width, height);
+            return;
+        }
+        // Both lenses side by side.
+        var half = width / 2;
+        foreach (var lens in new[] { 0, 1 })
+        {
+            if (_split.Length != half * height * 4) _split = new byte[half * height * 4];
+            for (var y = 0; y < height; y++)
+                Buffer.BlockCopy(pixels, (y * width + lens * half) * 4, _split, y * half * 4, half * 4);
+            View.SetLens(lens, _split, half, height);
+        }
+        Render360();
+    }
+
+    private byte[] _split = [];
+
+    /// <summary>While the light copy is being made (the first time a 360 video is opened).</summary>
     [ObservableProperty] private string _lens360Text = "";
 
     private void Lens(int lens, byte[] pixels, int width, int height)
     {
         View.SetLens(lens, pixels, width, height);
-        // The first lens drives the picture; the second only when standing (a seek, a paused video).
-        if (lens == 0 || !IsRunning) Render360();
+        Render360();
     }
 
     private void Render360()
@@ -93,8 +120,7 @@ public sealed partial class PlayerViewModel
     /// </summary>
     private void Keep360InStep()
     {
-        if (!Is360 || _video?.Partner is not { } second) return;
-        if (_video.IsPlaying && second.IsPlaying && Math.Abs(second.TimeMs - _video.TimeMs) > 150) second.Seek(_video.TimeMs);
+        if (!Is360 || _video == null) return;
         if (MomentChoice.Kind != MomentKind.Person || DateTime.UtcNow - _lookedAt < TimeSpan.FromSeconds(4)) return;
         if (PersonDirection(MomentChoice.PersonIds) is not { } target) return;
         var dyaw = ((target.Yaw - View.Yaw) % 360 + 540) % 360 - 180;

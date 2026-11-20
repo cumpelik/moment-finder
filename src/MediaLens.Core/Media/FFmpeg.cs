@@ -235,16 +235,21 @@ public static class FFmpeg
     }
 
     /// <summary>
-    /// One video stream copied into a file of its own (no re-encoding, as fast as the disk): libVLC plays only the
-    /// first video stream of an Insta360 file, the second lens is played from this copy.
+    /// A light copy of a 360 video for playing: both lenses side by side at 1536 px each in one H.264 stream (about a
+    /// sixth of the original's size). Two 4K HEVC streams do not decode in real time without a graphics card; this
+    /// one plays anywhere. Made with hardware decoding where there is some.
     /// </summary>
-    public static async Task<bool> CopyVideoStreamAsync(string file, int stream, string outFile, CancellationToken ct = default)
+    public static async Task<bool> Make360ProxyAsync(string file, string outFile, CancellationToken ct = default)
     {
         if (FfmpegPath.Value is not { } ffmpeg) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
-        var tmp = outFile + ".part";
+        var tmp = outFile + ".part.mp4";
         var (code, _, _) = await RunAsync(ffmpeg,
-            ["-v", "error", "-y", "-i", file, "-map", $"0:v:{stream}", "-c", "copy", "-f", "mp4", tmp], ct);
+        [
+            "-v", "error", "-y", "-hwaccel", "auto", "-i", file,
+            "-filter_complex", "[0:v:0]scale=1536:1536[a];[0:v:1]scale=1536:1536[b];[a][b]hstack",
+            "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-g", "25", "-c:a", "copy", tmp,
+        ], ct);
         if (code != 0 || !File.Exists(tmp)) return false;
         File.Move(tmp, outFile, true);
         return true;

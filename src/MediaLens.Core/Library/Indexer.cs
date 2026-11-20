@@ -167,7 +167,26 @@ public sealed class Indexer : IDisposable
             await Task.Run(() => _identity.Recompute(), ct);
             return true;
         }
+        if (Proxies360 && await Proxy360BatchAsync(ct)) return true;
         return false;
+    }
+
+    /// <summary>The app makes light playing copies of 360 videos when everything else is done (not the command line).</summary>
+    public bool Proxies360 { get; set; }
+
+    private readonly HashSet<long> _proxyFailed = [];
+
+    /// <summary>One 360 video without its playing copy, the newest first, while the copies have room.</summary>
+    private async Task<bool> Proxy360BatchAsync(CancellationToken ct)
+    {
+        if (!Proxy360.HasRoom) return false;
+        var all360 = _repo.Query(new MediaFilter { Kind = MediaKind.Video })
+            .Where(v => Fisheye360.IsDualFisheye(v.RelPath) && Cloud.MediaFiles.IsLocal(v)).ToList();
+        var videos = all360.Where(v => !_proxyFailed.Contains(v.Id) && Proxy360.Ready(v) == null).ToList();
+        if (videos.Count == 0) return false;
+        Report(new IndexerStatus(IndexerPhase.Analysis, "Preparing 360 videos for smooth playing", all360.Count - videos.Count, all360.Count, false));
+        if (await Proxy360.GetAsync(videos[0], ct) == null) _proxyFailed.Add(videos[0].Id);
+        return true;
     }
 
     /// <summary>For the command line: does all the work in the calling task (do not combine with Start).</summary>
