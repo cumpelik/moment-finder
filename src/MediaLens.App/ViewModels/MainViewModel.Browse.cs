@@ -125,50 +125,71 @@ public sealed partial class MainViewModel
 
     // ---- date filter ----
 
-    /// <summary>Inclusive days.</summary>
+    /// <summary>Any days from / to (inclusive), set in the calendars.</summary>
     [ObservableProperty, NotifyPropertyChangedFor(nameof(DateFilterText), nameof(IsDateFiltered))] private DateTime? _dateFrom;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(DateFilterText), nameof(IsDateFiltered))] private DateTime? _dateTo;
+
+    /// <summary>Clicked years, and months of the one clicked year; several of each, not necessarily next to each other.</summary>
+    private readonly SortedSet<int> _years = [];
+    private readonly SortedSet<int> _months = [];
 
     public ObservableCollection<DateChoice> Years { get; } = [];
     public ObservableCollection<DateChoice> Months { get; } = [];
     [ObservableProperty] private bool _hasMonths;
 
-    public bool IsDateFiltered => DateFrom != null || DateTo != null;
+    public bool IsDateFiltered => DateFrom != null || DateTo != null || _years.Count > 0;
 
     public string DateFilterText
     {
         get
         {
             var culture = CultureInfo.CurrentCulture;
+            if (_years.Count > 0)
+            {
+                if (_months.Count == 0)
+                    return _years.Count > 4 ? $"{_years.Count} years" : string.Join(", ", _years.Reverse());
+                var year = _years.Single();
+                return _months.Count > 4
+                    ? $"{_months.Count} months of {year}"
+                    : string.Join(", ", _months.Select(m => culture.DateTimeFormat.GetAbbreviatedMonthName(m))) + $" {year}";
+            }
             if (DateFrom is not { } from)
                 return DateTo is { } onlyTo ? $"Until {onlyTo:d. M. yyyy}" : "Any time";
             if (DateTo is not { } to) return $"Since {from:d. M. yyyy}";
-            if (from.Month == 1 && from.Day == 1 && to.Month == 12 && to.Day == 31)
-                return from.Year == to.Year ? from.Year.ToString(culture) : $"{from.Year} to {to.Year}";
-            if (from.Day == 1 && to == from.AddMonths(1).AddDays(-1)) return from.ToString("MMMM yyyy", culture);
             return from == to ? from.ToString("d. M. yyyy", culture) : $"{from:d. M. yyyy} to {to:d. M. yyyy}";
         }
     }
 
-    partial void OnDateFromChanged(DateTime? value) => DateChanged();
-    partial void OnDateToChanged(DateTime? value) => DateChanged();
+    partial void OnDateFromChanged(DateTime? value) => DaysChanged();
+    partial void OnDateToChanged(DateTime? value) => DaysChanged();
 
     private bool _settingDates;
 
-    private void DateChanged()
+    /// <summary>Days in the calendars replace the clicked years and months.</summary>
+    private void DaysChanged()
     {
         if (_settingDates) return;
+        _years.Clear();
+        _months.Clear();
+        LoadMonths();
+        DateChanged();
+    }
+
+    private void DateChanged()
+    {
         MarkDateChoices();
+        OnPropertyChanged(nameof(DateFilterText));
+        OnPropertyChanged(nameof(IsDateFiltered));
         _ = RunSearchAsync(keepSelection: false);
     }
 
-    private void SetDates(DateTime? from, DateTime? to)
+    /// <summary>Clicked years and months replace the days in the calendars.</summary>
+    private void ClearDays()
     {
         _settingDates = true;
-        DateFrom = from;
-        DateTo = to;
+        DateFrom = null;
+        DateTo = null;
         _settingDates = false;
-        DateChanged();
     }
 
     /// <summary>The years of the library with their counts; called when the date filter opens.</summary>
@@ -181,57 +202,76 @@ public sealed partial class MainViewModel
         MarkDateChoices();
     }
 
-    /// <summary>The months of the chosen year (all twelve, empty ones disabled).</summary>
+    /// <summary>The months of the year when exactly one is clicked (all twelve, empty ones disabled).</summary>
     private void LoadMonths()
     {
         Months.Clear();
-        if (DateFrom is { } from && DateTo is { } to && from.Year == to.Year)
+        if (_years.Count == 1)
         {
-            var counts = _host.Repo.DateCounts(from.Year).ToDictionary(c => c.Month, c => c.Count);
+            var year = _years.Single();
+            var counts = _host.Repo.DateCounts(year).ToDictionary(c => c.Month, c => c.Count);
             var culture = CultureInfo.CurrentCulture;
             for (var m = 1; m <= 12; m++)
-                Months.Add(new DateChoice(from.Year, m, culture.DateTimeFormat.GetAbbreviatedMonthName(m), counts.GetValueOrDefault(m)));
+                Months.Add(new DateChoice(year, m, culture.DateTimeFormat.GetAbbreviatedMonthName(m), counts.GetValueOrDefault(m)));
         }
         HasMonths = Months.Count > 0;
+        HasManyYears = _years.Count > 1;
     }
+
+    /// <summary>Months are offered for one year; with more years the filter says so.</summary>
+    [ObservableProperty] private bool _hasManyYears;
 
     private void MarkDateChoices()
     {
-        foreach (var y in Years)
-            y.IsSelected = DateFrom is { } f && DateTo is { } t && f == new DateTime(y.Year, 1, 1) && t == new DateTime(y.Year, 12, 31);
-        foreach (var m in Months)
-            m.IsSelected = DateFrom is { } f && DateTo is { } t && f == new DateTime(m.Year, m.Month, 1) && t == f.AddMonths(1).AddDays(-1);
+        foreach (var y in Years) y.IsSelected = _years.Contains(y.Year);
+        foreach (var m in Months) m.IsSelected = _months.Contains(m.Month);
     }
 
+    /// <summary>A click adds the year, another click takes it away.</summary>
     [RelayCommand]
     private void PickYear(DateChoice year)
     {
-        if (year.IsSelected) SetDates(null, null);
-        else SetDates(new DateTime(year.Year, 1, 1), new DateTime(year.Year, 12, 31));
+        ClearDays();
+        if (!_years.Remove(year.Year)) _years.Add(year.Year);
+        // Months belong to one year: with another year they would mean something else.
+        _months.Clear();
         LoadMonths();
-        MarkDateChoices();
+        DateChanged();
     }
 
+    /// <summary>A click adds the month, another click takes it away; no month means the whole year.</summary>
     [RelayCommand]
     private void PickMonth(DateChoice month)
     {
-        var first = new DateTime(month.Year, month.Month, 1);
-        // The month again: back to its whole year.
-        if (month.IsSelected) SetDates(new DateTime(month.Year, 1, 1), new DateTime(month.Year, 12, 31));
-        else SetDates(first, first.AddMonths(1).AddDays(-1));
+        ClearDays();
+        if (!_months.Remove(month.Month)) _months.Add(month.Month);
+        DateChanged();
     }
 
     [RelayCommand]
     private void ClearDate()
     {
-        SetDates(null, null);
+        ClearDays();
+        _years.Clear();
+        _months.Clear();
         LoadMonths();
+        DateChanged();
     }
 
-    /// <summary>The scope (source, bucket, person) limited to the chosen days.</summary>
-    private MediaFilter WithDates(MediaFilter filter) => filter with
+    /// <summary>The scope (source, bucket, person) limited to the chosen time.</summary>
+    private MediaFilter WithDates(MediaFilter filter)
     {
-        From = DateFrom is { } from ? MediaProbe.ToTakenAt(from.Date) : filter.From,
-        To = DateTo is { } to ? MediaProbe.ToTakenAt(to.Date.AddDays(1)) : filter.To,
-    };
+        var spans = _years.Count == 0 ? [] :
+            _months.Count == 0
+                ? _years.Select(y => Span(new DateTime(y, 1, 1), new DateTime(y + 1, 1, 1))).ToList()
+                : _months.Select(m => new DateTime(_years.Single(), m, 1)).Select(d => Span(d, d.AddMonths(1))).ToList();
+        return filter with
+        {
+            From = DateFrom is { } from ? MediaProbe.ToTakenAt(from.Date) : filter.From,
+            To = DateTo is { } to ? MediaProbe.ToTakenAt(to.Date.AddDays(1)) : filter.To,
+            Spans = spans,
+        };
+    }
+
+    private static (long From, long To) Span(DateTime from, DateTime to) => (MediaProbe.ToTakenAt(from), MediaProbe.ToTakenAt(to));
 }

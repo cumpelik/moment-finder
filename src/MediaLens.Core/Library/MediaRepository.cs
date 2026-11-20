@@ -12,6 +12,8 @@ public sealed record MediaFilter
     public long? From { get; init; }
     /// <summary>Exclusive, TakenAt milliseconds.</summary>
     public long? To { get; init; }
+    /// <summary>Any of these spans (from inclusive, to exclusive, TakenAt milliseconds): several months or years.</summary>
+    public IReadOnlyList<(long From, long To)> Spans { get; init; } = [];
     public long? BucketId { get; init; }
     /// <summary>All of these people are on the item.</summary>
     public IReadOnlyList<long> PersonIds { get; init; } = [];
@@ -145,6 +147,17 @@ public sealed class MediaRepository
         if (filter.Kind is { } kind) { sql.Append(" AND m.kind=@kind"); p.Add("kind", (int)kind); }
         if (filter.From is { } from) { sql.Append(" AND m.taken_at>=@from"); p.Add("from", from); }
         if (filter.To is { } to) { sql.Append(" AND m.taken_at<@to"); p.Add("to", to); }
+        if (filter.Spans.Count > 0)
+        {
+            sql.Append(" AND (");
+            for (var i = 0; i < filter.Spans.Count; i++)
+            {
+                sql.Append(i == 0 ? "" : " OR ").Append($"(m.taken_at>=@spanFrom{i} AND m.taken_at<@spanTo{i})");
+                p.Add("spanFrom" + i, filter.Spans[i].From);
+                p.Add("spanTo" + i, filter.Spans[i].To);
+            }
+            sql.Append(')');
+        }
         for (var i = 0; i < filter.PersonIds.Count; i++)
         {
             sql.Append($" AND m.id IN (SELECT media_id FROM detection WHERE person_id=@person{i})");

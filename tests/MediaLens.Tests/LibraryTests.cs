@@ -103,6 +103,9 @@ public class LibraryTests
         // The last evening of the year still belongs to it (local time, no time zone shift).
         var dec31 = Media.MediaProbe.ToTakenAt(new DateTime(2024, 12, 31));
         Assert.Single(lib.Repo.Query(new MediaFilter { From = dec31, To = dec31 + 86_400_000 }));
+        // Several months that are not next to each other: July 2023 and December 2024, not February.
+        (long, long) Month(int y, int m) => (Media.MediaProbe.ToTakenAt(new DateTime(y, m, 1)), Media.MediaProbe.ToTakenAt(new DateTime(y, m, 1).AddMonths(1)));
+        Assert.Equal(["d.jpg", "a.jpg"], lib.Repo.Query(new MediaFilter { Spans = [Month(2023, 7), Month(2024, 12)] }).Select(i => i.FileName));
     }
 
     [Fact]

@@ -104,12 +104,13 @@
                         </TextBox.InnerLeftContent>
                     </TextBox>
                     <!-- When: years, months of the year, or any days -->
+                    <!-- A fixed width: the panel below must not move while months are clicked -->
                     <Button Grid.Column="1" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
-                            ToolTip.Tip="Only photos and videos from a time span">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <mi:MaterialIcon Kind="CalendarMonthOutline" />
-                            <TextBlock Text="{Binding DateFilterText}" />
-                        </StackPanel>
+                            Width="215" HorizontalContentAlignment="Left" ToolTip.Tip="Only photos and videos from a time span">
+                        <DockPanel>
+                            <mi:MaterialIcon Kind="CalendarMonthOutline" Margin="0,0,6,0" />
+                            <TextBlock Text="{Binding DateFilterText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </DockPanel>
                         <Button.Flyout>
                             <Flyout Placement="BottomEdgeAlignedLeft" Opening="OnDateFlyoutOpening">
                                 <StackPanel Spacing="8" Width="380">
@@ -132,6 +133,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    <TextBlock Classes="muted small" Text="Months are offered when one year is chosen." IsVisible="{Binding HasManyYears}" />
                                     <TextBlock Classes="heading" Text="MONTH" Margin="0" IsVisible="{Binding HasMonths}" />
                                     <ItemsControl ItemsSource="{Binding Months}" IsVisible="{Binding HasMonths}">
                                         <ItemsControl.ItemsPanel>
