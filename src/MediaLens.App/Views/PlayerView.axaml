@@ -45,6 +45,17 @@
                 IsVisible="{Binding Lens360Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <TextBlock Text="{Binding Lens360Text}" Foreground="White" FontSize="14" />
         </Border>
+        <!-- A 360 video being prepared for smooth playing: what happens, how far, and a way out -->
+        <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="20,16" CornerRadius="8" Background="#E0000000"
+                MaxWidth="460" IsVisible="{Binding Preparing360}">
+            <StackPanel Spacing="10">
+                <TextBlock Text="{Binding PrepareText}" Foreground="White" FontSize="15" TextWrapping="Wrap" />
+                <ProgressBar Value="{Binding PrepareProgress}" Minimum="0" Maximum="100" />
+                <TextBlock Foreground="#B0FFFFFF" FontSize="12" TextWrapping="Wrap"
+                           Text="Once, then it plays smoothly from a lighter copy. You can look at other videos meanwhile." />
+                <Button Command="{Binding StopPreparingCommand}" HorizontalAlignment="Right">Stop</Button>
+            </StackPanel>
+        </Border>
         <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                    Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
 
@@ -88,7 +99,7 @@
                                   ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
                         <!-- Looking at a technique: frame by frame, slow motion, loop -->
                         <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}" Margin="0,0,6,0">
-                            <Button Command="{Binding NextFrameCommand}" IsVisible="{Binding !IsRunning}" ToolTip.Tip="One frame further (.)">
+                            <Button Command="{Binding NextFrameCommand}" IsEnabled="{Binding !IsRunning}" ToolTip.Tip="One frame further (.), when paused">
                                 <mi:MaterialIcon Kind="StepForward" />
                             </Button>
                             <Button Classes.active="{Binding IsSlowOrFast}" MinWidth="46" ToolTip.Tip="Speed: slow motion ([ slower, ] faster)">

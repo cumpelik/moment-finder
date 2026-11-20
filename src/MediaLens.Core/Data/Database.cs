@@ -176,6 +176,11 @@ public sealed class Database
         """,
         // People analysis 5 changed only videos.
         "UPDATE media SET people_version=5 WHERE kind=1 AND people_version=4;",
+        // 360 media: the lens model changed (190 degrees and the camera's calibration): thumbnails, search and people again.
+        """
+        UPDATE media SET thumb_state=0, analysis_version=0, people_version=0
+        WHERE lower(rel_path) LIKE '%.insv' OR lower(rel_path) LIKE '%.insp';
+        """,
     ];
 
     /// <summary>

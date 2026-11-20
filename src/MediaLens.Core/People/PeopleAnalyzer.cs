@@ -37,7 +37,7 @@ public sealed class PeopleAnalyzer
         if (Fisheye360.IsDualFisheye(path))
         {
             var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(path, 2 * Lens360Size)), ct);
-            var around = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: false), ct);
+            var around = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: false, Fisheye360.ModelOf(path)), ct);
             Save(item.Id, Frame(around, EquirectWidth, EquirectHeight, 0, null));
             return;
         }
@@ -62,10 +62,10 @@ public sealed class PeopleAnalyzer
     /// People in a 360 picture: six perspective views around (neighbours overlap), each analyzed like a photo, the
     /// boxes put on the equirectangular map and the doubles of the overlaps dropped.
     /// </summary>
-    private List<DetectedObject> Analyze360(RgbImage lens0, RgbImage lens1, bool includeWeak)
+    private List<DetectedObject> Analyze360(RgbImage lens0, RgbImage lens1, bool includeWeak, LensModel model)
     {
         var all = new List<DetectedObject>();
-        foreach (var (yaw, view) in Fisheye360.ViewsAround(lens0, lens1, Views360, View360Size, View360Size, View360Fov))
+        foreach (var (yaw, view) in Fisheye360.ViewsAround(lens0, lens1, Views360, View360Size, View360Size, View360Fov, model))
             foreach (var d in _model.Analyze(view, includeWeak))
             {
                 var (u, v, w, h) = Fisheye360.ViewBoxToEquirect(yaw, Fisheye360.DefaultPitch, View360Fov, View360Size, View360Size,
@@ -142,7 +142,7 @@ public sealed class PeopleAnalyzer
                     ct.ThrowIfCancellationRequested();
                     var lens0 = await Task.Run(() => RgbImage.Load(frame.Lens0, Lens360Size), ct);
                     var lens1 = await Task.Run(() => RgbImage.Load(frame.Lens1, Lens360Size), ct);
-                    var found = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: true), ct);
+                    var found = await Task.Run(() => Analyze360(lens0, lens1, includeWeak: true, Fisheye360.ModelOf(source)), ct);
                     perFrame.Add((frame.TimeMs, EquirectWidth, EquirectHeight, found));
                 }
             }

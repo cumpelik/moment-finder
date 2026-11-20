@@ -239,18 +239,49 @@ public static class FFmpeg
     /// sixth of the original's size). Two 4K HEVC streams do not decode in real time without a graphics card; this
     /// one plays anywhere. Made with hardware decoding where there is some.
     /// </summary>
-    public static async Task<bool> Make360ProxyAsync(string file, string outFile, CancellationToken ct = default)
+    /// <param name="progress">How far it is, 0..1 (from ffmpeg's -progress output against the length).</param>
+    public static async Task<bool> Make360ProxyAsync(string file, string outFile, double durationSeconds, IProgress<double>? progress,
+        CancellationToken ct = default)
     {
         if (FfmpegPath.Value is not { } ffmpeg) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
         var tmp = outFile + ".part.mp4";
-        var (code, _, _) = await RunAsync(ffmpeg,
-        [
-            "-v", "error", "-y", "-hwaccel", "auto", "-i", file,
-            "-filter_complex", "[0:v:0]scale=1536:1536[a];[0:v:1]scale=1536:1536[b];[a][b]hstack",
-            "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-g", "25", "-c:a", "copy", tmp,
-        ], ct);
-        if (code != 0 || !File.Exists(tmp)) return false;
+        var psi = new ProcessStartInfo(ffmpeg)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        };
+        foreach (var a in new[]
+                 {
+                     "-v", "error", "-nostats", "-progress", "pipe:1", "-y", "-hwaccel", "auto", "-i", file,
+                     "-filter_complex", "[0:v:0]scale=1536:1536[a];[0:v:1]scale=1536:1536[b];[a][b]hstack",
+                     "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-g", "25", "-c:a", "copy", tmp,
+                 })
+            psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start ffmpeg");
+        try { p.PriorityClass = ProcessPriorityClass.BelowNormal; }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+        p.StandardInput.Close();
+        var stderr = p.StandardError.ReadToEndAsync(CancellationToken.None);
+        try
+        {
+            while (await p.StandardOutput.ReadLineAsync(ct) is { } line)
+            {
+                // out_time_us=12345678 (microseconds written so far)
+                if (durationSeconds > 0 && line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
+                    long.TryParse(line.AsSpan(12), out var us))
+                    progress?.Report(Math.Clamp(us / 1e6 / durationSeconds, 0, 1));
+            }
+            await p.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { p.Kill(true); } catch (InvalidOperationException) { }
+            try { await p.WaitForExitAsync(CancellationToken.None); File.Delete(tmp); } catch (IOException) { }
+            throw;
+        }
+        await stderr;
+        if (p.ExitCode != 0 || !File.Exists(tmp)) return false;
         File.Move(tmp, outFile, true);
         return true;
     }

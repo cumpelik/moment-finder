@@ -8,13 +8,6 @@ namespace MediaLens.Media;
 /// </summary>
 public static class Fisheye360
 {
-    /// <summary>The field of view of each lens (equidistant fisheye); more than 180, so the lenses overlap.</summary>
-    /// <summary>Chosen on Insta360 X4 footage by where the two lenses meet without a shift.</summary>
-    public static double LensFov { get; set; } = 197;
-
-    /// <summary>The share of the image size that the fisheye circle takes (its radius over half the side).</summary>
-    public static double CircleScale { get; set; } = 1.0;
-
     public static bool IsDualFisheye(string path)
     {
         var ext = Path.GetExtension(path);
@@ -39,37 +32,39 @@ public static class Fisheye360
     public static (double Yaw, double Pitch) FromEquirect(double u, double v) => ((u - 0.5) * 360, (0.5 - v) * 180);
 
     /// <summary>Where a direction is in the lens images: the lens and the position in it (0..1).</summary>
-    public static (int Lens, double U, double V) ToLens(double x, double y, double z)
+    public static (int Lens, double U, double V) ToLens(double x, double y, double z, LensModel? model = null)
     {
-        // The back lens looks the other way: its right is the world's left.
         var lens = z >= 0 ? 0 : 1;
-        if (lens == 1) (x, z) = (-x, -z);
-        var theta = Math.Acos(Math.Clamp(z, -1, 1));
-        var r = theta / (LensFov * Math.PI / 360) * 0.5 * CircleScale;
-        var phi = Math.Atan2(y, x);
-        return (lens, 0.5 + r * Math.Cos(phi), 0.5 - r * Math.Sin(phi));
+        var (u, v) = InLens(lens, x, y, z, model);
+        return (lens, u, v);
     }
 
     /// <summary>
     /// Both lenses where they overlap: how much of lens 0 to take (1 well inside it, 0 inside lens 1, a short ramp
-    /// across the seam so the brightness of the two lenses does not meet in a hard line).
+    /// across the seam so the brightness of the two lenses does not meet in a hard line). Narrow: a person close
+    /// to the camera at the seam is seen from two angles (parallax); a wide blend shows them twice, half transparent.
     /// </summary>
-    public static double FrontWeight(double z)
-    {
-        // Narrow: a person close to the camera at the seam is seen from two angles (parallax); a wide blend shows him
-        // twice, half transparent. A thin edge only hides the brightness difference of the lenses.
-        var band = Math.Min(Math.Sin((LensFov / 2 - 90) * Math.PI / 180), Math.Sin(1.5 * Math.PI / 180));
-        return band <= 0 ? (z >= 0 ? 1 : 0) : Math.Clamp(0.5 + z / (2 * band), 0, 1);
-    }
+    public static double FrontWeight(double z) => Math.Clamp(0.5 + z / (2 * SeamBand), 0, 1);
+
+    private static readonly double SeamBand = Math.Sin(1.5 * Math.PI / 180);
 
     /// <summary>A direction in one lens, given which lens (also behind its center, within its field of view).</summary>
-    public static (double U, double V) InLens(int lens, double x, double y, double z)
+    public static (double U, double V) InLens(int lens, double x, double y, double z, LensModel? model = null)
     {
-        if (lens == 1) (x, z) = (-x, -z);
+        var m = model ?? LensModel.Default;
+        var (cx, cy) = (m.Cx0, m.Cy0);
+        if (lens == 1)
+        {
+            // The back lens looks the other way (its right is the world's left), turned a little against the front one.
+            (x, z) = (-x, -z);
+            var roll = m.Roll1 * Math.PI / 180;
+            (x, y) = (x * Math.Cos(roll) - y * Math.Sin(roll), x * Math.Sin(roll) + y * Math.Cos(roll));
+            (cx, cy) = (m.Cx1, m.Cy1);
+        }
         var theta = Math.Acos(Math.Clamp(z, -1, 1));
-        var r = theta / (LensFov * Math.PI / 360) * 0.5 * CircleScale;
+        var r = m.F * theta;
         var phi = Math.Atan2(y, x);
-        return (0.5 + r * Math.Cos(phi), 0.5 - r * Math.Sin(phi));
+        return (cx + r * Math.Cos(phi), cy - r * Math.Sin(phi));
     }
 
     /// <summary>The direction through a pixel of a perspective view (yaw, pitch, horizontal field of view).</summary>
@@ -109,7 +104,8 @@ public static class Fisheye360
     }
 
     /// <summary>A perspective view rendered from the two lens images (bilinear).</summary>
-    public static RgbImage RenderView(RgbImage lens0, RgbImage lens1, double yawDeg, double pitchDeg, double hfovDeg, int width, int height)
+    public static RgbImage RenderView(RgbImage lens0, RgbImage lens1, double yawDeg, double pitchDeg, double hfovDeg, int width, int height,
+        LensModel? model = null)
     {
         var data = new byte[width * height * 3];
         Parallel.For(0, height, j =>
@@ -119,8 +115,8 @@ public static class Fisheye360
                 var (x, y, z) = ViewRay(yawDeg, pitchDeg, hfovDeg, width, height, i + 0.5, j + 0.5);
                 var w = FrontWeight(z);
                 var o = (j * width + i) * 3;
-                var (u0, v0) = InLens(0, x, y, z);
-                var (u1, v1) = InLens(1, x, y, z);
+                var (u0, v0) = InLens(0, x, y, z, model);
+                var (u1, v1) = InLens(1, x, y, z, model);
                 for (var c = 0; c < 3; c++)
                 {
                     var a = w > 0 ? lens0.Sample((float)(u0 * lens0.Width - 0.5), (float)(v0 * lens0.Height - 0.5), c) : 0;
@@ -147,12 +143,13 @@ public static class Fisheye360
     /// Perspective views all around for the analysis: the models expect ordinary pictures, the fisheye or the
     /// equirectangular map would bend people out of shape. Neighbours overlap, so nobody is cut in half everywhere.
     /// </summary>
-    public static IEnumerable<(double Yaw, RgbImage View)> ViewsAround(RgbImage lens0, RgbImage lens1, int count, int width, int height, double hfov)
+    public static IEnumerable<(double Yaw, RgbImage View)> ViewsAround(RgbImage lens0, RgbImage lens1, int count, int width, int height, double hfov,
+        LensModel? model = null)
     {
         for (var k = 0; k < count; k++)
         {
             var yaw = 360.0 * k / count;
-            yield return (yaw, RenderView(lens0, lens1, yaw, DefaultPitch, hfov, width, height));
+            yield return (yaw, RenderView(lens0, lens1, yaw, DefaultPitch, hfov, width, height, model));
         }
     }
 
@@ -223,4 +220,56 @@ public static class Fisheye360
         if (x1 <= 0 || y1 <= 0 || x0 >= width || y0 >= height || x1 - x0 < 2 || y1 - y0 < 2) return null;
         return (x0, y0, x1 - x0, y1 - y0);
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, LensModel> Calibrations = new();
+
+    /// <summary>The lens model of a file: the camera's own calibration from the file, or the default.</summary>
+    public static LensModel ModelOf(string path) => Calibrations.GetOrAdd(path, p => ReadCalibration(p) ?? LensModel.Default);
+
+    /// <summary>
+    /// Insta360 writes each camera's lens calibration into the end of the file: "2_" then for each lens the radius,
+    /// center x and y, and three angles, then the sensor size (both lenses side by side), in sensor pixels. The
+    /// video frame is the square of the sensor height around each lens, turned a quarter (sensor y is frame x).
+    /// </summary>
+    public static LensModel? ReadCalibration(string path)
+    {
+        try
+        {
+            using var f = File.OpenRead(path);
+            var length = Math.Min(f.Length, 512 * 1024);
+            f.Seek(-length, SeekOrigin.End);
+            var buffer = new byte[length];
+            f.ReadExactly(buffer);
+            var text = System.Text.Encoding.Latin1.GetString(buffer);
+            const string n = @"(-?\d+\.\d+)";
+            var match = System.Text.RegularExpressions.Regex.Match(text,
+                $@"(?<![\d.])2_{n}_{n}_{n}_{n}_{n}_{n}_{n}_{n}_{n}_{n}_{n}_{n}_(\d+)_(\d+)");
+            if (!match.Success) return null;
+            double G(int i) => double.Parse(match.Groups[i].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var (width, height) = (G(13), G(14));
+            if (width <= 0 || height <= 0) return null;
+            // Center offsets of each lens from the middle of its half of the sensor, as a share of the frame side.
+            var (dx0, dy0) = ((G(2) - width / 4) / height, (G(3) - height / 2) / height);
+            var (dx1, dy1) = ((G(8) - width * 3 / 4) / height, (G(9) - height / 2) / height);
+            return new LensModel(0.5 - dy0, 0.5 + dx0, 0.5 - dy1, 0.5 + dx1,
+                // The radius is where the field of view reaches 91.7 degrees (fitted on X4 footage).
+                G(1) / height / RadiusAngle, G(12) - G(6));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    private const double RadiusAngle = 1.6006;
+}
+
+/// <summary>
+/// A dual fisheye camera: the lens centers in their frames (0..1), the scale (frame sides per radian from the center,
+/// equidistant fisheye) and how much the back lens is turned against the front one (degrees).
+/// </summary>
+public sealed record LensModel(double Cx0, double Cy0, double Cx1, double Cy1, double F, double Roll1)
+{
+    /// <summary>Insta360 X4 without its calibration: measured where the lenses overlap (190 degrees each).</summary>
+    public static readonly LensModel Default = new(0.5, 0.5, 0.5, 0.5, 0.30126, 0);
 }

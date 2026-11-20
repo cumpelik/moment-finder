@@ -67,7 +67,8 @@ public static class ImageCodec
         }
         else
             (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(item.FullPath, 1536)), ct);
-        await Task.Run(() => Fisheye360.RenderView(lens0, lens1, 0, Fisheye360.DefaultPitch, Fisheye360.DefaultFov, (int)ThumbSize, (int)ThumbSize * 3 / 4)
+        await Task.Run(() => Fisheye360.RenderView(lens0, lens1, 0, Fisheye360.DefaultPitch, Fisheye360.DefaultFov, (int)ThumbSize, (int)ThumbSize * 3 / 4,
+                Fisheye360.ModelOf(item.FullPath))
             .SaveJpeg(outJpeg, 82), ct);
         return true;
     }

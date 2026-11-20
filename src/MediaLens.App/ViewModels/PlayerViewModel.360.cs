@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using MediaLens.App.Video;
 using MediaLens.Media;
 
@@ -35,33 +36,64 @@ public sealed partial class PlayerViewModel
     private string Path360(Library.MediaItem item, string original, int version)
     {
         View.ClearLens(1);
+        Preparing360 = false;
         if (Media.Proxy360.Ready(item) is { } proxy)
         {
             _playsProxy = true;
             Lens360Text = "";
             return proxy;
         }
+        // The original plays choppy (two 4K streams): a still picture of the front lens and a card saying what
+        // happens, with the progress and a way to stop it.
         _playsProxy = false;
-        Lens360Text = "Preparing smooth 360 playing (the view behind the camera follows)...";
+        Lens360Text = "";
+        PauseOnOpen = true;
+        Preparing360 = true;
+        PrepareText = "Preparing this 360 video for smooth playing...";
+        PrepareProgress = 0;
         _ = SwitchToProxyAsync(item, version);
         return original;
+    }
+
+    /// <summary>The card over a 360 video whose playing copy is being made.</summary>
+    [ObservableProperty] private bool _preparing360;
+    [ObservableProperty] private string _prepareText = "";
+    [ObservableProperty] private double _prepareProgress;
+
+    /// <summary>Called with the position updates: the progress of the copy on the card.</summary>
+    private void UpdatePrepare()
+    {
+        if (!Preparing360 || Media.Proxy360.Progress(Current.Item) is not { } p) return;
+        PrepareProgress = p.Done * 100;
+        PrepareText = $"Preparing this 360 video for smooth playing: {p.Done * 100:0} %" +
+                      (p.Left is { } left ? $", about {Services.Format.Span(left)} left" : "");
+    }
+
+    /// <summary>Stop: no copy now; the front lens plays as it can (opening the video again prepares it again).</summary>
+    [RelayCommand]
+    private void StopPreparing()
+    {
+        Media.Proxy360.Stop(Current.Item);
+        Preparing360 = false;
+        Lens360Text = "Only the front lens, and not smoothly: open the video again to prepare it.";
     }
 
     private async Task SwitchToProxyAsync(Library.MediaItem item, int version)
     {
         var proxy = await Media.Proxy360.GetAsync(item);
-        if (version != _loadVersion || _video is not { } player) return;
+        if (version != _loadVersion || _video is not { } player || !Preparing360) return;
+        Preparing360 = false;
         if (proxy == null)
         {
-            Lens360Text = "";
+            Lens360Text = "Smooth playing could not be prepared: only the front lens plays.";
             return;
         }
-        var wasRunning = IsRunning;
         _playsProxy = true;
         _playingPath = proxy;
-        Lens360Text = "";
         player.Play(proxy, NowMs);
-        if (!wasRunning) player.Pause();
+        // Waited for it to watch it: it plays, unless the user had paused the viewer.
+        if (StaysPaused) player.Pause();
+        else IsRunning = true;
     }
 
     private void OnFrame360(byte[] pixels, int width, int height)
@@ -121,6 +153,7 @@ public sealed partial class PlayerViewModel
     private void Keep360InStep()
     {
         if (!Is360 || _video == null) return;
+        UpdatePrepare();
         if (MomentChoice.Kind != MomentKind.Person || DateTime.UtcNow - _lookedAt < TimeSpan.FromSeconds(4)) return;
         if (PersonDirection(MomentChoice.PersonIds) is not { } target) return;
         var dyaw = ((target.Yaw - View.Yaw) % 360 + 540) % 360 - 180;

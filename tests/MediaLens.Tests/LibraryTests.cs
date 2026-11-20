@@ -124,6 +124,20 @@ public class LibraryTests
         // A box across the seam behind the camera keeps its center on the map.
         var (su, _, sw, _) = Media.Fisheye360.ViewBoxToEquirect(180, -10, 100, 800, 600, 350, 200, 100, 250);
         Assert.InRange(su + sw / 2, 0, 1);
+        // The camera's calibration from the end of an Insta360 file.
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, new string('x', 1000) + "v1.4.8_build1*o2_2893.080_4000.850_2990.760_0.054_0.822_89.788_2886.650_12000.740_3014.510_-0.066_0.930_90.213_16000_6000_10958");
+            var cal = Media.Fisheye360.ReadCalibration(file)!;
+            Assert.InRange(cal.F, 0.300, 0.302);
+            Assert.InRange(cal.Roll1, 0.42, 0.43);
+            Assert.InRange(cal.Cx1, 0.497, 0.498);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
         // Straight ahead is lens 0, straight behind lens 1, both in the middle of their circle.
         Assert.Equal((0, 0.5, 0.5), Media.Fisheye360.ToLens(0, 0, 1));
         Assert.Equal((1, 0.5, 0.5), Media.Fisheye360.ToLens(0, 0, -1));

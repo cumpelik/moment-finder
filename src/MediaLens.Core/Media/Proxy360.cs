@@ -4,12 +4,22 @@ namespace MediaLens.Media;
 
 /// <summary>
 /// The playing copies of 360 videos (see FFmpeg.Make360ProxyAsync): made in the background after the analysis, or
-/// right away when a video is opened first; kept up to a size limit, the least recently played go first.
+/// right away when a video is opened first; kept up to a size limit, the least recently played go first. A copy being
+/// made shows its progress and can be stopped.
 /// </summary>
 public static class Proxy360
 {
     private const long CacheLimit = 20L << 30;
-    private static readonly Dictionary<string, Task<string?>> Running = [];
+
+    private sealed class Job
+    {
+        public required Task<string?> Task;
+        public required CancellationTokenSource Cancel;
+        public double Progress;
+        public DateTime Started = DateTime.UtcNow;
+    }
+
+    private static readonly Dictionary<string, Job> Running = [];
 
     public static string? Dir { get; set; }
 
@@ -17,7 +27,7 @@ public static class Proxy360
     {
         if (Dir == null || !File.Exists(item.FullPath)) return null;
         var info = new FileInfo(item.FullPath);
-        return System.IO.Path.Combine(Dir, $"{item.Id}_{info.Length}_{info.LastWriteTimeUtc.Ticks}.mp4");
+        return Path.Combine(Dir, $"{item.Id}_{info.Length}_{info.LastWriteTimeUtc.Ticks}.mp4");
     }
 
     /// <summary>The copy if it is there already.</summary>
@@ -31,19 +41,48 @@ public static class Proxy360
     public static bool HasRoom => Dir == null || !Directory.Exists(Dir) ||
         new DirectoryInfo(Dir).GetFiles("*.mp4").Sum(f => f.Length) < CacheLimit * 9 / 10;
 
-    /// <summary>The copy, made if needed (about the video's length with a graphics card, a few times that without).</summary>
+    /// <summary>How far the copy of this item is (0..1) and the time left, while it is being made.</summary>
+    public static (double Done, TimeSpan? Left)? Progress(MediaItem item)
+    {
+        if (PathOf(item) is not { } target) return null;
+        lock (Running)
+        {
+            if (!Running.TryGetValue(target, out var job)) return null;
+            var elapsed = DateTime.UtcNow - job.Started;
+            TimeSpan? left = job.Progress > 0.02 && elapsed.TotalSeconds > 3
+                ? TimeSpan.FromSeconds(elapsed.TotalSeconds * (1 - job.Progress) / job.Progress) : null;
+            return (job.Progress, left);
+        }
+    }
+
+    /// <summary>Stops making this copy (the user does not want to wait, or the background work is paused).</summary>
+    public static void Stop(MediaItem item)
+    {
+        if (PathOf(item) is not { } target) return;
+        lock (Running)
+            if (Running.TryGetValue(target, out var job)) job.Cancel.Cancel();
+    }
+
+    /// <summary>The copy, made if needed; null when it cannot be made or was stopped.</summary>
     public static Task<string?> GetAsync(MediaItem item, CancellationToken ct = default)
     {
         if (PathOf(item) is not { } target) return Task.FromResult<string?>(null);
         lock (Running)
         {
-            if (File.Exists(target)) return Task.FromResult<string?>(Ready(item));
-            if (Running.TryGetValue(target, out var running)) return running;
+            if (File.Exists(target)) return Task.FromResult(Ready(item));
+            if (Running.TryGetValue(target, out var running))
+            {
+                ct.Register(running.Cancel.Cancel);
+                return running.Task;
+            }
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            Job? job = null;
+            var progress = new Progress<double>(p => { if (job != null) job.Progress = p; });
             var task = Task.Run(async () =>
             {
                 try
                 {
-                    var ok = await FFmpeg.Make360ProxyAsync(item.FullPath, target, ct);
+                    var ok = await FFmpeg.Make360ProxyAsync(item.FullPath, target, (item.DurationMs ?? 0) / 1000.0, progress, cts.Token);
                     Trim();
                     return ok ? target : null;
                 }
@@ -59,9 +98,11 @@ public static class Proxy360
                 finally
                 {
                     lock (Running) Running.Remove(target);
+                    cts.Dispose();
                 }
             }, CancellationToken.None);
-            Running[target] = task;
+            job = new Job { Task = task, Cancel = cts };
+            Running[target] = job;
             return task;
         }
     }

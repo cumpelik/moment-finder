@@ -29,6 +29,20 @@ public sealed class View360
     public double Fov { get; private set; } = Fisheye360.DefaultFov;
     public WriteableBitmap Output { get; }
 
+    /// <summary>The camera's lenses (its own calibration when the file has one).</summary>
+    public LensModel Model
+    {
+        get => _model;
+        set
+        {
+            if (value == _model) return;
+            _model = value;
+            _dirty = true;
+        }
+    }
+
+    private LensModel _model = LensModel.Default;
+
     public View360(int width, int height)
     {
         Width = width;
@@ -125,8 +139,8 @@ public sealed class View360
                 var k = j * Width + i;
                 var w = Fisheye360.FrontWeight(z);
                 _weight[k] = (byte)Math.Round(w * 255);
-                var (u0, v0) = Fisheye360.InLens(0, x, y, z);
-                var (u1, v1) = Fisheye360.InLens(1, x, y, z);
+                var (u0, v0) = Fisheye360.InLens(0, x, y, z, _model);
+                var (u1, v1) = Fisheye360.InLens(1, x, y, z, _model);
                 _idx0[k] = Math.Clamp((int)(v0 * h0), 0, h0 - 1) * w0 + Math.Clamp((int)(u0 * w0), 0, w0 - 1);
                 _idx1[k] = Math.Clamp((int)(v1 * h1), 0, h1 - 1) * w1 + Math.Clamp((int)(u1 * w1), 0, w1 - 1);
             }

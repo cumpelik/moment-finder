@@ -110,6 +110,8 @@ public sealed class Indexer : IDisposable
         set
         {
             _paused = value;
+            // A 360 copy takes minutes: pausing stops it now (it starts again later).
+            if (value) _proxyCts?.Cancel();
             Report(Status with { Paused = value });
             if (!value) _wake.Release();
         }
@@ -175,6 +177,7 @@ public sealed class Indexer : IDisposable
     public bool Proxies360 { get; set; }
 
     private readonly HashSet<long> _proxyFailed = [];
+    private CancellationTokenSource? _proxyCts;
 
     /// <summary>One 360 video without its playing copy, the newest first, while the copies have room.</summary>
     private async Task<bool> Proxy360BatchAsync(CancellationToken ct)
@@ -185,7 +188,11 @@ public sealed class Indexer : IDisposable
         var videos = all360.Where(v => !_proxyFailed.Contains(v.Id) && Proxy360.Ready(v) == null).ToList();
         if (videos.Count == 0) return false;
         Report(new IndexerStatus(IndexerPhase.Analysis, "Preparing 360 videos for smooth playing", all360.Count - videos.Count, all360.Count, false));
-        if (await Proxy360.GetAsync(videos[0], ct) == null) _proxyFailed.Add(videos[0].Id);
+        using var cts = _proxyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var made = await Proxy360.GetAsync(videos[0], cts.Token);
+        _proxyCts = null;
+        if (cts.IsCancellationRequested) return !_paused;
+        if (made == null) _proxyFailed.Add(videos[0].Id);
         return true;
     }
 
@@ -360,7 +367,7 @@ public sealed class Indexer : IDisposable
         {
             var files = new List<(int TimeMs, string Path)>();
             foreach (var (time, lens0, lens1) in moments)
-                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100).ToList(), ct))
+                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100, Fisheye360.ModelOf(item.FullPath)).ToList(), ct))
                 {
                     var file = Path.Combine(dir, $"{time}_{(int)yaw}.jpg");
                     view.SaveJpeg(file, 85);

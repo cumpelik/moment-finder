@@ -48,6 +48,14 @@ public partial class PlayerView : UserControl
         Root.AddHandler(PointerPressedEvent, (_, e) =>
         {
             if (!e.GetCurrentPoint(Root).Properties.IsLeftButtonPressed) return;
+            // The controls (time line, buttons) handle their own mouse: no turning the view, no box under them.
+            if (e.Source is Visual onControls && onControls.GetSelfAndVisualAncestors()
+                    .Any(v => v == Overlay || v is Avalonia.Controls.Primitives.TemplatedControl and not UserControl))
+            {
+                _pressedBox = null;
+                _dragFrom = null;
+                return;
+            }
             _pressAt = e.GetPosition(Root);
             _pressedBox = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Control>().Select(c => c.Tag).OfType<long>().FirstOrDefault();
             if (_vm is not { Is360: true }) return;
@@ -56,8 +64,12 @@ public partial class PlayerView : UserControl
         }, RoutingStrategies.Tunnel);
         Root.AddHandler(PointerReleasedEvent, (_, e) =>
         {
-            _dragFrom = null;
-            e.Pointer.Capture(null);
+            // Only a capture of our own is let go: a button holds the pointer until its click.
+            if (_dragFrom != null)
+            {
+                _dragFrom = null;
+                e.Pointer.Capture(null);
+            }
             var moved = e.GetPosition(Root) - _pressAt;
             if (_pressedBox is > 0 and var id && Math.Abs(moved.X) + Math.Abs(moved.Y) < 6) AskWho(id);
             _pressedBox = null;

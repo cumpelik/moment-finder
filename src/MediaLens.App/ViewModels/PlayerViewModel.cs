@@ -161,6 +161,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         // The previous video's last frame must not stand under the new video's boxes.
         VideoReady = false;
         Is360 = Media.Fisheye360.IsDualFisheye(item.FullPath);
+        Preparing360 = false;
+        if (Is360) View.Model = Media.Fisheye360.ModelOf(item.FullPath);
         Title = item.FileName;
         Detail = $"{item.Taken:d. M. yyyy H:mm}" + (item.Camera is { } c ? $"  ·  {c}" : "");
         PositionText = PositionLabel();
