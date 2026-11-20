@@ -446,6 +446,9 @@ public sealed partial class PeopleViewModel : ObservableObject
 
     public List<DetectionRow> DetectionsOf(long mediaId) => _host.People.DetectionsOfMedia(mediaId);
 
+    /// <summary>The people of this item come from the current analysis (older boxes of a 360 video do not fit its leveled picture).</summary>
+    public bool PeopleUpToDate(long mediaId) => _host.People.PeopleVersionOf(mediaId) >= MediaLens.Library.Indexer.PeopleVersion;
+
     /// <summary>Strangers and things that are not people: no box for them.</summary>
     public HashSet<long> HiddenPersonIds() => _host.People.ListPersons(true).Where(p => p.Hidden).Select(p => p.Id).ToHashSet();
 

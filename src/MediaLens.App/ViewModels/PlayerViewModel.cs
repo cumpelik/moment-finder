@@ -326,12 +326,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void LoadPeople()
     {
-        _detections = ShowPeople ? _main.People.DetectionsOf(Current.Item.Id) : [];
+        // A 360 video waiting for its new analysis: the old boxes would sit in the wrong places.
+        var stale = ShowPeople && Is360 && !_main.People.PeopleUpToDate(Current.Item.Id);
+        _detections = ShowPeople && !stale ? _main.People.DetectionsOf(Current.Item.Id) : [];
         _paths = ShowPeople && Current.Item.IsVideo ? _main.People.TrackPaths(Current.Item.Id) : [];
         _pathsOf = ShowPeople ? Current.Item.Id : -1;
         _names = ShowPeople ? _main.People.Names() : [];
         _hidden = ShowPeople ? _main.People.HiddenPersonIds() : [];
         PeopleHint = !ShowPeople ? "" :
+            stale ? "The people of this 360 video are being analyzed again. Open it later." :
             _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
             IsVideo && IsRunning && !_main.BoxesWhilePlaying ? "Pause the video to see who is who." :
             "Click a person to say who it is.";
