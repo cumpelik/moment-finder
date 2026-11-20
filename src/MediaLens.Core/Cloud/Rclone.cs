@@ -109,6 +109,57 @@ public sealed partial class Rclone
 
     public Task DeleteRemoteAsync(string name, CancellationToken ct) => RunAsync(["config", "delete", name], ct);
 
+    /// <summary>Every remote of the config with its settings as stored (passwords stay obscured).</summary>
+    public async Task<Dictionary<string, Dictionary<string, string>>> DumpAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_configPath)) return [];
+        using var doc = JsonDocument.Parse(await RunAsync(["config", "dump"], ct));
+        var remotes = new Dictionary<string, Dictionary<string, string>>();
+        foreach (var remote in doc.RootElement.EnumerateObject())
+            remotes[remote.Name] = remote.Value.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.ToString());
+        return remotes;
+    }
+
+    /// <summary>A config file with these remotes, as DumpAsync gave them.</summary>
+    public static void WriteConfig(string path, IReadOnlyDictionary<string, Dictionary<string, string>> remotes)
+    {
+        var text = new StringBuilder();
+        foreach (var (name, settings) in remotes)
+        {
+            text.Append('[').Append(name).Append("]\n");
+            foreach (var (key, value) in settings) text.Append(key).Append(" = ").Append(value.ReplaceLineEndings(" ")).Append('\n');
+            text.Append('\n');
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text.ToString());
+    }
+
+    /// <summary>Files down to a depth (1 = directly in the folder); an empty list when the folder is not there.</summary>
+    public async Task<List<RemoteFile>> ListAsync(string remotePath, int depth, CancellationToken ct)
+    {
+        try
+        {
+            return Parse(await RunAsync(["lsjson", "-R", "--files-only", "--no-mimetype", "--max-depth", depth.ToString(CultureInfo.InvariantCulture), remotePath], ct));
+        }
+        catch (RcloneException e) when (e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+    }
+
+    public async Task<List<string>> DirsAsync(string remotePath, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(await RunAsync(["lsjson", "--dirs-only", "--max-depth", "1", remotePath], ct));
+            return doc.RootElement.EnumerateArray().Select(e => e.GetProperty("Path").GetString()!).ToList();
+        }
+        catch (RcloneException e) when (e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+    }
+
     /// <summary>
     /// The browser sign-in of OneDrive or Google Drive (rclone's own registered app): rclone opens the
     /// browser, waits for the login and prints the token.
@@ -133,7 +184,11 @@ public sealed partial class Rclone
 
     public async Task<List<RemoteFile>> ListAsync(string remotePath, CancellationToken ct)
     {
-        var json = await RunAsync(["lsjson", "-R", "--files-only", "--no-mimetype", remotePath], ct);
+        return Parse(await RunAsync(["lsjson", "-R", "--files-only", "--no-mimetype", remotePath], ct));
+    }
+
+    private static List<RemoteFile> Parse(string json)
+    {
         using var doc = JsonDocument.Parse(json);
         var files = new List<RemoteFile>();
         foreach (var e in doc.RootElement.EnumerateArray())

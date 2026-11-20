@@ -47,7 +47,10 @@ public sealed class LibraryHost : IDisposable
     public LibraryHost(AppPaths? paths = null)
     {
         Paths = paths ?? new AppPaths();
+        // A library downloaded with a recovery string takes its place before anything opens the old one.
+        LibraryRestore.ApplyPending(Paths);
         Db = new Database(Paths.DbPath);
+        LibraryRestore.AdaptToThisComputer(Paths, Db);
         Repo = new MediaRepository(Db);
         Buckets = new BucketService(Db, Repo);
         Search = new SearchService(Repo);

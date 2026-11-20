@@ -3,8 +3,8 @@ using MediaLens.Data;
 namespace MediaLens.Cloud;
 
 /// <summary>
-/// Keeps the mirrors current: every few hours (and on request) each enabled mirror copies what is new.
-/// One mirror at a time, so the upload does not choke the connection.
+/// Keeps the mirrors and the library backup current: every few hours (and on request) each enabled mirror copies
+/// what is new, then the library itself goes to its cloud. One at a time, so the upload does not choke the connection.
 /// </summary>
 public sealed class MirrorScheduler : IDisposable
 {
@@ -14,6 +14,7 @@ public sealed class MirrorScheduler : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task? _loop;
     private readonly HashSet<long> _requested = [];
+    private bool _backupRequested;
 
     /// <summary>Text for the status bar; empty when nothing runs.</summary>
     public event Action<string>? StatusChanged;
@@ -42,6 +43,35 @@ public sealed class MirrorScheduler : IDisposable
                 _requested.Add(m.Id);
         }
         _wake.Release();
+    }
+
+    /// <summary>Backs the library up now.</summary>
+    public void BackupNow()
+    {
+        _backupRequested = true;
+        _wake.Release();
+    }
+
+    private async Task BackupAsync(CancellationToken ct)
+    {
+        if (_cloud.BackupCloud is not { } cloud || !Rclone.IsAvailable) return;
+        long.TryParse(_db.GetSetting("backup_tried_at"), out var tried);
+        var last = Math.Max(tried, _cloud.Backup.LastAt?.ToUnixTimeMilliseconds() ?? 0);
+        var due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - last > IntervalHours * 3600_000;
+        if (!due && !_backupRequested) return;
+        _backupRequested = false;
+        StatusChanged?.Invoke($"Backing up the library to {cloud.Name}...");
+        try
+        {
+            await _cloud.Backup.RunAsync(cloud, full: true,
+                new Progress<string>(what => StatusChanged?.Invoke($"Backing up the library to {cloud.Name}: {what}")), ct);
+        }
+        catch (RcloneException)
+        {
+            // Recorded as the backup's last result; tried again at the next interval, not every ten minutes.
+            _db.SetSetting("backup_tried_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+        }
+        MirrorsChanged?.Invoke();
     }
 
     private async Task LoopAsync(CancellationToken ct)
@@ -74,6 +104,7 @@ public sealed class MirrorScheduler : IDisposable
                     }
                     MirrorsChanged?.Invoke();
                 }
+                await BackupAsync(ct);
                 StatusChanged?.Invoke("");
                 await _wake.WaitAsync(TimeSpan.FromMinutes(10), ct);
             }
