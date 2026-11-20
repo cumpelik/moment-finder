@@ -168,6 +168,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             Photo = null;
             IsVideo = true;
             MomentText = MomentLabel();
+            // libVLC still loading (the first video after the start): wait for it without blocking the window.
+            if (!VideoPlayer.IsLoaded)
+            {
+                _ = ShowWhenVideoLoadedAsync(version);
+                return;
+            }
             if (!VideoPlayer.IsAvailable(out var error))
             {
                 Error = error;
@@ -386,6 +392,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadPeople();
     }
 
+    private async Task ShowWhenVideoLoadedAsync(int version)
+    {
+        await VideoPlayer.LoadAsync();
+        if (version == _loadVersion) Show();
+    }
+
     private async Task PlayFromCloudAsync(PlaylistEntry entry, int version)
     {
         Error = "Downloading from the cloud...";
@@ -589,8 +601,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>The slider was dragged.</summary>
     public void SeekTo(double ms)
     {
-        _video?.Seek((long)ms);
+        SeekVideo((long)ms);
         _seeking = false;
+    }
+
+    /// <summary>A seek; the time also stands there until libVLC reports one (after the end it opens the video again).</summary>
+    private void SeekVideo(long ms)
+    {
+        if (_video == null) return;
+        ms = Math.Max(0, ms);
+        _video.Seek(ms);
+        _startedAtMs = (int)ms;
+        _lastVlcTime = -1;
+        VideoPosition = ms;
+        Notice = "";
     }
 
     public void BeginSeek() => _seeking = true;
@@ -660,7 +684,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public void SeekBy(int seconds)
     {
-        if (_video != null && IsVideo) _video.Seek(_video.TimeMs + seconds * 1000L);
+        if (_video != null && IsVideo) SeekVideo(NowMs + seconds * 1000L);
     }
 
     private string PositionLabel() => $"{Index + 1} / {Count}" + (AutoPlay ? "  ·  slideshow" : "");

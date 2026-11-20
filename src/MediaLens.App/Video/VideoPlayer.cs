@@ -74,6 +74,16 @@ public sealed class VideoPlayer : IDisposable
             }, TaskScheduler.Default);
     }
 
+    private static readonly Lazy<Task> Loading = new(() => Task.Run(() => IsAvailable(out _)));
+
+    /// <summary>
+    /// Loads libVLC in the background. The first load scans its codec plugins: on Windows that takes seconds
+    /// (and the antivirus looks at each one), so it is started with the app and never waited for on the UI thread.
+    /// </summary>
+    public static Task LoadAsync() => Loading.Value;
+
+    public static bool IsLoaded => _libVlc != null || _initError != null;
+
     public static bool IsAvailable(out string? error)
     {
         if (_libVlc == null && _initError == null)
@@ -104,15 +114,25 @@ public sealed class VideoPlayer : IDisposable
         _displayCb = OnDisplay;
         _player.SetVideoFormatCallbacks(_formatCb, _cleanupCb);
         _player.SetVideoCallbacks(_lockCb, null, _displayCb);
-        _player.EndReached += (_, _) => Dispatcher.UIThread.Post(() => Ended?.Invoke());
+        _player.EndReached += (_, _) =>
+        {
+            _ended = true;
+            Dispatcher.UIThread.Post(() => Ended?.Invoke());
+        };
     }
 
     public bool IsPlaying => _player.IsPlaying;
     public long TimeMs => _player.Time;
     public long LengthMs => _player.Length;
 
+    private string? _path;
+    /// <summary>The video played to its end: libVLC ignores a seek then, the video has to be opened again.</summary>
+    private volatile bool _ended;
+
     public void Play(string path, long startMs)
     {
+        _path = path;
+        _ended = false;
         var old = _media;
         var media = _media = new VlcMedia(_libVlc!, path, FromType.FromPath);
         if (startMs > 0)
@@ -170,10 +190,20 @@ public sealed class VideoPlayer : IDisposable
         else Run(() => _player.SetPause(true));
     }
 
-    public void Seek(long ms) => Run(() =>
+    public void Seek(long ms)
     {
-        if (_player.IsSeekable) _player.Time = Math.Max(0, ms);
-    });
+        if (_ended && _path != null)
+        {
+            // After the end: open it again at that moment and stand there, like a seek on a paused video.
+            Play(_path, Math.Max(0, ms));
+            _pauseOnFrame = true;
+            return;
+        }
+        Run(() =>
+        {
+            if (_player.IsSeekable) _player.Time = Math.Max(0, ms);
+        });
+    }
 
     public int Volume
     {

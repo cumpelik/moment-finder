@@ -14,6 +14,8 @@ public sealed class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // The video player loads its codecs in the background meanwhile; the first video does not wait for it.
+        _ = Video.VideoPlayer.LoadAsync();
         // An error in one action must not take the whole browser down: log it and tell the user.
         Avalonia.Threading.Dispatcher.UIThread.UnhandledException += (_, e) =>
         {
