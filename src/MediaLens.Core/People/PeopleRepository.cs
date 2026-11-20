@@ -297,15 +297,18 @@ public sealed class PeopleRepository
             .GroupBy(r => r.MediaId).ToDictionary(g => g.Key, g => g.Select(r => r.PersonId).ToList());
     }
 
-    /// <summary>The named people seen in these media, for choosing whose moments to play.</summary>
+    /// <summary>
+    /// The named people seen in these media, for choosing whose moments to play: also those the analysis only
+    /// suggests ("Zuzka??" on the box), so what the boxes show can be chosen.
+    /// </summary>
     public List<long> PersonsIn(IEnumerable<long> mediaIds)
     {
         var ids = mediaIds.ToList();
         if (ids.Count == 0) return [];
         using var c = _db.Open();
         return c.Query<long>("""
-            SELECT d.person_id FROM detection d JOIN person p ON p.id=d.person_id AND p.hidden=0
-            WHERE d.media_id IN @ids GROUP BY d.person_id ORDER BY COUNT(DISTINCT d.media_id) DESC
+            SELECT p.id FROM detection d JOIN person p ON p.id=COALESCE(d.person_id, d.suggest_person_id) AND p.hidden=0
+            WHERE d.media_id IN @ids GROUP BY p.id ORDER BY COUNT(DISTINCT d.media_id) DESC
             """, new { ids }).ToList();
     }
 
@@ -584,7 +587,7 @@ public sealed class PeopleRepository
         var spans = c.Query<(long MediaId, long From, long To, long Duration)>("""
             SELECT d.media_id, MIN(d.time_ms), MAX(d.time_ms), COALESCE(m.duration_ms, 0)
             FROM detection d JOIN media m ON m.id=d.media_id
-            WHERE m.kind=2 AND d.track IN (SELECT track FROM detection WHERE person_id IN @ids AND track IS NOT NULL)
+            WHERE m.kind=2 AND d.track IN (SELECT track FROM detection WHERE COALESCE(person_id, suggest_person_id) IN @ids AND track IS NOT NULL)
             GROUP BY d.media_id, d.track
             """, new { ids }).ToList();
         var result = new Dictionary<long, List<(int, int)>>();

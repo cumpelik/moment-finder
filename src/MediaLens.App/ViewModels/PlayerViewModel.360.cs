@@ -170,7 +170,7 @@ public sealed partial class PlayerViewModel
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         foreach (var (track, path) in _paths)
         {
-            var who = _detections.FirstOrDefault(d => d.Track == track && d.PersonId is { } p && personIds.Contains(p));
+            var who = _detections.FirstOrDefault(d => d.Track == track && (d.PersonId ?? d.SuggestPersonId) is { } p && personIds.Contains(p));
             if (who == null || Where(path, now, Math.Max(interval, 2000)) is not { } b) continue;
             return Fisheye360.FromEquirect(b.X + b.W / 2, b.Y + b.H / 2);
         }
