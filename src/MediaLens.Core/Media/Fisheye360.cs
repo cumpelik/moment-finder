@@ -51,12 +51,14 @@ public static class Fisheye360
     }
 
     /// <summary>
-    /// Both lenses where they overlap: how much of lens 0 to take (1 well inside it, 0 inside lens 1, a ramp across
-    /// the seam so the brightness of the two lenses does not meet in a line).
+    /// Both lenses where they overlap: how much of lens 0 to take (1 well inside it, 0 inside lens 1, a short ramp
+    /// across the seam so the brightness of the two lenses does not meet in a hard line).
     /// </summary>
     public static double FrontWeight(double z)
     {
-        var band = Math.Sin((LensFov / 2 - 90) * Math.PI / 180) * 0.8;
+        // Narrow: a person close to the camera at the seam is seen from two angles (parallax); a wide blend shows him
+        // twice, half transparent. A thin edge only hides the brightness difference of the lenses.
+        var band = Math.Min(Math.Sin((LensFov / 2 - 90) * Math.PI / 180), Math.Sin(1.5 * Math.PI / 180));
         return band <= 0 ? (z >= 0 ? 1 : 0) : Math.Clamp(0.5 + z / (2 * band), 0, 1);
     }
 
