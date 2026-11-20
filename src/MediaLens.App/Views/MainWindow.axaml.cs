@@ -337,9 +337,11 @@ public partial class MainWindow : Window
         var window = new PlayerWindow { DataContext = player };
         window.Closed += (_, _) =>
         {
-            // Back in the grid on the item the viewer ended on.
+            // Back in the grid on the item the viewer ended on; the panel continues where the window was.
             var id = player.Current.Item.Id;
+            var position = player.PositionMs;
             player.Dispose();
+            if (_panelPlayer is { } panel && panel.Current.Item.Id == id && position > 0) panel.ContinueAt(position);
             if (_vm?.Tiles.FirstOrDefault(t => t.Item.Id == id) is { } tile)
             {
                 _vm.Select(tile, false, false);
@@ -487,7 +489,8 @@ public partial class MainWindow : Window
     {
         if (_vm == null || _panelPlayer == null) return;
         var id = _panelPlayer.Current.Item.Id;
-        if (_vm.Tiles.FirstOrDefault(t => t.Item.Id == id) is { } tile) _vm.Open(tile);
+        if (_vm.Tiles.FirstOrDefault(t => t.Item.Id == id) is { } tile)
+            _vm.OpenAt(tile, _panelPlayer.PositionMs, paused: _panelPlayer.IsVideo && !_panelPlayer.IsRunning);
     }
 
     // ---- sidebar ----

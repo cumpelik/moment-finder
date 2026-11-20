@@ -536,6 +536,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     // ---- playback ----
 
     /// <summary>Opens the viewer on one item; arrows go through the whole result.</summary>
+    /// <summary>Full screen from the panel: the same moment, paused if the panel was paused.</summary>
+    public void OpenAt(TileViewModel tile, int positionMs, bool paused)
+    {
+        var index = Tiles.IndexOf(tile);
+        if (index < 0) return;
+        var player = CreatePlayer(Tiles.ToList(), index, autoPlay: false);
+        if (positionMs > 0) player.ResumeAtMs = positionMs;
+        player.PauseOnOpen = paused;
+        PlayerRequested?.Invoke(player, true);
+    }
+
     public void Open(TileViewModel tile)
     {
         var index = Tiles.IndexOf(tile);

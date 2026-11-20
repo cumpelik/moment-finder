@@ -193,7 +193,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _playingPath = item.FullPath;
-                _video.Play(item.FullPath, StartOf(entry));
+                _video.Play(item.FullPath, TakeStart(entry));
                 // Opened to say who someone is (from Who is this): a still picture at that moment.
                 if (PauseOnOpen)
                 {
@@ -304,7 +304,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 .ToList();
         }
         // Paused on the first frame, libVLC still says 0: the video was opened at its start time.
-        var now = _video != null && _video.TimeMs > 0 ? (int)_video.TimeMs : StartOf(Current);
+        var now = (int)NowMs;
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         var boxes = new List<PeopleBox>();
         foreach (var (track, path) in _paths)
@@ -365,7 +365,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (version != _loadVersion || _video == null) return;
             Error = null;
             _playingPath = path;
-            _video.Play(path, StartOf(entry));
+            _video.Play(path, TakeStart(entry));
             _positionTimer.Start();
         }
         catch (Exception e) when (e is Cloud.RcloneException or IOException)
@@ -453,7 +453,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         if (_video == null || _seeking) return;
         var length = _video.LengthMs;
-        var time = _video.TimeMs;
+        var time = NowMs;
         if (length > 0) VideoLength = length;
         if (time >= 0) VideoPosition = time;
         IsRunning = _video.IsPlaying;
@@ -523,6 +523,35 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private string MomentLabel() => Moments is { } m
         ? $"{MomentChoice.Label}: {Math.Min(_moment + 1, m.Count)} / {m.Count}"
         : "";
+
+    /// <summary>Continue at this time (from the panel to full screen and back) instead of the usual start, once.</summary>
+    public int? ResumeAtMs { get; set; }
+
+    /// <summary>Where the video is now, to hand over to another viewer of the same item.</summary>
+    public int PositionMs => IsVideo && _video != null ? (int)NowMs : 0;
+
+    /// <summary>Where the current video was started: libVLC says 0 until it plays, paused on the first frame.</summary>
+    private int _startedAtMs;
+
+    private int TakeStart(PlaylistEntry entry)
+    {
+        var at = ResumeAtMs ?? StartOf(entry);
+        ResumeAtMs = null;
+        return _startedAtMs = at;
+    }
+
+    /// <summary>The video's time; the start until libVLC reports one.</summary>
+    private long NowMs => _video is { } v && v.TimeMs > 0 ? v.TimeMs : _startedAtMs;
+
+    /// <summary>Another viewer of this item moved on: continue from there, paused or playing as this one was.</summary>
+    public void ContinueAt(int ms)
+    {
+        if (!IsVideo || _video == null) return;
+        _video.Seek(ms);
+        _startedAtMs = ms;
+        VideoPosition = ms;
+        Notice = "";
+    }
 
     /// <summary>Where a video starts: its first moment, or the matching frame.</summary>
     private int StartOf(PlaylistEntry entry) => entry.Item.IsVideo && MomentsOf(entry) is { } m ? m[0].StartMs : entry.StartMs;
