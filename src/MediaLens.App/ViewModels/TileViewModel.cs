@@ -26,6 +26,9 @@ public sealed partial class TileViewModel : ObservableObject
 
     public bool IsVideo => Item.IsVideo;
 
+    /// <summary>A 360 photo or video (Insta360 original): can be looked around in.</summary>
+    public bool Is360 => Media.Fisheye360.IsDualFisheye(Item.RelPath);
+
     public string? DurationText => Item.DurationMs is { } ms ? Format.Duration(ms) : null;
 
     public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "");

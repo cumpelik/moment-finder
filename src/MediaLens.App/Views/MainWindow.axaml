@@ -31,6 +31,13 @@
                     <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Full screen (or double click the picture)">
                         <mi:MaterialIcon Kind="Fullscreen" Width="18" Height="18" Foreground="White" />
                     </Button>
+                    <Border Classes="badge" IsVisible="{Binding Is360}" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                            ToolTip.Tip="360: drag to look around">
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <mi:MaterialIcon Kind="Rotate360" Width="13" Height="13" Foreground="White" />
+                            <TextBlock Text="360" />
+                        </StackPanel>
+                    </Border>
                     <Border Classes="badge" IsVisible="{Binding IsVideo}"
                             HorizontalAlignment="Right" VerticalAlignment="Bottom">
                         <StackPanel Orientation="Horizontal" Spacing="3">
