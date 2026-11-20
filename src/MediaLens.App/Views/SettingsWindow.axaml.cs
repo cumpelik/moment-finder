@@ -13,10 +13,12 @@ public partial class SettingsWindow : Window
 
     public SettingsWindow(MainViewModel main) : this()
     {
-        DataContext = main;
+        // The cloud part first: set after the window's own, it would for a moment inherit the main view model,
+        // and its bindings (compiled for the cloud one) would fail on it.
         var cloud = main.CreateLibraryCloudViewModel();
         cloud.RestartRequested += Restart;
         CloudPanel.DataContext = cloud;
+        DataContext = main;
     }
 
     private LibraryCloudViewModel? Cloud => CloudPanel.DataContext as LibraryCloudViewModel;
