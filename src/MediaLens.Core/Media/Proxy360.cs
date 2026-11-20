@@ -27,7 +27,7 @@ public static class Proxy360
     {
         if (Dir == null || !File.Exists(item.FullPath)) return null;
         var info = new FileInfo(item.FullPath);
-        return Path.Combine(Dir, $"{item.Id}_{info.Length}_{info.LastWriteTimeUtc.Ticks}.mp4");
+        return Path.Combine(Dir, $"{item.Id}_{info.Length}_{info.LastWriteTimeUtc.Ticks}_e2.mp4");
     }
 
     /// <summary>The copy if it is there already.</summary>
@@ -82,7 +82,17 @@ public static class Proxy360
             {
                 try
                 {
-                    var ok = await FFmpeg.Make360ProxyAsync(item.FullPath, target, (item.DurationMs ?? 0) / 1000.0, progress, cts.Token);
+                    var model = Fisheye360.ModelOf(item.FullPath);
+                    var motion = Fisheye360.MotionOf(item.FullPath);
+                    var seconds = (item.DurationMs ?? 0) / 1000.0;
+                    var fps = await FFmpeg.FrameRateAsync(item.FullPath, cts.Token);
+                    var ok = await FFmpeg.Make360ProxyAsync(item.FullPath, target, (int)(seconds * fps), fps,
+                        (frame, lenses, picture) =>
+                        {
+                            var at = frame / fps;
+                            Fisheye360.RenderEquirect(lenses, FFmpeg.Proxy360Lens, picture, FFmpeg.Proxy360Width, FFmpeg.Proxy360Height,
+                                model, motion?.LensFromLevel(at) ?? Rot3.Identity);
+                        }, progress, cts.Token);
                     Trim();
                     return ok ? target : null;
                 }
@@ -110,6 +120,9 @@ public static class Proxy360
     private static void Trim()
     {
         if (Dir == null || !Directory.Exists(Dir)) return;
+        // Copies of an earlier kind (both lenses side by side) are not played any more.
+        foreach (var old in new DirectoryInfo(Dir).GetFiles("*.mp4").Where(f => !f.Name.EndsWith("_e2.mp4", StringComparison.Ordinal)))
+            try { old.Delete(); } catch (IOException) { }
         long total = 0;
         foreach (var f in new DirectoryInfo(Dir).GetFiles("*.mp4").OrderByDescending(f => f.LastAccessTimeUtc))
         {

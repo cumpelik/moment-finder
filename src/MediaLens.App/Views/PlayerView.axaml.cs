@@ -49,8 +49,8 @@ public partial class PlayerView : UserControl
         {
             if (!e.GetCurrentPoint(Root).Properties.IsLeftButtonPressed) return;
             // The controls (time line, buttons) handle their own mouse: no turning the view, no box under them.
-            if (e.Source is Visual onControls && onControls.GetSelfAndVisualAncestors()
-                    .Any(v => v == Overlay || v is Avalonia.Controls.Primitives.TemplatedControl and not UserControl))
+            if (e.Source is Visual onControls && onControls.GetSelfAndVisualAncestors().TakeWhile(v => v != Root)
+                    .Any(v => v == Overlay || v is Button or Slider or ComboBox))
             {
                 _pressedBox = null;
                 _dragFrom = null;

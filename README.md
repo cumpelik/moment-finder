@@ -25,9 +25,10 @@ and then work offline. Windows, Linux and macOS.
   with each mirror run; Import names brings it into another library, matched by file content.
 - **360 photos and videos** (Insta360 .insv / .insp originals): drag to look around, the wheel zooms; the search
   and the people analysis look at six views around, and with only someone's moments the view turns to them.
-  Two 4K fisheye streams do not decode in real time without a graphics card, so a light playing copy (both lenses
-  side by side, 1536 px each, about a sixth of the size) is made in the background, or first when a video is opened;
-  until it is there the front lens plays. The copies are kept up to 20 GB.
+  The camera's gyroscope and accelerometer (in the file's trailer) level the picture: the horizon stays level and
+  people upright however the selfie stick is held, also for the analysis. Two 4K fisheye streams do not decode in
+  real time everywhere, so a light playing copy (one leveled 2880 x 1440 picture, encoded with the graphics card
+  where ffmpeg has one) is made in the background, or first when a video is opened, with its progress and a Stop.
 - **Apple Photos** (macOS): with "Download Originals to this Mac" the originals of the Photos library are
   regular files; Sources + offers the library (needs the Photos or Full Disk Access permission).
 

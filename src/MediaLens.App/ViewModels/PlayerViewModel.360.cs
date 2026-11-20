@@ -36,6 +36,7 @@ public sealed partial class PlayerViewModel
     private string Path360(Library.MediaItem item, string original, int version)
     {
         View.ClearLens(1);
+        View.UseLenses();
         Preparing360 = false;
         if (Media.Proxy360.Ready(item) is { } proxy)
         {
@@ -66,7 +67,8 @@ public sealed partial class PlayerViewModel
         if (!Preparing360 || Media.Proxy360.Progress(Current.Item) is not { } p) return;
         PrepareProgress = p.Done * 100;
         PrepareText = $"Preparing this 360 video for smooth playing: {p.Done * 100:0} %" +
-                      (p.Left is { } left ? $", about {Services.Format.Span(left)} left" : "");
+                      (p.Left is { } left ? $", about {Services.Format.Span(left)} left" : "") +
+                      (Media.FFmpeg.Encoder360 is { } encoder ? encoder == "libx264" ? " (on the processor)" : " (with the graphics card)" : "");
     }
 
     /// <summary>Stop: no copy now; the front lens plays as it can (opening the video again prepares it again).</summary>
@@ -103,15 +105,8 @@ public sealed partial class PlayerViewModel
             Lens(0, pixels, width, height);
             return;
         }
-        // Both lenses side by side.
-        var half = width / 2;
-        foreach (var lens in new[] { 0, 1 })
-        {
-            if (_split.Length != half * height * 4) _split = new byte[half * height * 4];
-            for (var y = 0; y < height; y++)
-                Buffer.BlockCopy(pixels, (y * width + lens * half) * 4, _split, y * half * 4, half * 4);
-            View.SetLens(lens, _split, half, height);
-        }
+        // The playing copy: one leveled picture of everything around.
+        View.SetEquirect(pixels, width, height);
         Render360();
     }
 
@@ -209,6 +204,7 @@ public sealed partial class PlayerViewModel
             return;
         }
         // Both lens circles side by side.
+        View.UseLenses();
         var half = decoded.Width / 2;
         foreach (var lens in new[] { 0, 1 })
         {

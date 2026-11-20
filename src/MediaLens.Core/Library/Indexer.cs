@@ -367,7 +367,8 @@ public sealed class Indexer : IDisposable
         {
             var files = new List<(int TimeMs, string Path)>();
             foreach (var (time, lens0, lens1) in moments)
-                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100, Fisheye360.ModelOf(item.FullPath)).ToList(), ct))
+                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100, Fisheye360.ModelOf(item.FullPath),
+                             item.IsVideo ? Fisheye360.LevelAt(item.FullPath, time / 1000.0) : null).ToList(), ct))
                 {
                     var file = Path.Combine(dir, $"{time}_{(int)yaw}.jpg");
                     view.SaveJpeg(file, 85);

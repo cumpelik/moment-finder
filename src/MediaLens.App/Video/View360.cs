@@ -50,7 +50,78 @@ public sealed class View360
         Output = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
     }
 
-    public bool HasPicture => _lens[0] != null;
+    public bool HasPicture => _lens[0] != null || _equirect != null;
+
+    private uint[]? _equirect;
+    private int _eqW, _eqH;
+    private float[] _grid = [];
+
+    /// <summary>A leveled equirectangular frame (the playing copy of a 360 video), BGRA, copied.</summary>
+    public void SetEquirect(byte[] bgra, int width, int height)
+    {
+        if (_equirect == null || _equirect.Length != width * height) _equirect = new uint[width * height];
+        (_eqW, _eqH) = (width, height);
+        Buffer.BlockCopy(bgra, 0, _equirect, 0, width * height * 4);
+    }
+
+    /// <summary>Back to the two lens images (a photo, or a video without its playing copy).</summary>
+    public void UseLenses() => _equirect = null;
+
+    /// <summary>
+    /// The view from an equirectangular frame: where each view pixel is on the map, computed on a grid of 8 pixels
+    /// (cheap enough for every frame and every mouse move) and interpolated.
+    /// </summary>
+    private void RenderEquirect(uint[] source)
+    {
+        const int cell = 8;
+        int gw = Width / cell + 2, gh = Height / cell + 2;
+        if (_grid.Length != gw * gh * 2) _grid = new float[gw * gh * 2];
+        if (_pixels.Length != Width * Height) _pixels = new int[Width * Height];
+        var grid = _grid;
+        Parallel.For(0, gh, gj =>
+        {
+            for (var gi = 0; gi < gw; gi++)
+            {
+                var (x, y, z) = Fisheye360.ViewRay(Yaw, Pitch, Fov, Width, Height, gi * cell, gj * cell);
+                var (u, v) = Fisheye360.ToEquirect(x, y, z);
+                grid[(gj * gw + gi) * 2] = (float)(u * _eqW);
+                grid[(gj * gw + gi) * 2 + 1] = (float)(v * _eqH);
+            }
+        });
+        var pixels = _pixels;
+        int w = _eqW, h = _eqH;
+        Parallel.For(0, Height, j =>
+        {
+            var gj = j / cell;
+            var fy = (j % cell) / (float)cell;
+            for (var i = 0; i < Width; i++)
+            {
+                var gi = i / cell;
+                var fx = (i % cell) / (float)cell;
+                var a = (gj * gw + gi) * 2;
+                var b = a + gw * 2;
+                float u00 = grid[a], u10 = grid[a + 2], u01 = grid[b], u11 = grid[b + 2];
+                // A cell across the seam behind the camera: its corners are brought to the same side.
+                if (Math.Abs(u10 - u00) > w / 2f || Math.Abs(u01 - u00) > w / 2f || Math.Abs(u11 - u00) > w / 2f)
+                {
+                    if (u00 < w / 2f) u00 += w;
+                    if (u10 < w / 2f) u10 += w;
+                    if (u01 < w / 2f) u01 += w;
+                    if (u11 < w / 2f) u11 += w;
+                }
+                var u = (u00 * (1 - fx) + u10 * fx) * (1 - fy) + (u01 * (1 - fx) + u11 * fx) * fy;
+                var v = (grid[a + 1] * (1 - fx) + grid[a + 3] * fx) * (1 - fy) + (grid[b + 1] * (1 - fx) + grid[b + 3] * fx) * fy;
+                var sx = (int)u % w;
+                var sy = Math.Clamp((int)v, 0, h - 1);
+                pixels[j * Width + i] = (int)source[sy * w + sx];
+            }
+        });
+        using var fb = Output.Lock();
+        if (fb.RowBytes == Width * 4) Marshal.Copy(pixels, 0, fb.Address, pixels.Length);
+        else
+            for (var y = 0; y < Height; y++)
+                Marshal.Copy(pixels, y * Width, fb.Address + y * fb.RowBytes, Width);
+    }
 
     /// <summary>The second lens is not there yet (being prepared): its half of the sphere stays dark.</summary>
     public void ClearLens(int lens) => _lens[lens] = null;
@@ -84,6 +155,11 @@ public sealed class View360
     /// <summary>The view into Output; false until both lenses have a picture.</summary>
     public bool Render()
     {
+        if (_equirect is { } equirect)
+        {
+            RenderEquirect(equirect);
+            return true;
+        }
         if (_lens[0] is not { } a) return false;
         if (_dirty) BuildMap();
         var b = _lens[1];

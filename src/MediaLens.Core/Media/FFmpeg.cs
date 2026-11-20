@@ -234,56 +234,124 @@ public static class FFmpeg
         return result;
     }
 
+    /// <summary>Frames a second of the first video stream (25 when it cannot be read).</summary>
+    public static async Task<double> FrameRateAsync(string file, CancellationToken ct = default)
+    {
+        if (FfprobePath.Value is not { } ffprobe) return 25;
+        var (_, text, _) = await RunAsync(ffprobe,
+            ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", file], ct);
+        var parts = text.Trim().Split('/');
+        return parts.Length == 2 && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var n) &&
+               double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && d > 0 && n > 0 ? n / d : 25;
+    }
+
+    /// <summary>The H.264 encoders of graphics cards, tried in this order before the CPU one.</summary>
+    private static readonly string[] HardwareEncoders = ["h264_nvenc", "h264_qsv", "h264_amf"];
+    private static string? _encoder;
+
+    /// <summary>The fastest H.264 encoder that works here (a short test encode of each, once).</summary>
+    private static async Task<string> PickEncoderAsync(string ffmpeg, CancellationToken ct)
+    {
+        if (_encoder != null) return _encoder;
+        foreach (var candidate in HardwareEncoders)
+        {
+            var (code, _, _) = await RunAsync(ffmpeg,
+                ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=1920x960:r=25", "-frames:v", "5", "-c:v", candidate, "-f", "null", "-"], ct);
+            if (code == 0) return _encoder = candidate;
+        }
+        return _encoder = "libx264";
+    }
+
+    /// <summary>Which encoder the 360 copies use ("h264_nvenc": the graphics card; "libx264": the processor).</summary>
+    public static string? Encoder360 => _encoder;
+
     /// <summary>
-    /// A light copy of a 360 video for playing: both lenses side by side at 1536 px each in one H.264 stream (about a
-    /// sixth of the original's size). Two 4K HEVC streams do not decode in real time without a graphics card; this
-    /// one plays anywhere. Made with hardware decoding where there is some.
+    /// A light copy of a 360 video for playing: one leveled equirectangular picture (2880 x 1440) in one H.264
+    /// stream. Two 4K HEVC streams do not decode in real time everywhere; this one plays anywhere, and its horizon is
+    /// level whatever way the camera was held. One ffmpeg decodes both lenses (with the graphics card where there
+    /// is one), level turns every frame, a second ffmpeg encodes it with the sound of the original.
     /// </summary>
-    /// <param name="progress">How far it is, 0..1 (from ffmpeg's -progress output against the length).</param>
-    public static async Task<bool> Make360ProxyAsync(string file, string outFile, double durationSeconds, IProgress<double>? progress,
-        CancellationToken ct = default)
+    /// <param name="level">Turns a frame of both lenses side by side (BGRA) into the output picture (BGRA).</param>
+    /// <param name="progress">How far it is, 0..1.</param>
+    public static async Task<bool> Make360ProxyAsync(string file, string outFile, int frameCount, double fps,
+        Action<int, byte[], byte[]> level, IProgress<double>? progress, CancellationToken ct = default)
     {
         if (FfmpegPath.Value is not { } ffmpeg) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
         var tmp = outFile + ".part.mp4";
-        var psi = new ProcessStartInfo(ffmpeg)
+        var encoder = await PickEncoderAsync(ffmpeg, ct);
+        var rate = fps.ToString("0.###", CultureInfo.InvariantCulture);
+        using var decode = Start(ffmpeg,
+        [
+            "-v", "error", "-hwaccel", "auto", "-i", file,
+            "-filter_complex", $"[0:v:0]scale={Proxy360Lens}:{Proxy360Lens}[a];[0:v:1]scale={Proxy360Lens}:{Proxy360Lens}[b];[a][b]hstack",
+            "-f", "rawvideo", "-pix_fmt", "bgra", "-",
+        ]);
+        string[] quality = encoder == "libx264" ? ["-preset", "veryfast", "-crf", "24"] : ["-b:v", "14M", "-maxrate", "20M"];
+        using var encode = Start(ffmpeg,
+        [
+            "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgra", "-s", $"{Proxy360Width}x{Proxy360Height}", "-r", rate, "-i", "-",
+            "-i", file, "-map", "0:v", "-map", "1:a?", "-c:v", encoder, .. quality, "-pix_fmt", "yuv420p", "-g", "30", "-c:a", "copy",
+            "-shortest", tmp,
+        ]);
+        var decodeErrors = decode.StandardError.ReadToEndAsync(CancellationToken.None);
+        var encodeErrors = encode.StandardError.ReadToEndAsync(CancellationToken.None);
+        var input = new byte[Proxy360Lens * 2 * Proxy360Lens * 4];
+        var output = new byte[Proxy360Width * Proxy360Height * 4];
+        try
+        {
+            var source = decode.StandardOutput.BaseStream;
+            var sink = encode.StandardInput.BaseStream;
+            for (var frame = 0; ; frame++)
+            {
+                var read = 0;
+                while (read < input.Length)
+                {
+                    var n = await source.ReadAsync(input.AsMemory(read), ct);
+                    if (n == 0) break;
+                    read += n;
+                }
+                if (read < input.Length) break;
+                level(frame, input, output);
+                await sink.WriteAsync(output, ct);
+                if (frameCount > 0) progress?.Report(Math.Min(1, (frame + 1) / (double)frameCount));
+            }
+            encode.StandardInput.Close();
+            await encode.WaitForExitAsync(ct);
+            await decode.WaitForExitAsync(ct);
+        }
+        catch (Exception e) when (e is OperationCanceledException or IOException)
+        {
+            foreach (var p in new[] { decode, encode })
+                try { if (!p.HasExited) p.Kill(true); } catch (InvalidOperationException) { }
+            try { await encode.WaitForExitAsync(CancellationToken.None); File.Delete(tmp); } catch (IOException) { }
+            if (e is OperationCanceledException) throw;
+            return false;
+        }
+        await decodeErrors;
+        await encodeErrors;
+        if (encode.ExitCode != 0 || !File.Exists(tmp)) return false;
+        File.Move(tmp, outFile, true);
+        return true;
+    }
+
+    /// <summary>The playing copy: each lens decoded at this size, the leveled picture at this size.</summary>
+    public const int Proxy360Lens = 1440;
+    public const int Proxy360Width = 2880;
+    public const int Proxy360Height = 1440;
+
+    private static Process Start(string exe, IEnumerable<string> args)
+    {
+        var psi = new ProcessStartInfo(exe)
         {
             RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
             UseShellExecute = false, CreateNoWindow = true,
         };
-        foreach (var a in new[]
-                 {
-                     "-v", "error", "-nostats", "-progress", "pipe:1", "-y", "-hwaccel", "auto", "-i", file,
-                     "-filter_complex", "[0:v:0]scale=1536:1536[a];[0:v:1]scale=1536:1536[b];[a][b]hstack",
-                     "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-g", "25", "-c:a", "copy", tmp,
-                 })
-            psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start ffmpeg");
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        var p = Process.Start(psi) ?? throw new InvalidOperationException($"Cannot start {exe}");
         try { p.PriorityClass = ProcessPriorityClass.BelowNormal; }
         catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
-        p.StandardInput.Close();
-        var stderr = p.StandardError.ReadToEndAsync(CancellationToken.None);
-        try
-        {
-            while (await p.StandardOutput.ReadLineAsync(ct) is { } line)
-            {
-                // out_time_us=12345678 (microseconds written so far)
-                if (durationSeconds > 0 && line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
-                    long.TryParse(line.AsSpan(12), out var us))
-                    progress?.Report(Math.Clamp(us / 1e6 / durationSeconds, 0, 1));
-            }
-            await p.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try { p.Kill(true); } catch (InvalidOperationException) { }
-            try { await p.WaitForExitAsync(CancellationToken.None); File.Delete(tmp); } catch (IOException) { }
-            throw;
-        }
-        await stderr;
-        if (p.ExitCode != 0 || !File.Exists(tmp)) return false;
-        File.Move(tmp, outFile, true);
-        return true;
+        return p;
     }
 
     /// <summary>The two lens images of a dual fisheye video at a moment (for a thumbnail).</summary>

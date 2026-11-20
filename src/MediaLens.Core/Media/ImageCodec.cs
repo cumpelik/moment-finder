@@ -50,6 +50,7 @@ public static class ImageCodec
     private static async Task<bool> Create360ThumbnailAsync(MediaItem item, string outJpeg, CancellationToken ct)
     {
         RgbImage lens0, lens1;
+        Rot3? level = null;
         if (item.IsVideo)
         {
             var dir = Path.Combine(Path.GetTempPath(), "medialens-360-" + Guid.NewGuid().ToString("N"));
@@ -58,6 +59,7 @@ public static class ImageCodec
                 var duration = (item.DurationMs ?? 0) / 1000.0;
                 var frame = await FFmpeg.ExtractDualFrameAsync(item.FullPath, duration > 0 ? Math.Min(1.0, duration * 0.1) : 0, dir, 768, ct);
                 if (frame == null) return false;
+                level = Fisheye360.LevelAt(item.FullPath, frame.TimeMs / 1000.0);
                 (lens0, lens1) = (RgbImage.Load(frame.Lens0, 768), RgbImage.Load(frame.Lens1, 768));
             }
             finally
@@ -68,7 +70,7 @@ public static class ImageCodec
         else
             (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(item.FullPath, 1536)), ct);
         await Task.Run(() => Fisheye360.RenderView(lens0, lens1, 0, Fisheye360.DefaultPitch, Fisheye360.DefaultFov, (int)ThumbSize, (int)ThumbSize * 3 / 4,
-                Fisheye360.ModelOf(item.FullPath))
+                Fisheye360.ModelOf(item.FullPath), level)
             .SaveJpeg(outJpeg, 82), ct);
         return true;
     }

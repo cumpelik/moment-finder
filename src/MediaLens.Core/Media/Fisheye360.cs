@@ -105,7 +105,7 @@ public static class Fisheye360
 
     /// <summary>A perspective view rendered from the two lens images (bilinear).</summary>
     public static RgbImage RenderView(RgbImage lens0, RgbImage lens1, double yawDeg, double pitchDeg, double hfovDeg, int width, int height,
-        LensModel? model = null)
+        LensModel? model = null, Rot3? lensFromLevel = null)
     {
         var data = new byte[width * height * 3];
         Parallel.For(0, height, j =>
@@ -113,6 +113,8 @@ public static class Fisheye360
             for (var i = 0; i < width; i++)
             {
                 var (x, y, z) = ViewRay(yawDeg, pitchDeg, hfovDeg, width, height, i + 0.5, j + 0.5);
+                // The view is in the leveled world; the lenses are wherever the camera was held.
+                if (lensFromLevel is { } rot) (x, y, z) = rot.Apply(x, y, z);
                 var w = FrontWeight(z);
                 var o = (j * width + i) * 3;
                 var (u0, v0) = InLens(0, x, y, z, model);
@@ -144,12 +146,12 @@ public static class Fisheye360
     /// equirectangular map would bend people out of shape. Neighbours overlap, so nobody is cut in half everywhere.
     /// </summary>
     public static IEnumerable<(double Yaw, RgbImage View)> ViewsAround(RgbImage lens0, RgbImage lens1, int count, int width, int height, double hfov,
-        LensModel? model = null)
+        LensModel? model = null, Rot3? lensFromLevel = null)
     {
         for (var k = 0; k < count; k++)
         {
             var yaw = 360.0 * k / count;
-            yield return (yaw, RenderView(lens0, lens1, yaw, DefaultPitch, hfov, width, height, model));
+            yield return (yaw, RenderView(lens0, lens1, yaw, DefaultPitch, hfov, width, height, model, lensFromLevel));
         }
     }
 
@@ -219,6 +221,83 @@ public static class Fisheye360
         var (y0, y1) = (Clamp(ys.Min(), height), Clamp(ys.Max(), height));
         if (x1 <= 0 || y1 <= 0 || x0 >= width || y0 >= height || x1 - x0 < 2 || y1 - y0 < 2) return null;
         return (x0, y0, x1 - x0, y1 - y0);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Insta360Motion?> Motions = new();
+
+    /// <summary>How the camera was held through a video (null: not recorded, the picture stays as the camera saw it).</summary>
+    public static Insta360Motion? MotionOf(string path) => Motions.GetOrAdd(path, p => Insta360Motion.Load(p));
+
+    /// <summary>The rotation that levels a file's picture at a moment.</summary>
+    public static Rot3? LevelAt(string path, double seconds) => MotionOf(path)?.LensFromLevel(seconds);
+
+    /// <summary>
+    /// Both lenses (side by side, BGRA) as one leveled equirectangular picture (BGRA): the playing copy of a 360 video.
+    /// The lens positions are computed on a grid of 8 pixels and interpolated, the pixels sampled bilinearly.
+    /// </summary>
+    public static void RenderEquirect(byte[] sideBySide, int lensSize, byte[] output, int width, int height, LensModel model, Rot3 lensFromLevel)
+    {
+        const int cell = 8;
+        int gw = width / cell + 2, gh = height / cell + 2;
+        var grid = new float[gw * gh * 5];
+        Parallel.For(0, gh, gj =>
+        {
+            for (var gi = 0; gi < gw; gi++)
+            {
+                var (yaw, pitch) = FromEquirect((gi * cell + 0.5) / width, (gj * cell + 0.5) / height);
+                var (x, y, z) = Direction(yaw, pitch);
+                (x, y, z) = lensFromLevel.Apply(x, y, z);
+                var (u0, v0) = InLens(0, x, y, z, model);
+                var (u1, v1) = InLens(1, x, y, z, model);
+                var o = (gj * gw + gi) * 5;
+                grid[o] = (float)(u0 * lensSize);
+                grid[o + 1] = (float)(v0 * lensSize);
+                grid[o + 2] = (float)(u1 * lensSize);
+                grid[o + 3] = (float)(v1 * lensSize);
+                grid[o + 4] = (float)z;
+            }
+        });
+        var stride = lensSize * 2 * 4;
+        var band = (float)SeamBand;
+        Parallel.For(0, height, j =>
+        {
+            var gj = j / cell;
+            var fy = (j % cell) / (float)cell;
+            for (var i = 0; i < width; i++)
+            {
+                var gi = i / cell;
+                var fx = (i % cell) / (float)cell;
+                var a = (gj * gw + gi) * 5;
+                var b = a + gw * 5;
+                float G(int c) => (grid[a + c] * (1 - fx) + grid[a + 5 + c] * fx) * (1 - fy) + (grid[b + c] * (1 - fx) + grid[b + 5 + c] * fx) * fy;
+                var z = G(4);
+                var weight = Math.Clamp(0.5f + z / (2 * band), 0, 1);
+                var o = (j * width + i) * 4;
+                if (weight >= 1) Sample(sideBySide, stride, lensSize, 0, G(0), G(1), output, o, 1);
+                else if (weight <= 0) Sample(sideBySide, stride, lensSize, lensSize, G(2), G(3), output, o, 1);
+                else
+                {
+                    Sample(sideBySide, stride, lensSize, 0, G(0), G(1), output, o, 1);
+                    Sample(sideBySide, stride, lensSize, lensSize, G(2), G(3), output, o, 1 - weight);
+                }
+                output[o + 3] = 255;
+            }
+        });
+    }
+
+    /// <summary>Bilinear sample of one lens (at xOffset in the side by side frame) into output; share below 1 mixes with what is there.</summary>
+    private static void Sample(byte[] src, int stride, int lensSize, int xOffset, float u, float v, byte[] output, int o, float share)
+    {
+        u = Math.Clamp(u - 0.5f, 0, lensSize - 1.001f);
+        v = Math.Clamp(v - 0.5f, 0, lensSize - 1.001f);
+        int x0 = (int)u, y0 = (int)v;
+        float fx = u - x0, fy = v - y0;
+        var p = y0 * stride + (xOffset + x0) * 4;
+        for (var c = 0; c < 3; c++)
+        {
+            var value = (src[p + c] * (1 - fx) + src[p + 4 + c] * fx) * (1 - fy) + (src[p + stride + c] * (1 - fx) + src[p + stride + 4 + c] * fx) * fy;
+            output[o + c] = (byte)(share >= 1 ? value : output[o + c] * (1 - share) + value * share);
+        }
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, LensModel> Calibrations = new();

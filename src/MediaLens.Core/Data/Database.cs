@@ -181,6 +181,8 @@ public sealed class Database
         UPDATE media SET thumb_state=0, analysis_version=0, people_version=0
         WHERE lower(rel_path) LIKE '%.insv' OR lower(rel_path) LIKE '%.insp';
         """,
+        // 360 videos are leveled by the camera's gyroscope: analyzed again in the leveled world.
+        "UPDATE media SET thumb_state=0, analysis_version=0, people_version=0 WHERE lower(rel_path) LIKE '%.insv';",
     ];
 
     /// <summary>
