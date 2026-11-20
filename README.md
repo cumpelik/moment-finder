@@ -17,12 +17,18 @@ and then work offline. Windows, Linux and macOS.
 - **Viewer and slideshow**: Play all, Shuffle, photos for N seconds, videos whole or only the matching part.
 - **Buckets** (a photo book): `B` adds the selection, `Ctrl+Left/Right` changes the order, Copy to folder
   exports the originals numbered `001_`, `002_`...
-- **Cloud and backup** (via rclone): OneDrive, Google Drive, S3 (Amazon, Backblaze, Wasabi, MinIO...) or a
-  NAS folder. Mirrors upload new and changed files of a source every few hours and never delete in the cloud.
-  With a password everything is encrypted before upload (rclone crypt: contents and names), and readable
-  only with the password, also with plain rclone. A cloud folder can be browsed as a source (files are
-  fetched on demand into a size-limited cache) or restored. The index (names, people, buckets) is backed up
-  with each mirror run; Import names brings it into another library, matched by file content.
+- **Cloud and backup** (via rclone): OneDrive, Google Drive, S3 (Amazon, IDrive e2, Backblaze, Wasabi, MinIO...)
+  or a NAS folder. Everything is encrypted on this computer before the upload (rclone crypt: contents and names)
+  with a key the application makes itself. Mirrors upload new and changed files of a source every few hours,
+  into a folder named after the computer, and never delete in the cloud. The **library itself** is backed up too:
+  index (names, people, buckets, sources, settings), search vectors, thumbnails and the clouds' settings.
+- **Recovery string**: one string (Backup, Show my recovery string) holds the way to the storage and the key.
+  On a new or second computer, paste it (Backup, or the start screen of an empty library): the library comes
+  back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
+  size-limited cache when opened. Whoever has the string can read the backup; without it nobody can.
+  Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
+- **Moved files**: a photo or video moved or renamed (also to another source) is recognized by its content
+  and keeps its thumbnail, people, buckets and analysis.
 - **360 photos and videos** (Insta360 .insv / .insp originals): drag to look around, the wheel zooms; the search
   and the people analysis look at six views around, and with only someone's moments the view turns to them.
   The camera's gyroscope and accelerometer (in the file's trailer) level the picture: the horizon stays level and
@@ -86,6 +92,7 @@ medialens bucket export "Fotokniha" ~/Desktop/fotokniha
 medialens cloud add-onedrive Backup --password ...
 medialens mirror add <source> <cloud> / mirror run
 medialens cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>
+medialens backup run / recovery show / recovery restore <string>
 ```
 
 (`dotnet run --project src/MediaLens.Cli -- <command>` in a development build.)

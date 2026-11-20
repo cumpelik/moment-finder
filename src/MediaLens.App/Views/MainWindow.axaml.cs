@@ -616,6 +616,13 @@ public partial class MainWindow : Window
 
     private void OnRescanEntry(object? sender, RoutedEventArgs e) => _vm?.RescanCommand.Execute(null);
 
+    private async void OnLocateEntry(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = $"Where is \"{entry.Name}\" now?" });
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path) _vm.RelocateSource(entry, path);
+    }
+
     private async void OnRemoveEntry(object? sender, RoutedEventArgs e)
     {
         if (_vm == null || EntryOf(sender) is not { } entry) return;

@@ -99,6 +99,7 @@
                                 <ContextMenu IsVisible="{Binding HasMenu}">
                                     <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
+                                    <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding CanRescan}" />
                                     <MenuItem Header="{Binding RemoveText}" Click="OnRemoveEntry" IsVisible="{Binding CanRemove}" />
                                 </ContextMenu>
                             </Grid.ContextMenu>
@@ -513,6 +514,14 @@
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <mi:MaterialIcon Kind="FolderPlusOutline" />
                         <TextBlock Text="Add folder..." />
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="or" Classes="muted" HorizontalAlignment="Center" />
+                <Button HorizontalAlignment="Center" Click="OnOpenCloud"
+                        ToolTip.Tip="A library backed up from another computer comes back with its names, people and folders">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <mi:MaterialIcon Kind="CloudDownloadOutline" />
+                        <TextBlock Text="I have a recovery string: bring my library back..." />
                     </StackPanel>
                 </Button>
             </StackPanel>

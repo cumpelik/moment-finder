@@ -39,6 +39,9 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           cloud import-index <cloud id>    names, people and buckets from the cloud's index backup
           mirror add <source id> <cloud id>
           mirror run [mirror id]
+          backup run                       the library (index, search data, thumbnails, clouds) into its cloud
+          recovery show                    the recovery string: brings the library back on any computer
+          recovery restore <string>        bring a library back (the newest backup the string leads to)
           bucket list
           bucket create <name>
           bucket add <name> <query...>     add search results to a bucket
@@ -247,6 +250,47 @@ switch (args[0])
             Console.WriteLine($"in  {name} {meta.ElementDataType} [{string.Join(',', meta.Dimensions)}]");
         foreach (var (name, meta) in session.OutputMetadata)
             Console.WriteLine($"out {name} {meta.ElementDataType} [{string.Join(',', meta.Dimensions)}]");
+        return 0;
+    }
+
+    case "backup" when args.Length >= 2 && args[1] == "run":
+    {
+        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Add a cloud first (cloud add-s3, add-folder...)");
+        try
+        {
+            await host.Cloud.Backup.RunAsync(cloud, full: true, new Progress<string>(what => Console.Write($"\r  {what,-50}")), ct);
+        }
+        catch (MediaLens.Cloud.RcloneException e)
+        {
+            return Fail(e.Message);
+        }
+        Console.WriteLine($"\rThe library is backed up to {cloud.Name}" + new string(' ', 30));
+        return 0;
+    }
+
+    case "recovery" when args.Length >= 2 && args[1] == "show":
+    {
+        if (host.Cloud.BackupCloud is not { } cloud) return Fail("Add a cloud first (cloud add-s3, add-folder...)");
+        Console.WriteLine(await host.Cloud.RecoveryStringAsync(cloud, ct));
+        return 0;
+    }
+
+    case "recovery" when args.Length >= 3 && args[1] == "restore":
+    {
+        if (MediaLens.Cloud.RecoveryString.Parse(args[2]) is not { } recovery) return Fail("This is not a recovery string");
+        try
+        {
+            var restore = new MediaLens.Cloud.LibraryRestore(host.Paths);
+            var found = await restore.FindAsync(recovery, ct);
+            if (found.Count == 0) return Fail("The storage answers, but there is no library backup in it");
+            Console.WriteLine(found[0].Title);
+            await restore.DownloadAsync(recovery, found[0], thumbnails: true, new Progress<string>(what => Console.Write($"\r  {what,-50}")), ct);
+        }
+        catch (MediaLens.Cloud.RcloneException e)
+        {
+            return Fail(e.Message);
+        }
+        Console.WriteLine("\rDownloaded; the library takes its place at the next start of MediaLens (or of this tool).");
         return 0;
     }
 

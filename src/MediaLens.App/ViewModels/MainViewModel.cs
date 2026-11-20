@@ -154,7 +154,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var sources = _host.Repo.ListSources();
         var counts = _host.Repo.CountBySource();
         foreach (var s in sources)
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Source, s.Id, s.Name, counts.GetValueOrDefault(s.Id).ToString("N0"), s.Root));
+        {
+            // A folder of a library restored from another computer, or a disk that is not connected.
+            var away = s.Kind == SourceKinds.Local && !Directory.Exists(s.Root);
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Source, s.Id, away ? s.Name + " (not here)" : s.Name, counts.GetValueOrDefault(s.Id).ToString("N0"),
+                away ? $"{s.Root} is not on this computer. Right click, Locate folder: say where it is now."
+                : s.Kind == SourceKinds.Cloud ? $"In the cloud: files are fetched when opened ({s.Remote})" : s.Root));
+        }
         IsLibraryEmpty = sources.Count == 0;
         var persons = _host.People.ListPersons();
         var clusters = _host.People.UnnamedClusters();
@@ -285,6 +291,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         using var c = _host.Db.Open();
         Dapper.SqlMapper.Execute(c, "UPDATE source SET name='Apple Photos' WHERE root=@path", new { path });
         RebuildSidebar();
+    }
+
+    /// <summary>The folder of a source is somewhere else on this computer: the same files are found there again.</summary>
+    public void RelocateSource(SidebarEntry entry, string folder)
+    {
+        _host.Repo.SetSourceRoot(entry.Id, folder);
+        RebuildSidebar();
+        _host.Indexer.RequestScan();
     }
 
     public void RemoveSource(SidebarEntry entry)

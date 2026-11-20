@@ -22,9 +22,6 @@ public sealed partial class CloudViewModel : ObservableObject
 
     [ObservableProperty] private int _kindIndex;
     [ObservableProperty] private string _name = "";
-    [ObservableProperty] private bool _encrypt = true;
-    [ObservableProperty] private string _password = "";
-    [ObservableProperty] private string _passwordAgain = "";
     [ObservableProperty] private string _bucket = "";
     [ObservableProperty] private string _accessKey = "";
     [ObservableProperty] private string _secretKey = "";
@@ -69,10 +66,111 @@ public sealed partial class CloudViewModel : ObservableObject
         if (value >= 1) _host.Mirrors.IntervalHours = value;
     }
 
+    // ---- the library in the cloud and the way back ----
+
+    public ObservableCollection<LibraryRestore.Found> FoundBackups { get; } = [];
+    public bool HasClouds => Clouds.Count > 0;
+    public bool HasFoundBackups => FoundBackups.Count > 0;
+
+    [ObservableProperty] private string _backupSummary = "";
+    [ObservableProperty] private CloudInfo? _backupCloud;
+    /// <summary>The recovery string, once asked for (or right after the first cloud is added).</summary>
+    [ObservableProperty] private string _recoveryText = "";
+    [ObservableProperty] private string _restoreText = "";
+    [ObservableProperty] private LibraryRestore.Found? _selectedBackup;
+    [ObservableProperty] private bool _restoreThumbnails = true;
+    /// <summary>A library is downloaded and waits for the next start.</summary>
+    [ObservableProperty] private bool _restartNeeded;
+
+    public event Action? RestartRequested;
+
+    private bool _reloading;
+
+    partial void OnBackupCloudChanged(CloudInfo? value)
+    {
+        if (_reloading || value == null) return;
+        _host.Cloud.BackupCloud = value;
+        RecoveryText = "";
+        UpdateBackupSummary();
+    }
+
+    private void UpdateBackupSummary()
+    {
+        var backup = _host.Cloud.Backup;
+        BackupSummary = _host.Cloud.BackupCloud is not { } cloud
+            ? "Add a cloud below. The library (names, people, buckets, search data, thumbnails, settings, your clouds) is then backed up into it by itself, and one recovery string brings it back on any computer."
+            : backup.LastAt is { } at
+                ? $"Backed up to {cloud.Name}: {at.LocalDateTime:d. M. yyyy H:mm}" + (backup.LastResult is { } r && r != "OK" ? $". The last try failed: {r}" : ".")
+                : backup.LastResult is { } failed && failed != "OK" ? $"Not backed up to {cloud.Name} yet: {failed}" : $"Not backed up to {cloud.Name} yet; it starts by itself.";
+    }
+
+    [RelayCommand]
+    private void BackUpNow()
+    {
+        _host.Mirrors.BackupNow();
+        Status = "The library backup started; the progress is in the status bar of the main window.";
+    }
+
+    [RelayCommand]
+    private Task ShowRecovery() => _host.Cloud.BackupCloud is not { } cloud ? Task.CompletedTask :
+        RunAsync("Making the recovery string...", async ct =>
+        {
+            RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
+            Status = "Copy the recovery string or save it to a file, and keep it somewhere safe.";
+        });
+
+    private Recovery? _recovery;
+
+    [RelayCommand]
+    private Task FindBackups()
+    {
+        FoundBackups.Clear();
+        OnPropertyChanged(nameof(HasFoundBackups));
+        if (RecoveryString.Parse(RestoreText) is not { } recovery)
+        {
+            Status = "This is not a recovery string: it starts with MLR1. and must be pasted whole.";
+            return Task.CompletedTask;
+        }
+        _recovery = recovery;
+        return RunAsync($"Looking into {recovery.Name}...", async ct =>
+        {
+            foreach (var found in await new LibraryRestore(_host.Paths).FindAsync(recovery, ct)) FoundBackups.Add(found);
+            OnPropertyChanged(nameof(HasFoundBackups));
+            SelectedBackup = FoundBackups.FirstOrDefault();
+            Status = FoundBackups.Count switch
+            {
+                0 => "The storage answers, but there is no library backup in it yet.",
+                1 => "Found your library. Bring it back with the button above.",
+                _ => $"Found the libraries of {FoundBackups.Count} computers, the newest first. Choose one and bring it back.",
+            };
+        });
+    }
+
+    [RelayCommand]
+    private Task RestoreLibrary() => _recovery is not { } recovery || SelectedBackup is not { } backup ? Task.CompletedTask :
+        RunAsync("Downloading the library...", async ct =>
+        {
+            // Progress arrives a moment late: none of it may write over the final message.
+            var done = false;
+            await new LibraryRestore(_host.Paths).DownloadAsync(recovery, backup, RestoreThumbnails,
+                new Progress<string>(what => { if (!done) Status = $"Downloading the library: {what}"; }), ct);
+            done = true;
+            RestartNeeded = true;
+            Status = "The library is downloaded. Restart MediaLens to open it.";
+        });
+
+    [RelayCommand]
+    private void Restart() => RestartRequested?.Invoke();
+
     private void Reload()
     {
+        _reloading = true;
         Clouds.Clear();
         foreach (var c in _host.Cloud.Clouds()) Clouds.Add(c);
+        BackupCloud = Clouds.FirstOrDefault(c => c.Id == _host.Cloud.BackupCloud?.Id);
+        _reloading = false;
+        OnPropertyChanged(nameof(HasClouds));
+        UpdateBackupSummary();
         Mirrors.Clear();
         foreach (var m in _host.Cloud.Mirrors()) Mirrors.Add(m);
         Sources.Clear();
@@ -109,12 +207,9 @@ public sealed partial class CloudViewModel : ObservableObject
     [RelayCommand]
     private Task AddCloud()
     {
-        if (Encrypt && (Password.Length < 8 || Password != PasswordAgain))
-        {
-            Status = Password.Length < 8 ? "The password needs at least 8 characters." : "The two passwords differ.";
-            return Task.CompletedTask;
-        }
-        var password = Encrypt ? Password : null;
+        // No password to think up: the encryption key is made here and is part of the recovery string.
+        string? password = null;
+        var first = Clouds.Count == 0;
         var name = string.IsNullOrWhiteSpace(Name) ? Kinds[KindIndex].Split(' ')[0] : Name.Trim();
         return RunAsync(IsSignIn ? "Sign in in the browser window that opened..." : "Connecting...", async ct =>
         {
@@ -125,8 +220,13 @@ public sealed partial class CloudViewModel : ObservableObject
                 2 => await _host.Cloud.AddS3Async(name, new S3Settings(Provider, Endpoint, Region, AccessKey, SecretKey, Bucket), password, ct),
                 _ => await _host.Cloud.AddFolderAsync(name, Folder, password, ct),
             };
-            Status = $"{cloud.Name} added" + (cloud.Encrypted ? ". Keep the password safe: without it nobody, not even you, can read the backup." : ".");
-            Password = PasswordAgain = SecretKey = "";
+            SecretKey = "";
+            Status = $"{cloud.Name} added.";
+            if (!first) return;
+            // From now on there is something to lose: the library backs up, and the way back is shown right away.
+            RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
+            _host.Mirrors.BackupNow();
+            Status = $"{cloud.Name} added and the library is being backed up into it. Save the recovery string above now.";
         });
     }
 
