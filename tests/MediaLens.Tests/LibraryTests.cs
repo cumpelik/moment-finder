@@ -109,6 +109,30 @@ public class LibraryTests
     }
 
     [Fact]
+    public void PlaceNamesNearestVillage()
+    {
+        var dir = Directory.CreateTempSubdirectory("places").FullName;
+        try
+        {
+            var zip = Path.Combine(dir, "cities.zip");
+            using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+            using (var w = new StreamWriter(archive.CreateEntry("cities1000.txt").Open()))
+            {
+                w.WriteLine("1\tSölden\tSoelden\t\t46.96667\t11.0\tP\tPPL\tAT");
+                w.WriteLine("2\tLängenfeld\tLaengenfeld\t\t47.07386\t10.96909\tP\tPPL\tAT");
+            }
+            var places = new Places.PlaceNames(zip);
+            Assert.Equal("Sölden", places.Name(46.94, 11.02));
+            Assert.Null(places.Name(50.08, 14.42)); // Prague: nothing within 25 km in this list
+            Assert.Equal("Sölden", places.MostCommon([(46.95, 11.0), (46.97, 11.01), (47.07, 10.97)]));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public async Task BucketKeepsOrderAndExportsNumberedCopies()
     {
         using var lib = new TestLibrary();

@@ -463,6 +463,9 @@ public sealed class PeopleRepository
         public int TimeMs { get; init; }
         public long Media { get; init; }
         public long Tracks { get; init; }
+        /// <summary>The day out (see EventBuilder) the figure belongs to; 0 without one.</summary>
+        public long EventId { get; init; }
+        public long TakenAt { get; init; }
     }
 
     /// <summary>
@@ -470,11 +473,11 @@ public sealed class PeopleRepository
     /// groups of alike figures of one event, the clearest first. A group whose face is already among the
     /// groups of faces is left to that group.
     /// </summary>
-    public List<FigureInfo> UnnamedFigures(IReadOnlySet<long> faceClusters, int limit = 300)
+    public List<FigureInfo> UnnamedFigures(IReadOnlySet<long> faceClusters, int limit = 2000)
     {
         using var c = _db.Open();
-        var members = c.Query<(long Cluster, long Id, long? Track, long MediaId, int TimeMs, double Quality)>("""
-            SELECT d.cluster, d.id, d.track, d.media_id, d.time_ms, d.quality
+        var members = c.Query<(long Cluster, long Id, long? Track, long MediaId, int TimeMs, double Quality, long EventId, long TakenAt)>("""
+            SELECT d.cluster, d.id, d.track, d.media_id, d.time_ms, d.quality, COALESCE(m.event_id, 0), m.taken_at
             FROM detection d JOIN media m ON m.id=d.media_id
             WHERE d.kind=@body AND d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
             """, new { body = (int)DetectionKind.Body }).ToList();
@@ -496,6 +499,7 @@ public sealed class PeopleRepository
                 {
                     GroupKey = g.Key, MediaId = cover.MediaId, CoverId = cover.Id, TimeMs = cover.TimeMs,
                     Media = g.Select(m => m.MediaId).Distinct().Count(), Tracks = g.Select(m => m.Track ?? m.Id).Distinct().Count(),
+                    EventId = cover.EventId, TakenAt = cover.TakenAt,
                 });
             })
             .OrderByDescending(x => x.Info.Tracks).ThenByDescending(x => x.Quality)

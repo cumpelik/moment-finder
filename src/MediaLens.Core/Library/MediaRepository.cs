@@ -248,6 +248,17 @@ public sealed class MediaRepository
             .Select(r => ((int)r.Year, (int)r.Month, r.Count)).ToList();
     }
 
+    /// <summary>The GPS positions of the items of these events (days out), for naming where they were.</summary>
+    public Dictionary<long, List<(double Lat, double Lon)>> EventPositions(IEnumerable<long> eventIds)
+    {
+        var ids = eventIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        using var c = _db.Open();
+        return c.Query<(long EventId, double Lat, double Lon)>(
+                "SELECT event_id, lat, lon FROM media WHERE event_id IN @ids AND lat IS NOT NULL AND lon IS NOT NULL AND missing=0", new { ids })
+            .GroupBy(r => r.EventId).ToDictionary(g => g.Key, g => g.Select(r => (r.Lat, r.Lon)).ToList());
+    }
+
     public LibraryStats Stats(int analysisVersion)
     {
         using var c = _db.Open();

@@ -753,6 +753,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             var scene = await Task.Run(_host.TryLoadSceneModel);
+            if (await Task.Run(_host.TryLoadPlaces)) RebuildGroups();
             var people = await Task.Run(_host.TryLoadPeopleModel);
             var parts = new List<string>();
             if (scene) parts.Add("search");

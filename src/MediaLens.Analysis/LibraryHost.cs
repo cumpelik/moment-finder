@@ -31,6 +31,16 @@ public sealed class LibraryHost : IDisposable
     public PeopleModel? PeopleModel { get; private set; }
 
     public SiglipModel? SceneModel { get; private set; }
+    /// <summary>Place names for GPS positions, once downloaded.</summary>
+    public MediaLens.Places.PlaceNames? Places { get; private set; }
+
+    public bool TryLoadPlaces()
+    {
+        if (Places != null) return true;
+        if (!Models.IsInstalled(ModelCatalog.Places)) return false;
+        Places = new MediaLens.Places.PlaceNames(Path.Combine(Models.DirOf(ModelCatalog.Places), "cities1000.zip"));
+        return true;
+    }
     public FlatVectorIndex? SceneIndex { get; private set; }
     public MarianTranslator? Translator { get; private set; }
 

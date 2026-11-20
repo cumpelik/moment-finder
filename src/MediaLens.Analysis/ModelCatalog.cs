@@ -1,6 +1,7 @@
 namespace MediaLens.Analysis;
 
-public sealed record ModelFile(string Name, string Url, long Size);
+/// <summary>Exact: the size is checked. A data file updated upstream (GeoNames, daily) has only an approximate size.</summary>
+public sealed record ModelFile(string Name, string Url, long Size, bool Exact = true);
 
 /// <summary>A model is a folder of files under AppPaths.ModelDir, downloaded once; everything runs offline afterwards.</summary>
 public sealed record ModelInfo(string Id, string Title, string License, IReadOnlyList<ModelFile> Files)
@@ -58,6 +59,13 @@ public static class ModelCatalog
             new("vocab.json", OpusCsEnRepo + "vocab.json", 1_721_470),
         ]);
 
+    /// <summary>Not a model: the places of GeoNames, for naming where photos were taken (offline).</summary>
+    public static readonly ModelInfo Places = new(
+        "geonames-cities1000",
+        "GeoNames places (where photos were taken)",
+        "CC-BY-4.0",
+        [new("cities1000.zip", "https://download.geonames.org/export/dump/cities1000.zip", 11_100_000, Exact: false)]);
+
     public static readonly IReadOnlyList<ModelInfo> PeopleModels = [Faces, Persons, Reid];
-    public static readonly IReadOnlyList<ModelInfo> All = [Siglip2Base, CzechToEnglish, Faces, Persons, Reid];
+    public static readonly IReadOnlyList<ModelInfo> All = [Siglip2Base, CzechToEnglish, Faces, Persons, Reid, Places];
 }

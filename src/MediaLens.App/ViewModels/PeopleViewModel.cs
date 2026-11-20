@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MediaLens.Analysis;
+using MediaLens.App.Services;
 using MediaLens.People;
 
 namespace MediaLens.App.ViewModels;
@@ -46,6 +47,14 @@ public sealed partial class CropViewModel : ObservableObject
     }
 }
 
+/// <summary>A titled part of Who is this: a day out with its place, or a video.</summary>
+public sealed class FigureSection(string title, string count, List<CropViewModel> cards)
+{
+    public string Title { get; } = title;
+    public string Count { get; } = count;
+    public ObservableCollection<CropViewModel> Cards { get; } = new(cards);
+}
+
 /// <summary>
 /// The people screens: unnamed groups of faces to name, the review queue ("Is this Tomáš?"), and the
 /// faces of one person to correct. Every answer goes to the database and the matching runs again in the background.
@@ -59,7 +68,69 @@ public sealed partial class PeopleViewModel : ObservableObject
     private Dictionary<long, string> _names = [];
 
     public ObservableCollection<CropViewModel> Clusters { get; } = [];
-    public ObservableCollection<CropViewModel> Figures { get; } = [];
+    public ObservableCollection<FigureSection> FigureSections { get; } = [];
+
+    public IReadOnlyList<string> FigureGroupings { get; } = ["By day and place", "By video"];
+    [ObservableProperty] private string _figureGrouping = "By day and place";
+    /// <summary>People seen in one video moment only are mostly strangers passing by: hidden unless asked for.</summary>
+    [ObservableProperty] private bool _showSeenOnce;
+    [ObservableProperty] private string _seenOnceText = "";
+    [ObservableProperty] private bool _hasSeenOnce;
+    private List<PeopleRepository.FigureInfo> _figures = [];
+
+    partial void OnFigureGroupingChanged(string value) => BuildFigureSections();
+    partial void OnShowSeenOnceChanged(bool value) => BuildFigureSections();
+
+    /// <summary>
+    /// The figures in sections (a day out with its place, or a video), the people seen most often first. Thumbnails
+    /// load only for what is shown.
+    /// </summary>
+    private void BuildFigureSections()
+    {
+        FigureSections.Clear();
+        var once = _figures.Count(f => f.Tracks <= 1);
+        HasSeenOnce = once > 0;
+        SeenOnceText = $"Also people seen only once ({once:N0})";
+        var shown = ShowSeenOnce ? _figures : _figures.Where(f => f.Tracks > 1).ToList();
+        var items = shown.Select(f => f.MediaId).Distinct().ToDictionary(id => id, id => _host.Repo.Get(id));
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        IEnumerable<IGrouping<long, PeopleRepository.FigureInfo>> sections;
+        Func<IGrouping<long, PeopleRepository.FigureInfo>, string> title;
+        if (FigureGrouping == "By video")
+        {
+            sections = shown.GroupBy(f => f.MediaId).OrderByDescending(g => g.Max(f => f.TakenAt));
+            title = g => items[g.Key] is { } item ? $"{item.FileName}  \u00b7  {item.Taken.ToString("d. M. yyyy", culture)}" : "";
+        }
+        else
+        {
+            var positions = _host.Repo.EventPositions(shown.Select(f => f.EventId));
+            sections = shown.GroupBy(f => f.EventId).OrderByDescending(g => g.Max(f => f.TakenAt));
+            title = g =>
+            {
+                var day = DateTime.UnixEpoch.AddMilliseconds(g.Max(f => f.TakenAt)).ToString("dddd d. MMMM yyyy", culture);
+                return _host.Places?.MostCommon(positions.GetValueOrDefault(g.Key, [])) is { } place ? $"{day}  \u00b7  {place}" : day;
+            };
+        }
+        foreach (var g in sections)
+        {
+            var cards = g.OrderByDescending(f => f.Tracks).ThenByDescending(f => f.Media).Select(f =>
+            {
+                var item = items.GetValueOrDefault(f.MediaId);
+                var crop = new CropViewModel(f.CoverId, f.MediaId, DetectionKind.Body)
+                {
+                    FigureKey = f.GroupKey,
+                    TimeMs = f.TimeMs,
+                    Caption = f.Media > 1 ? $"{f.Media} videos and photos" :
+                        f.Tracks > 1 ? $"{f.Tracks} times in {item?.FileName}" :
+                        item == null ? "" : item.IsVideo ? $"{item.FileName} {TimeSpan.FromMilliseconds(f.TimeMs):m\\:ss}" : item.FileName,
+                };
+                crop.Load(CropPath(f.CoverId), 160);
+                return crop;
+            }).ToList();
+            FigureSections.Add(new FigureSection(title(g), Format.Count(cards.Count, "person", "people"), cards));
+        }
+        HasFigures = FigureSections.Count > 0 || HasSeenOnce;
+    }
     public ObservableCollection<CropViewModel> PersonCrops { get; } = [];
 
     [ObservableProperty] private string _clustersSummary = "";
@@ -103,7 +174,6 @@ public sealed partial class PeopleViewModel : ObservableObject
     public void LoadClusters()
     {
         Clusters.Clear();
-        Figures.Clear();
         var groups = _host.People.UnnamedClusters();
         foreach (var c in groups)
         {
@@ -116,23 +186,10 @@ public sealed partial class PeopleViewModel : ObservableObject
             crop.Load(CropPath(c.CoverId), 160);
             Clusters.Add(crop);
         }
-        var items = new Dictionary<long, MediaLens.Library.MediaItem?>();
-        foreach (var f in _host.People.UnnamedFigures(groups.Select(g => g.Cluster).ToHashSet()))
-        {
-            if (!items.TryGetValue(f.MediaId, out var item)) items[f.MediaId] = item = _host.Repo.Get(f.MediaId);
-            var crop = new CropViewModel(f.CoverId, f.MediaId, DetectionKind.Body)
-            {
-                FigureKey = f.GroupKey,
-                TimeMs = f.TimeMs,
-                Caption = f.Media > 1 ? $"{f.Media} videos and photos" :
-                    item == null ? "" : item.IsVideo ? $"{item.FileName} {TimeSpan.FromMilliseconds(f.TimeMs):m\\:ss}" : item.FileName,
-            };
-            crop.Load(CropPath(f.CoverId), 160);
-            Figures.Add(crop);
-        }
+        _figures = _host.People.UnnamedFigures(groups.Select(g => g.Cluster).ToHashSet());
+        BuildFigureSections();
         HasClusters = Clusters.Count > 0;
-        HasFigures = Figures.Count > 0;
-        ClustersSummary = Clusters.Count + Figures.Count == 0
+        ClustersSummary = Clusters.Count + _figures.Count == 0
             ? "Everybody found so far has a name. New people appear here as the analysis goes through the photos and videos."
             : "Click a person and write who it is. An existing name adds them to that person, and the analysis then " +
               "looks for them elsewhere (by the face, and on the same day also by the clothes). The eye hides strangers for good.";
@@ -155,8 +212,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         var person = _host.People.FindOrCreatePerson(name);
         _host.People.Confirm(_host.People.FigureDetectionIds(key), person.Id);
         if (person.CoverDetectionId == null) _host.People.SetCover(person.Id, card.DetectionId);
-        Figures.Remove(card);
-        HasFigures = Figures.Count > 0;
+        RemoveFigure(card);
         AfterChange();
     }
 
@@ -164,9 +220,19 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         if (card.FigureKey is not { } key) return;
         _host.People.Confirm(_host.People.FigureDetectionIds(key), _host.People.Strangers().Id);
-        Figures.Remove(card);
-        HasFigures = Figures.Count > 0;
+        RemoveFigure(card);
         AfterChange();
+    }
+
+    private void RemoveFigure(CropViewModel card)
+    {
+        _figures.RemoveAll(f => f.GroupKey == card.FigureKey);
+        foreach (var section in FigureSections.ToList())
+        {
+            section.Cards.Remove(card);
+            if (section.Cards.Count == 0) FigureSections.Remove(section);
+        }
+        HasFigures = FigureSections.Count > 0 || _figures.Count > 0;
     }
 
     /// <summary>Strangers (people in the background): set aside for good, they do not come back as a group.</summary>

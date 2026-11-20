@@ -104,6 +104,7 @@ media and evaluates the filters first. Face and body embeddings are stored with 
 | InsightFace buffalo_l: SCRFD 10G + ArcFace R50 | faces | weights for non-commercial use only |
 | YOLOX-s | people detection | Apache 2.0 |
 | OSNet-AIN x1.0 MSMT17 | recognizing people by clothes | MIT |
+| GeoNames cities1000 (data, not a model) | place names for GPS positions, offline | CC BY 4.0 (credit GeoNames) |
 
 Before any commercial release the face models must be replaced (for example YuNet for detection and a
 face recognition model with a commercial license).

@@ -113,7 +113,7 @@ public sealed partial class MainViewModel
                 .Select(g => new TileGroup(
                     GroupBy.Mode switch
                     {
-                        GroupMode.Day => g.Key.ToString("dddd d. MMMM yyyy", culture),
+                        GroupMode.Day => g.Key.ToString("dddd d. MMMM yyyy", culture) + PlaceOf(g),
                         GroupMode.Month => g.Key.ToString("MMMM yyyy", culture),
                         _ => g.Key.Year.ToString(culture),
                     },
@@ -122,6 +122,11 @@ public sealed partial class MainViewModel
         }
         Groups = new ObservableCollection<TileGroup>(groups);
     }
+
+    /// <summary>"  ·  Sölden" for a day whose photos have GPS, once the place names are downloaded.</summary>
+    private string PlaceOf(IEnumerable<TileViewModel> tiles) =>
+        _host.Places?.MostCommon(tiles.Where(t => t.Item.Lat != null && t.Item.Lon != null).Select(t => (t.Item.Lat!.Value, t.Item.Lon!.Value)))
+            is { } place ? "  \u00b7  " + place : "";
 
     // ---- date filter ----
 
