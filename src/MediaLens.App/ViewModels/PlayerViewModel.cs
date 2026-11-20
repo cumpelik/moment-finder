@@ -44,11 +44,33 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private bool _insideMoment;
     private readonly Dictionary<string, Dictionary<long, List<(int StartMs, int EndMs)>>> _personMoments = new();
 
-    /// <summary>The choices of what the videos play; the view shows them only when there is more than "whole".</summary>
-    public IReadOnlyList<MomentChoice> MomentChoices { get; }
-    public bool HasMomentChoices => MomentChoices.Count > 1;
+    /// <summary>Every choice of the playlist; the current video offers those that apply to it.</summary>
+    private readonly List<MomentChoice> _allChoices;
+    /// <summary>
+    /// What this video can play: whole, the matching part, and only the people who are in it (not everybody of
+    /// the library). The view shows them only when there is more than "whole".
+    /// </summary>
+    public System.Collections.ObjectModel.ObservableCollection<MomentChoice> MomentChoices { get; } = [];
     /// <summary>The choice is about videos: not shown with a photo.</summary>
-    public bool ShowMomentChoices => HasMomentChoices && IsVideo;
+    public bool ShowMomentChoices => MomentChoices.Count > 1 && IsVideo;
+
+    /// <summary>The list changes in place and the chosen one always stays in it, so the selection never jumps.</summary>
+    private void SyncChoices()
+    {
+        var id = Current.Item.Id;
+        var here = _main.People.PersonsIn(id);
+        foreach (var person in here)
+            if (!_allChoices.Any(c => c.Kind == MomentKind.Person && c.PersonIds.Count == 1 && c.PersonIds[0] == person)
+                && _main.People.NameOf(person) is { } name)
+                _allChoices.Add(new MomentChoice($"Only {name}", MomentKind.Person, [person]));
+        var wanted = _allChoices.Where(c => c.Kind != MomentKind.Person || ReferenceEquals(c, MomentChoice)
+            || (c.PersonIds.Any(here.Contains) && PersonMoments(c.PersonIds).ContainsKey(id))).ToList();
+        for (var i = MomentChoices.Count - 1; i >= 0; i--)
+            if (!wanted.Contains(MomentChoices[i])) MomentChoices.RemoveAt(i);
+        for (var i = 0; i < wanted.Count; i++)
+            if (i >= MomentChoices.Count || !ReferenceEquals(MomentChoices[i], wanted[i])) MomentChoices.Insert(i, wanted[i]);
+        OnPropertyChanged(nameof(ShowMomentChoices));
+    }
     /// <summary>A video plays or the slideshow runs: the button shows pause, otherwise play.</summary>
     [ObservableProperty] private bool _isRunning;
     /// <summary>A message in the middle of the picture, e.g. that the person's moments are over.</summary>
@@ -77,7 +99,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _loadingTimer.Stop();
         IsLoading = false;
     }
-    [ObservableProperty] private MomentChoice _momentChoice;
+    private MomentChoice _momentChoice;
+
+    /// <summary>What the videos play now. A list control may report "nothing chosen" while its items change: ignored.</summary>
+    public MomentChoice MomentChoice
+    {
+        get => _momentChoice;
+        set
+        {
+            if (value == null || ReferenceEquals(value, _momentChoice)) return;
+            _momentChoice = value;
+            OnPropertyChanged();
+            OnMomentChoiceChanged(value);
+        }
+    }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMuted))] private int _volume;
     public bool IsMuted => Volume == 0;
 
@@ -126,7 +161,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _rate = settings.Rate;
         _loop = settings.Loop;
         _showPeople = settings.ShowPeople;
-        MomentChoices = momentChoices;
+        _allChoices = momentChoices.ToList();
         _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
         _slideTimer.Tick += (_, _) =>
@@ -141,6 +176,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         };
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _positionTimer.Tick += (_, _) => UpdateVideoPosition();
+        SyncChoices();
     }
 
     public WriteableBitmap? VideoFrame => Is360 ? _view360?.Output : _video?.Frame;
@@ -175,6 +211,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         SetLoopRange(null, null);
         if (item.IsVideo)
         {
+            SyncChoices();
             Photo = null;
             IsVideo = true;
             MomentText = MomentLabel();
@@ -307,7 +344,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Another choice of what to play: continue with its next moment in this video.</summary>
-    partial void OnMomentChoiceChanged(MomentChoice value)
+    private void OnMomentChoiceChanged(MomentChoice value)
     {
         _main.RememberMoments(value.Kind != MomentKind.Whole);
         _moment = 0;
@@ -454,6 +491,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         _main.People.NameDetection(detectionId, name);
         LoadPeople();
+        // The named person can be chosen right away ("Only ...").
+        _personMoments.Clear();
+        if (IsVideo) SyncChoices();
     }
 
     public void RejectDetection(long detectionId, long personId)
@@ -582,7 +622,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             _moment = 0;
             _insideMoment = false;
             MomentText = MomentLabel();
-            _video.Play(_playingPath, _loopStartMs ?? StartOf(Current));
+            _video.Play(_playingPath, LoopStartMs ?? StartOf(Current));
             IsRunning = true;
             return;
         }
@@ -606,7 +646,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
         // Only the moments: at the end of one jump to the next, after the last one go on (or stop when browsing).
         // Right after a switch libVLC may still report the previous video's time: act only once inside the moment.
-        if (KeepInLoop(time)) return;
+        if (_video.IsPlaying && KeepInLoop(time)) return;
         if (Moments is not { } moments || _moment >= moments.Count) return;
         var (start, end) = moments[_moment];
         if (!_insideMoment)
@@ -756,57 +796,81 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     partial void OnLoopChanged(bool value)
     {
         _main.RememberPlayback(Rate, value);
-        // Loop off: the chosen part goes too.
-        if (!value) SetLoopRange(null, null);
+        // The chosen part stays (shown faded) for switching the loop on again; Clear removes it.
+        SetLoopRange(LoopStartMs, LoopEndMs);
     }
 
-    // ---- loop of a part (Start / End) ----
+    // ---- loop of a part (Start / End, also two handles on the time line) ----
 
-    private int? _loopStartMs;
-    private int? _loopEndMs;
+    /// <summary>The chosen part; null = from the beginning / to the end of the video.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasLoopPart))] private int? _loopStartMs;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasLoopPart))] private int? _loopEndMs;
+    public bool HasLoopPart => LoopStartMs != null || LoopEndMs != null;
 
     /// <summary>"Loop 0:12 to 0:18" under the title while a part is chosen.</summary>
     [ObservableProperty] private string _loopText = "";
 
     private void SetLoopRange(int? start, int? end)
     {
-        (_loopStartMs, _loopEndMs) = (start, end);
-        LoopText = (start, end) switch
+        (LoopStartMs, LoopEndMs) = (start, end);
+        var part = (start, end) switch
         {
-            ({ } a, { } b) => $"Loop {Format.Duration(a)} to {Format.Duration(b)}",
-            ({ } a, null) => $"Loop from {Format.Duration(a)} (End sets where it turns back)",
-            (null, { } b) => $"Loop up to {Format.Duration(b)}",
+            ({ } a, { } b) => $"{Format.Duration(a)} to {Format.Duration(b)}",
+            ({ } a, null) => $"from {Format.Duration(a)} (End marks where it turns back)",
+            (null, { } b) => $"from the beginning to {Format.Duration(b)}",
             _ => "",
         };
+        LoopText = part == "" ? "" : Loop ? $"Loop {part}" : $"Loop is off ({part} stays marked)";
     }
 
-    /// <summary>The loop starts at the current moment (and loop goes on).</summary>
+    /// <summary>The loop starts at the current moment, playing or paused (and loop goes on).</summary>
     [RelayCommand]
     private void SetLoopStart()
     {
         if (!IsVideo) return;
         var now = (int)NowMs;
-        SetLoopRange(now, _loopEndMs is { } end && end > now + 200 ? end : null);
         Loop = true;
+        SetLoopRange(now, LoopEndMs is { } end && end > now + 200 ? end : null);
     }
 
-    /// <summary>The loop ends at the current moment: it turns back to the start right away.</summary>
+    /// <summary>The loop ends at the current moment: it plays from its start right away, also when paused.</summary>
     [RelayCommand]
     private void SetLoopEnd()
     {
         if (!IsVideo) return;
         var now = (int)NowMs;
-        var start = _loopStartMs is { } s && s < now - 200 ? s : (int?)null;
+        var start = LoopStartMs is { } s && s < now - 200 ? s : (int?)null;
         Loop = true;
         SetLoopRange(start, now);
         SeekVideo(start ?? 0);
+        if (!IsRunning) TogglePlay();
+    }
+
+    /// <summary>No chosen part: the loop is the whole video again.</summary>
+    [RelayCommand]
+    private void ClearLoopPart() => SetLoopRange(null, null);
+
+    /// <summary>A handle on the time line is dragged: the start or the end of the part moves with it.</summary>
+    public void MoveLoopEdge(bool start, double ms)
+    {
+        var at = (int)Math.Clamp(ms, 0, VideoLength);
+        if (start) SetLoopRange(Math.Min(at, (LoopEndMs ?? (int)VideoLength) - 200), LoopEndMs);
+        else SetLoopRange(LoopStartMs, Math.Max(at, (LoopStartMs ?? 0) + 200));
+    }
+
+    /// <summary>The handle was let go: show the result, from the new start or the last moments before the new end.</summary>
+    public void LoopEdgeMoved(bool start)
+    {
+        Loop = true;
+        var from = LoopStartMs ?? 0;
+        SeekVideo(start || LoopEndMs is not { } end ? from : Math.Max(from, end - 1500));
     }
 
     /// <summary>Past the end of the chosen part: back to its start.</summary>
     private bool KeepInLoop(long time)
     {
-        if (!Loop || _loopEndMs is not { } end || time < end) return false;
-        SeekVideo(_loopStartMs ?? 0);
+        if (!Loop || LoopEndMs is not { } end || time < end) return false;
+        SeekVideo(LoopStartMs ?? 0);
         return true;
     }
 

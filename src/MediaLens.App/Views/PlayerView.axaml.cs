@@ -38,7 +38,8 @@ public partial class PlayerView : UserControl
         Root.PointerMoved += OnPointerMoved;
         Root.PointerWheelChanged += (_, e) =>
         {
-            // A 360 picture zooms; otherwise the wheel goes through the items.
+            // A 360 picture zooms; otherwise the wheel goes through the items. Not over an open list.
+            if (e.Source is not Visual over || !Root.IsVisualAncestorOf(over)) return;
             if (_vm is { Is360: true } vm) vm.Look(0, 0, e.Delta.Y > 0 ? 0.9 : 1.1);
             else if (e.Delta.Y > 0) _vm?.Previous();
             else if (e.Delta.Y < 0) _vm?.Next();
@@ -49,8 +50,10 @@ public partial class PlayerView : UserControl
         {
             if (!e.GetCurrentPoint(Root).Properties.IsLeftButtonPressed) return;
             // The controls (time line, buttons) handle their own mouse: no turning the view, no box under them.
-            if (e.Source is Visual onControls && onControls.GetSelfAndVisualAncestors().TakeWhile(v => v != Root)
-                    .Any(v => v == Overlay || v is Button or Slider or ComboBox))
+            // An open list or menu (its events come through here too, though it is drawn in its own window) as well:
+            // capturing the mouse for turning a 360 view would take the click away from the list.
+            if (e.Source is not Visual onControls || !Root.IsVisualAncestorOf(onControls)
+                || onControls.GetSelfAndVisualAncestors().TakeWhile(v => v != Root).Any(v => v == Overlay || v is Button or Slider or ComboBox))
             {
                 _pressedBox = null;
                 _dragFrom = null;
@@ -84,6 +87,70 @@ public partial class PlayerView : UserControl
         SeekBar.AddHandler(PointerPressedEvent, (_, _) => _vm?.BeginSeek(), RoutingStrategies.Tunnel, handledEventsToo: true);
         SeekBar.AddHandler(PointerReleasedEvent, (_, _) => _vm?.SeekTo(SeekBar.Value), RoutingStrategies.Tunnel, handledEventsToo: true);
         Root.Focusable = true;
+        SeekBar.SizeChanged += (_, _) => LayoutLoop();
+        SeekBar.TemplateApplied += (_, _) => Dispatcher.UIThread.Post(LayoutLoop, DispatcherPriority.Loaded);
+        DragLoopEdge(LoopStartHandle, start: true);
+        DragLoopEdge(LoopEndHandle, start: false);
+    }
+
+    // ---- the looping part on the time line ----
+
+    /// <summary>Where the time line's thumb stands for a time: left edge and width its center travels (in LoopLayer).</summary>
+    private (double Left, double Width)? SeekTrack()
+    {
+        if (SeekBar.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.Track>().FirstOrDefault() is not { Thumb: { } thumb } track
+            || track.TranslatePoint(default, LoopLayer) is not { } origin) return null;
+        var width = track.Bounds.Width - thumb.Bounds.Width;
+        return width > 0 ? (origin.X + thumb.Bounds.Width / 2, width) : null;
+    }
+
+    private void LayoutLoop()
+    {
+        if (_vm is not { HasLoopPart: true } vm || SeekTrack() is not { } track) return;
+        var length = Math.Max(1, vm.VideoLength);
+        var from = track.Left + track.Width * Math.Clamp((vm.LoopStartMs ?? 0) / length, 0, 1);
+        var to = track.Left + track.Width * Math.Clamp((vm.LoopEndMs ?? length) / length, 0, 1);
+        var middle = SeekBar.Bounds.Height / 2;
+        LoopBar.Width = Math.Max(2, to - from);
+        Canvas.SetLeft(LoopBar, from);
+        Canvas.SetTop(LoopBar, middle - LoopBar.Height / 2);
+        // The handles stand above the line, beside the part, so the time line's own thumb stays reachable.
+        Canvas.SetLeft(LoopStartHandle, from - LoopStartHandle.Width);
+        Canvas.SetLeft(LoopEndHandle, to);
+        Canvas.SetTop(LoopStartHandle, middle - LoopStartHandle.Height - 2);
+        Canvas.SetTop(LoopEndHandle, middle - LoopEndHandle.Height - 2);
+        LoopStartHandle.IsVisible = vm.LoopStartMs != null;
+        LoopEndHandle.IsVisible = vm.LoopEndMs != null;
+        LoopLayer.Opacity = vm.Loop ? 1 : 0.4;
+    }
+
+    private void DragLoopEdge(Border handle, bool start)
+    {
+        handle.PointerPressed += (_, e) =>
+        {
+            e.Pointer.Capture(handle);
+            e.Handled = true;
+        };
+        handle.PointerMoved += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Pointer.Captured, handle) || _vm is not { } vm || SeekTrack() is not { } track) return;
+            vm.MoveLoopEdge(start, (e.GetPosition(LoopLayer).X - track.Left) / track.Width * vm.VideoLength);
+            e.Handled = true;
+        };
+        handle.PointerReleased += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Pointer.Captured, handle)) return;
+            e.Pointer.Capture(null);
+            _vm?.LoopEdgeMoved(start);
+            e.Handled = true;
+        };
+    }
+
+    private void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(PlayerViewModel.LoopStartMs) or nameof(PlayerViewModel.LoopEndMs) or nameof(PlayerViewModel.Loop)
+            or nameof(PlayerViewModel.VideoLength) or nameof(PlayerViewModel.HasLoopPart))
+            LayoutLoop();
     }
 
     /// <summary>In a panel: the controls always show and there is no close button.</summary>
@@ -105,6 +172,7 @@ public partial class PlayerView : UserControl
         {
             _vm.VideoFrameChanged -= OnVideoFrame;
             _vm.PeopleChanged -= DrawPeople;
+            _vm.PropertyChanged -= OnVmChanged;
         }
         _vm = DataContext as PlayerViewModel;
         VideoImage.Source = null;
@@ -113,6 +181,7 @@ public partial class PlayerView : UserControl
         if (_vm == null) return;
         _vm.VideoFrameChanged += OnVideoFrame;
         _vm.PeopleChanged += DrawPeople;
+        _vm.PropertyChanged += OnVmChanged;
         ShowOverlay();
     }
 

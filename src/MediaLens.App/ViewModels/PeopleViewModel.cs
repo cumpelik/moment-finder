@@ -455,6 +455,9 @@ public sealed partial class PeopleViewModel : ObservableObject
     public Dictionary<long, List<TrackBox>> TrackPaths(long mediaId) =>
         _host.People.TrackPaths(mediaId).GroupBy(b => b.Track).ToDictionary(g => g.Key, g => g.ToList());
 
+    /// <summary>The named people of one photo or video.</summary>
+    public HashSet<long> PersonsIn(long mediaId) => _host.People.PersonsIn([mediaId]).ToHashSet();
+
     public Dictionary<long, List<(int StartMs, int EndMs)>> PersonSegments(IReadOnlyList<long> personIds) =>
         _host.People.PersonSegments(personIds);
 

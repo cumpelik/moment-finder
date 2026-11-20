@@ -126,6 +126,13 @@
         <Setter Property="Padding" Value="5,1" />
         <Setter Property="Margin" Value="5" />
     </Style>
+    <!-- A 360 video: green plays right away, orange is being prepared now -->
+    <Style Selector="Border.badge.ready">
+        <Setter Property="Background" Value="#E0059669" />
+    </Style>
+    <Style Selector="Border.badge.making">
+        <Setter Property="Background" Value="#E0D97706" />
+    </Style>
     <Style Selector="Border.badge TextBlock">
         <Setter Property="Foreground" Value="White" />
         <Setter Property="FontSize" Value="11" />

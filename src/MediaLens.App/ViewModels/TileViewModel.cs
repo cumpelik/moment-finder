@@ -29,6 +29,32 @@ public sealed partial class TileViewModel : ObservableObject
     /// <summary>A 360 photo or video (Insta360 original): can be looked around in.</summary>
     public bool Is360 => Media.Fisheye360.IsDualFisheye(Item.RelPath);
 
+    /// <summary>A 360 video's playing copy: ready (green badge), being made (orange), or not yet.</summary>
+    [ObservableProperty] private bool _ready360;
+    [ObservableProperty] private bool _making360;
+    [ObservableProperty] private string _tip360 = "360: drag to look around";
+
+    private void Refresh360()
+    {
+        if (!Is360) return;
+        _ = Task.Run(() =>
+        {
+            // A photo needs no copy: it can be looked around in right away.
+            bool? state = IsVideo ? Media.Proxy360.State(Item) : true;
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                Ready360 = state == true;
+                Making360 = state == false;
+                Tip360 = state switch
+                {
+                    true => "360, ready: plays right away, drag to look around",
+                    false => "360, being prepared for smooth playing right now",
+                    _ => "360, not prepared yet: opening it prepares it first (it takes a few minutes)",
+                };
+            });
+        });
+    }
+
     public string? DurationText => Item.DurationMs is { } ms ? Format.Duration(ms) : null;
 
     public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "");
@@ -38,7 +64,11 @@ public sealed partial class TileViewModel : ObservableObject
 
     public void Realize(ThumbnailLoader loader)
     {
-        _shown++;
+        if (_shown++ == 0 && Is360)
+        {
+            Media.Proxy360.Changed += Refresh360;
+            Refresh360();
+        }
         if (Thumb != null || _loading != null) return;
         var cts = _loading = new CancellationTokenSource();
         _ = LoadAsync(loader, cts);
@@ -66,6 +96,7 @@ public sealed partial class TileViewModel : ObservableObject
     {
         if (--_shown > 0) return;
         _shown = 0;
+        Media.Proxy360.Changed -= Refresh360;
         _loading?.Cancel();
         _loading = null;
         Thumb = null;

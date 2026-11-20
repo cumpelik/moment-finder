@@ -38,6 +38,17 @@ public static class Proxy360
         return path;
     }
 
+    /// <summary>A copy started or ended (made, stopped, failed): what the thumbnails say about it may have changed.</summary>
+    public static event Action? Changed;
+
+    /// <summary>For the thumbnail's badge: null no copy yet, false being made now, true ready to play smoothly.</summary>
+    public static bool? State(MediaItem item)
+    {
+        if (PathOf(item) is not { } path) return null;
+        if (File.Exists(path)) return true;
+        lock (Running) return Running.ContainsKey(path) ? false : null;
+    }
+
     public static bool HasRoom => Dir == null || !Directory.Exists(Dir) ||
         new DirectoryInfo(Dir).GetFiles("*.mp4").Sum(f => f.Length) < CacheLimit * 9 / 10;
 
@@ -109,10 +120,12 @@ public static class Proxy360
                 {
                     lock (Running) Running.Remove(target);
                     cts.Dispose();
+                    Changed?.Invoke();
                 }
             }, CancellationToken.None);
             job = new Job { Task = task, Cancel = cts };
             Running[target] = job;
+            Changed?.Invoke();
             return task;
         }
     }

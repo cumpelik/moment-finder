@@ -10,6 +10,14 @@
             <Setter Property="Focusable" Value="False" />
         </Style>
         <!-- Not the normal speed: visible at a glance -->
+        <Style Selector="Border.loophandle">
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Background" Value="#F59E0B" />
+            <Setter Property="BorderBrush" Value="#B0000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="SizeWestEast" />
+        </Style>
         <Style Selector="Button.active">
             <Setter Property="Foreground" Value="#F59E0B" />
         </Style>
@@ -68,6 +76,14 @@
                 <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsVideo}">
                     <Slider x:Name="SeekBar" Minimum="0" Maximum="{Binding VideoLength}" Value="{Binding VideoPosition, Mode=OneWay}"
                             VerticalAlignment="Center" />
+                    <!-- The part that loops, on the time line: its two ends can be dragged -->
+                    <Canvas x:Name="LoopLayer" IsVisible="{Binding HasLoopPart}">
+                        <Border x:Name="LoopBar" Height="8" CornerRadius="4" Background="#A0F59E0B" IsHitTestVisible="False" />
+                        <Border x:Name="LoopStartHandle" Classes="loophandle" CornerRadius="4,4,0,4"
+                                ToolTip.Tip="The loop starts here: drag to move it" />
+                        <Border x:Name="LoopEndHandle" Classes="loophandle" CornerRadius="4,4,4,0"
+                                ToolTip.Tip="The loop ends here: drag to move it" />
+                    </Canvas>
                     <TextBlock Grid.Column="1" Text="{Binding VideoTimeText}" VerticalAlignment="Center" Margin="12,0,0,0"
                                FontFeatures="tnum" />
                 </Grid>
@@ -119,14 +135,18 @@
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
-                            <ToggleButton IsChecked="{Binding Loop}" ToolTip.Tip="Loop: again and again (L); Start and End choose the part">
+                            <ToggleButton IsChecked="{Binding Loop}" ToolTip.Tip="Loop on / off: the video, or the part marked with Start and End, again and again (L)">
                                 <mi:MaterialIcon Kind="Repeat" />
                             </ToggleButton>
-                            <Button Command="{Binding SetLoopStartCommand}" ToolTip.Tip="The loop starts here">
+                            <Button Command="{Binding SetLoopStartCommand}" ToolTip.Tip="The loop starts where the video is now (works paused too)">
                                 <TextBlock Text="Start" FontSize="12" />
                             </Button>
-                            <Button Command="{Binding SetLoopEndCommand}" ToolTip.Tip="The loop ends here">
+                            <Button Command="{Binding SetLoopEndCommand}" ToolTip.Tip="The loop ends where the video is now, and starts playing">
                                 <TextBlock Text="End" FontSize="12" />
+                            </Button>
+                            <!-- Always there (faded without a part), so Start and End never move under the mouse -->
+                            <Button Command="{Binding ClearLoopPartCommand}" IsEnabled="{Binding HasLoopPart}" ToolTip.Tip="Forget the marked part">
+                                <TextBlock Text="Clear" FontSize="12" />
                             </Button>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}">
