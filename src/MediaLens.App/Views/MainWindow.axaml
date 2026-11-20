@@ -315,7 +315,8 @@
                           IsVisible="{Binding ShowPreviewPanel}" />
             <Panel Grid.Row="2" Background="Black" IsVisible="{Binding ShowPreviewPanel}">
                 <TextBlock Text="Click a photo or video to see it here." Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                <views:PlayerView x:Name="Preview" IsVisible="False" />
+                <!-- No inherited DataContext: its bindings are for a PlayerViewModel, set when something is shown -->
+                <views:PlayerView x:Name="Preview" IsVisible="False" DataContext="{x:Null}" />
             </Panel>
             </Grid>
 
