@@ -242,6 +242,16 @@ public sealed class PeopleRepository
             .Select(r => new TrackBox(r.Track, (int)r.TimeMs, (float)r.X, (float)r.Y, (float)r.W, (float)r.H)).ToList();
     }
 
+    /// <summary>Who is on which item (named, not hidden people), for grouping by person.</summary>
+    public Dictionary<long, List<long>> PersonsByMedia()
+    {
+        using var c = _db.Open();
+        return c.Query<(long MediaId, long PersonId)>("""
+                SELECT DISTINCT d.media_id, d.person_id FROM detection d JOIN person p ON p.id=d.person_id AND p.hidden=0
+                """)
+            .GroupBy(r => r.MediaId).ToDictionary(g => g.Key, g => g.Select(r => r.PersonId).ToList());
+    }
+
     /// <summary>The named people seen in these media, for choosing whose moments to play.</summary>
     public List<long> PersonsIn(IEnumerable<long> mediaIds)
     {

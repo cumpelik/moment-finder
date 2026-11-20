@@ -92,6 +92,20 @@ public class LibraryTests
     }
 
     [Fact]
+    public async Task DateFilterCountsYearsAndMonths()
+    {
+        using var lib = new TestLibrary();
+        foreach (var (f, t) in new[] { ("a.jpg", "2023-07-14 10:00"), ("b.jpg", "2024-02-10 23:30"), ("c.jpg", "2024-02-11 08:00"), ("d.jpg", "2024-12-31 18:00") })
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        Assert.Equal([(2024, 0, 3L), (2023, 0, 1L)], lib.Repo.DateCounts());
+        Assert.Equal([(2024, 2, 2L), (2024, 12, 1L)], lib.Repo.DateCounts(2024));
+        // The last evening of the year still belongs to it (local time, no time zone shift).
+        var dec31 = Media.MediaProbe.ToTakenAt(new DateTime(2024, 12, 31));
+        Assert.Single(lib.Repo.Query(new MediaFilter { From = dec31, To = dec31 + 86_400_000 }));
+    }
+
+    [Fact]
     public async Task BucketKeepsOrderAndExportsNumberedCopies()
     {
         using var lib = new TestLibrary();

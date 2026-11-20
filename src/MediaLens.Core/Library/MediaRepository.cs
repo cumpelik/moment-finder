@@ -221,6 +221,20 @@ public sealed class MediaRepository
         c.Execute("UPDATE media SET analysis_version=@version WHERE id=@id", new { id, version });
     }
 
+    /// <summary>How many items each year has (newest first), for the date filter; month 0 counts whole years.</summary>
+    public List<(int Year, int Month, long Count)> DateCounts(int? year = null)
+    {
+        using var c = _db.Open();
+        var part = year == null ? "0" : "CAST(strftime('%m', m.taken_at / 1000, 'unixepoch') AS INTEGER)";
+        return c.Query<(long Year, long Month, long Count)>($"""
+            SELECT CAST(strftime('%Y', m.taken_at / 1000, 'unixepoch') AS INTEGER) AS y, {part} AS mo, COUNT(*)
+            FROM media m JOIN source s ON s.id=m.source_id
+            WHERE m.missing=0 AND s.enabled=1 {(year == null ? "" : "AND strftime('%Y', m.taken_at / 1000, 'unixepoch')=@y")}
+            GROUP BY y, mo ORDER BY y DESC, mo
+            """, new { y = year?.ToString("D4", System.Globalization.CultureInfo.InvariantCulture) })
+            .Select(r => ((int)r.Year, (int)r.Month, r.Count)).ToList();
+    }
+
     public LibraryStats Stats(int analysisVersion)
     {
         using var c = _db.Open();

@@ -19,10 +19,12 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Repeater.ElementPrepared += (_, e) => (e.Element.DataContext as TileViewModel)?.Realize(_vm!.Thumbnails);
-        Repeater.ElementClearing += (_, e) => (e.Element.DataContext as TileViewModel)?.Unrealize();
+        Repeater.ElementPrepared += OnTilePrepared;
+        Repeater.ElementClearing += OnTileClearing;
         Repeater.Tapped += OnTileTapped;
         Repeater.DoubleTapped += OnTileDoubleTapped;
+        GroupRepeater.Tapped += OnTileTapped;
+        GroupRepeater.DoubleTapped += OnTileDoubleTapped;
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
     }
 
@@ -162,9 +164,29 @@ public partial class MainWindow : Window
 
     private void BringIntoView(TileViewModel tile)
     {
-        var index = _vm!.Tiles.IndexOf(tile);
-        if (index >= 0) Repeater.GetOrCreateElement(index).BringIntoView();
+        if (!_vm!.IsGrouped)
+        {
+            var index = _vm.Tiles.IndexOf(tile);
+            if (index >= 0) Repeater.GetOrCreateElement(index).BringIntoView();
+            return;
+        }
+        var group = _vm.Groups.Select((g, i) => (g, i)).FirstOrDefault(x => x.g.Tiles.Contains(tile));
+        if (group.g == null) return;
+        var container = GroupRepeater.GetOrCreateElement(group.i);
+        container.UpdateLayout();
+        if (container.GetVisualDescendants().OfType<ItemsRepeater>().FirstOrDefault() is { } inner)
+            inner.GetOrCreateElement(group.g.Tiles.ToList().IndexOf(tile)).BringIntoView();
+        else container.BringIntoView();
     }
+
+    /// <summary>A tile came on screen (plain grid or a group): load its thumbnail.</summary>
+    private void OnTilePrepared(object? sender, ItemsRepeaterElementPreparedEventArgs e) =>
+        (e.Element.DataContext as TileViewModel)?.Realize(_vm!.Thumbnails);
+
+    private void OnTileClearing(object? sender, ItemsRepeaterElementClearingEventArgs e) =>
+        (e.Element.DataContext as TileViewModel)?.Unrealize();
+
+    private void OnDateFlyoutOpening(object? sender, EventArgs e) => _vm?.LoadDateChoices();
 
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {

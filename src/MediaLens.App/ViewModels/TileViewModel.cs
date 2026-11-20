@@ -30,8 +30,12 @@ public sealed partial class TileViewModel : ObservableObject
 
     public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "");
 
+    /// <summary>How many tiles on screen show this item (grouped by person, one item can be in several groups).</summary>
+    private int _shown;
+
     public void Realize(ThumbnailLoader loader)
     {
+        _shown++;
         if (Thumb != null || _loading != null) return;
         var cts = _loading = new CancellationTokenSource();
         _ = LoadAsync(loader, cts);
@@ -57,6 +61,8 @@ public sealed partial class TileViewModel : ObservableObject
     /// <summary>Scrolled away: stop loading and let the bitmap go (the GC frees it once no frame uses it).</summary>
     public void Unrealize()
     {
+        if (--_shown > 0) return;
+        _shown = 0;
         _loading?.Cancel();
         _loading = null;
         Thumb = null;

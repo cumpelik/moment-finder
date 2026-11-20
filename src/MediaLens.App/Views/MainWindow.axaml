@@ -9,6 +9,34 @@
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
         WindowStartupLocation="CenterScreen">
 
+    <Window.Resources>
+        <!-- One layout for the plain grid and every group, so the thumbnail size slider sizes them all -->
+        <UniformGridLayout x:Key="TileLayout" MinItemWidth="180" MinItemHeight="180"
+                           MinRowSpacing="6" MinColumnSpacing="6" ItemsStretch="Fill" />
+        <DataTemplate x:Key="TileTemplate" DataType="vm:TileViewModel">
+            <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
+                <Grid>
+                    <Image Classes="thumb" Source="{Binding Thumb}" />
+                    <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Open (or double click the picture)">
+                        <mi:MaterialIcon Kind="Play" Width="30" Height="30" Foreground="White" />
+                    </Button>
+                    <Border Classes="badge" IsVisible="{Binding IsVideo}"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <mi:MaterialIcon Kind="Play" Width="12" Height="12" Foreground="White" />
+                            <TextBlock Text="{Binding DurationText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border IsVisible="{Binding InBucket}" Background="{DynamicResource BucketBadgeBrush}"
+                            CornerRadius="11" Width="22" Height="22" Margin="6"
+                            HorizontalAlignment="Right" VerticalAlignment="Top" ToolTip.Tip="In the bucket">
+                        <mi:MaterialIcon Kind="Basket" Width="13" Height="13" Foreground="Black" HorizontalAlignment="Center" />
+                    </Border>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
     <DockPanel>
         <!-- Status bar: background work and the AI model -->
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource ToolbarBackgroundBrush}"
@@ -68,12 +96,71 @@
             <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" Padding="10,8"
                     BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                    <TextBox x:Name="SearchBox" Grid.Column="0" Text="{Binding SearchText}" MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                    <Grid Grid.Column="0" ColumnDefinitions="*,Auto" MaxWidth="760" HorizontalAlignment="Stretch">
+                    <TextBox x:Name="SearchBox" Text="{Binding SearchText}" HorizontalAlignment="Stretch" VerticalAlignment="Center"
                              PlaceholderText="Search: skier, beach at sunset 2023, video birthday..." KeyDown="OnSearchKeyDown">
                         <TextBox.InnerLeftContent>
                             <mi:MaterialIcon Kind="Magnify" Margin="8,0,0,0" Classes="muted" />
                         </TextBox.InnerLeftContent>
                     </TextBox>
+                    <!-- When: years, months of the year, or any days -->
+                    <Button Grid.Column="1" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
+                            ToolTip.Tip="Only photos and videos from a time span">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="CalendarMonthOutline" />
+                            <TextBlock Text="{Binding DateFilterText}" />
+                        </StackPanel>
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft" Opening="OnDateFlyoutOpening">
+                                <StackPanel Spacing="8" Width="380">
+                                    <TextBlock Classes="heading" Text="YEAR" Margin="0" />
+                                    <ItemsControl ItemsSource="{Binding Years}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="vm:DateChoice">
+                                                <Button Classes="chip" Classes.selected="{Binding IsSelected}" Margin="0,0,6,6"
+                                                        Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PickYearCommand}" CommandParameter="{Binding}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <TextBlock Text="{Binding Label}" />
+                                                        <TextBlock Text="{Binding Count}" Classes="muted small" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Classes="heading" Text="MONTH" Margin="0" IsVisible="{Binding HasMonths}" />
+                                    <ItemsControl ItemsSource="{Binding Months}" IsVisible="{Binding HasMonths}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="vm:DateChoice">
+                                                <Button Classes="chip" Classes.selected="{Binding IsSelected}" Margin="0,0,6,6" MinWidth="54"
+                                                        IsEnabled="{Binding HasItems}" ToolTip.Tip="{Binding Count}"
+                                                        Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PickMonthCommand}" CommandParameter="{Binding}">
+                                                    <TextBlock Text="{Binding Label}" />
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Classes="heading" Text="OR ANY DAYS" Margin="0" />
+                                    <Grid ColumnDefinitions="*,Auto,*">
+                                        <CalendarDatePicker SelectedDate="{Binding DateFrom}" PlaceholderText="From" HorizontalAlignment="Stretch" />
+                                        <TextBlock Grid.Column="1" Text="to" Classes="muted" VerticalAlignment="Center" Margin="8,0" />
+                                        <CalendarDatePicker Grid.Column="2" SelectedDate="{Binding DateTo}" PlaceholderText="To" HorizontalAlignment="Stretch" />
+                                    </Grid>
+                                    <Button Command="{Binding ClearDateCommand}" IsEnabled="{Binding IsDateFiltered}" Margin="0,4,0,0">Any time</Button>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                    </Grid>
                     <Button Grid.Column="1" Classes="toolbar" Command="{Binding PlayAllCommand}" Margin="12,0,0,0"
                             ToolTip.Tip="Play all (P): the selection, or the whole result">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -155,7 +242,7 @@
             </Border>
 
             <!-- Result line; a bucket gets its own actions -->
-            <Grid ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
                 <StackPanel Orientation="Horizontal" Spacing="14">
                     <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
                     <ToggleSwitch IsChecked="{Binding VideoHighlightsOnly}" IsVisible="{Binding CanPlayMoments}" VerticalAlignment="Center"
@@ -168,6 +255,15 @@
                             <mi:MaterialIcon Kind="FaceRecognition" />
                             <TextBlock Text="Faces" />
                         </StackPanel>
+                    </ToggleButton>
+                </StackPanel>
+                <!-- How the results look -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
+                    <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
+                              ToolTip.Tip="Show the results in groups: by day, month, year or person" />
+                    <ToggleButton IsChecked="{Binding ShowWholePicture}" VerticalAlignment="Center"
+                                  ToolTip.Tip="Whole pictures instead of squares cut out of them">
+                        <mi:MaterialIcon Kind="ImageAspectRatio" />
                     </ToggleButton>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
@@ -188,39 +284,27 @@
             </Grid>
             </StackPanel>
 
-            <!-- Thumbnails; only the visible ones exist -->
+            <!-- Thumbnails, plain or in groups; only the visible ones exist -->
             <ScrollViewer x:Name="GridScroll" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10" IsVisible="{Binding IsGridMode}">
-                <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding Tiles}">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout MinItemWidth="180" MinItemHeight="180"
-                                           MinRowSpacing="6" MinColumnSpacing="6" ItemsStretch="Fill" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate DataType="vm:TileViewModel">
-                            <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
-                                <Grid>
-                                    <Image Source="{Binding Thumb}" Stretch="UniformToFill" />
-                                    <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Open (or double click the picture)">
-                                        <mi:MaterialIcon Kind="Play" Width="30" Height="30" Foreground="White" />
-                                    </Button>
-                                    <Border Classes="badge" IsVisible="{Binding IsVideo}"
-                                            HorizontalAlignment="Right" VerticalAlignment="Bottom">
-                                        <StackPanel Orientation="Horizontal" Spacing="3">
-                                            <mi:MaterialIcon Kind="Play" Width="12" Height="12" Foreground="White" />
-                                            <TextBlock Text="{Binding DurationText}" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border IsVisible="{Binding InBucket}" Background="{DynamicResource BucketBadgeBrush}"
-                                            CornerRadius="11" Width="22" Height="22" Margin="6"
-                                            HorizontalAlignment="Right" VerticalAlignment="Top" ToolTip.Tip="In the bucket">
-                                        <mi:MaterialIcon Kind="Basket" Width="13" Height="13" Foreground="Black" HorizontalAlignment="Center" />
-                                    </Border>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+                <Panel Classes.whole="{Binding ShowWholePicture}">
+                    <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding FlatTiles}" Layout="{StaticResource TileLayout}"
+                                   ItemTemplate="{StaticResource TileTemplate}" IsVisible="{Binding !IsGrouped}" />
+                    <ItemsRepeater x:Name="GroupRepeater" ItemsSource="{Binding Groups}" IsVisible="{Binding IsGrouped}">
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate DataType="vm:TileGroup">
+                                <StackPanel Margin="0,4,0,14">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="2,0,0,8">
+                                        <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Count}" Classes="muted" VerticalAlignment="Bottom" Margin="0,0,0,1" />
+                                    </StackPanel>
+                                    <ItemsRepeater ItemsSource="{Binding Tiles}" Layout="{StaticResource TileLayout}" ItemTemplate="{StaticResource TileTemplate}"
+                                                   ElementPrepared="OnTilePrepared" ElementClearing="OnTileClearing" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </Panel>
             </ScrollViewer>
 
             <!-- Who is this: everybody without a name, groups of faces and people without a visible face -->

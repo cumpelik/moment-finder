@@ -106,6 +106,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (int.TryParse(host.Db.GetSetting("slide_seconds"), CultureInfo.InvariantCulture, out var s)) _slideSeconds = s;
         _videoHighlightsOnly = host.Db.GetSetting("video_highlights") == "1";
         if (double.TryParse(host.Db.GetSetting("tile_size"), CultureInfo.InvariantCulture, out var ts)) _tileSize = ts;
+        LoadBrowseSettings();
 
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
         host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text);
@@ -230,13 +231,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private bool _isLibraryEmpty;
 
-    private MediaFilter ScopeFilter() => CurrentScope switch
+    private MediaFilter ScopeFilter() => WithDates(CurrentScope switch
     {
         { Kind: SidebarKind.Source } e => new MediaFilter { SourceId = e.Id },
         { Kind: SidebarKind.Bucket } e => new MediaFilter { BucketId = e.Id },
         { Kind: SidebarKind.Person } e => new MediaFilter { PersonIds = [e.Id] },
         _ => new MediaFilter(),
-    };
+    });
 
     public void AddSource(string folder)
     {

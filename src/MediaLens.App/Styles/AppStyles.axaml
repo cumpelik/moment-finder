@@ -50,6 +50,29 @@
     </Style>
 
     <!-- Thumbnail tiles -->
+    <!-- A thumbnail: a square cut out of the picture, or the whole picture -->
+    <Style Selector="Image.thumb">
+        <Setter Property="Stretch" Value="UniformToFill" />
+    </Style>
+    <Style Selector="Panel.whole Image.thumb">
+        <Setter Property="Stretch" Value="Uniform" />
+    </Style>
+
+    <!-- Choices like the years of the date filter; the chosen one is highlighted -->
+    <Style Selector="Button.chip">
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="CornerRadius" Value="12" />
+    </Style>
+    <Style Selector="Button.chip.selected /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <!-- A toolbar button whose filter is on -->
+    <Style Selector="Button.toolbar.active">
+        <Setter Property="Foreground" Value="{DynamicResource SelectionBrush}" />
+    </Style>
+
     <!-- The open button appears on the tile under the mouse -->
     <Style Selector="Button.tileplay">
         <Setter Property="IsVisible" Value="False" />
