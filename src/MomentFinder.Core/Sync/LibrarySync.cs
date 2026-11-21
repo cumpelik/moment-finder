@@ -92,7 +92,15 @@ public sealed class LibrarySync : IDisposable
             // What this computer computed for shared photos goes up; the facts saying so go out with the next changes.
             if (await Content.GiveAsync(ct) > 0) await PushAsync(root, ct);
             var taken = await PullAsync(root, ct);
-            if (DateTime.UtcNow - _deviceWritten > TimeSpan.FromMinutes(10)) await WriteDeviceAsync(root, ct);
+            if (DateTime.UtcNow - _deviceWritten > TimeSpan.FromMinutes(10))
+            {
+                await WriteDeviceAsync(root, ct);
+                await ExchangeRemotesAsync(cloud, ct);
+            }
+            // A summary now and then: a computer that joins starts from it, not from every change ever made.
+            if (!long.TryParse(_db.GetSetting("snapshot_at"), out var at) ||
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - at > TimeSpan.FromDays(7).TotalMilliseconds)
+                await WriteSnapshotAsync(root, ct);
             LastSync = DateTimeOffset.UtcNow;
             LastError = null;
             StatusChanged?.Invoke(taken > 0 ? $"Took in {taken:N0} changes from the other computers" : "");
@@ -129,7 +137,9 @@ public sealed class LibrarySync : IDisposable
                     foreach (var r in rows)
                         await w.WriteLineAsync(JsonSerializer.Serialize(new Line(r.Obj, r.Field, r.Value, r.Hlc)));
                 // Named by the time of its first change: the files of one computer sort in the order they were made.
-                await _cloud.Rclone.UploadAsync(file, CloudService.Join(root, $"journal/{me}/{rows[0].Hlc}.jsonl.gz"), ct);
+                var name = $"{rows[0].Hlc}.jsonl.gz";
+                await _cloud.Rclone.UploadAsync(file, CloudService.Join(root, $"journal/{me}/{name}"), ct);
+                _db.SetSetting("journal_last_file", name);
             }
             finally
             {
@@ -137,6 +147,122 @@ public sealed class LibrarySync : IDisposable
             }
             var last = rows[^1].Seq;
             using (var c = _db.Open()) c.Execute("DELETE FROM outbox WHERE seq<=@last", new { last });
+        }
+    }
+
+    // ---- the library as a whole ----
+
+    /// <summary>The summaries of the shared library in the cloud, the newest last; none when it is not shared yet.</summary>
+    public static async Task<List<RemoteFile>> SnapshotsAsync(Rclone rclone, string backupRoot, CancellationToken ct) =>
+        (await rclone.ListAsync(CloudService.Join(backupRoot, "shared/snapshot"), 1, ct))
+        .Where(f => f.Path.EndsWith(".db.gz", StringComparison.Ordinal)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
+
+    /// <summary>The library's cloud has a shared library already (this one, or another computer's to join).</summary>
+    public async Task<bool> SharedLibraryExistsAsync(CancellationToken ct) =>
+        _cloud.BackupCloud is { } cloud && (await SnapshotsAsync(_cloud.Rclone, _cloud.BackupRoot(cloud), ct)).Count > 0;
+
+    /// <summary>
+    /// This library becomes the shared library of its cloud: the other computers of the family join it. What it
+    /// knows goes up as it is (a summary of the whole library, which files of its folders are in the cloud), nothing
+    /// is computed again. Its own backup in the cloud stops: the shared library is the backup now.
+    /// </summary>
+    public async Task ShareAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        if (_cloud.BackupCloud is not { } cloud) throw new InvalidOperationException("Choose the library's cloud first.");
+        if (await SharedLibraryExistsAsync(ct)) throw new InvalidOperationException("The cloud has a shared library already: join it instead.");
+        var root = Root(_cloud, cloud);
+        await _round.WaitAsync(ct);
+        try
+        {
+            _db.SetSetting(SharedSetting, "1");
+            foreach (var source in new MomentFinder.Library.MediaRepository(_db).ListSources())
+            {
+                using (var c = _db.Open()) SharedFolders.Publish(c, null, _db.Facts, _db.Device, source.Id);
+                // Which files of a backed up folder are in the cloud: what the cloud has, not what was read here.
+                var mirror = _cloud.Mirrors().FirstOrDefault(m => m.SourceId == source.Id && m.Enabled);
+                if (mirror != null)
+                {
+                    progress?.Report($"Which photos of {source.Name} are in the cloud");
+                    var there = (await _cloud.Rclone.ListAsync(mirror.Place, -1, ct)).Select(f => f.Path).ToHashSet();
+                    Catalog.Publish(_db, source.Id, there);
+                }
+                else if (source.Kind == MomentFinder.Library.SourceKinds.Cloud) Catalog.Publish(_db, source.Id);
+            }
+            progress?.Report("The whole library");
+            await WriteSnapshotAsync(root, ct);
+            await ExchangeRemotesAsync(cloud, ct);
+            await WriteDeviceAsync(root, ct);
+        }
+        finally
+        {
+            _round.Release();
+        }
+    }
+
+    /// <summary>
+    /// A summary of the whole library as it is here (all its facts and what was computed), for a computer that joins:
+    /// it takes it and then only the changes made after it. Named by time, so the newest sorts last.
+    /// </summary>
+    private async Task WriteSnapshotAsync(string root, CancellationToken ct)
+    {
+        await PushAsync(root, ct);
+        var me = _db.Device.Id;
+        var lastFile = _db.GetSetting("journal_last_file");
+        var db = Path.Combine(_paths.CacheDir, $"snapshot-{Guid.NewGuid():N}.db");
+        var gz = db + ".gz";
+        try
+        {
+            using (var c = _db.Open()) c.Execute("VACUUM INTO @db", new { db });
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            using (var s = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = db, Pooling = false }.ToString()))
+            {
+                s.Open();
+                // What this computer sent is in it; what it took in from the others too, up to where it is.
+                s.Execute("DELETE FROM outbox");
+                s.Execute("""
+                    INSERT INTO sync_seen(device, seq, last_file, last_seen) VALUES(@me, 0, @lastFile, @now)
+                    ON CONFLICT(device) DO UPDATE SET last_file=excluded.last_file
+                    """, new { me, lastFile, now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+            }
+            await using (var from = File.OpenRead(db))
+            await using (var to = new GZipStream(File.Create(gz), CompressionLevel.Optimal))
+                await from.CopyToAsync(to, ct);
+            await _cloud.Rclone.UploadAsync(gz, CloudService.Join(root, $"snapshot/{_db.Facts.Now()}.db.gz"), ct);
+            _db.SetSetting("snapshot_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+        }
+        finally
+        {
+            File.Delete(db);
+            File.Delete(gz);
+        }
+    }
+
+    /// <summary>
+    /// The access to the storages: a storage added on one computer (and the key of a folder encrypted there) reaches
+    /// the others, always encrypted in the cloud. Each computer gives its own, takes what it does not have.
+    /// </summary>
+    private async Task ExchangeRemotesAsync(CloudInfo cloud, CancellationToken ct)
+    {
+        var keys = CloudService.Join(await _cloud.KeysRootAsync(cloud, ct), "shared");
+        var mine = await _cloud.Rclone.DumpAsync(ct);
+        var file = Path.Combine(_paths.CacheDir, $"remotes-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(file, JsonSerializer.Serialize(mine), ct);
+            await _cloud.Rclone.UploadAsync(file, CloudService.Join(keys, $"{_db.Device.Id}.json"), ct);
+            var added = false;
+            foreach (var other in await _cloud.Rclone.ListAsync(keys, 1, ct))
+            {
+                if (other.Path == $"{_db.Device.Id}.json" || await _cloud.Rclone.ReadTextAsync(CloudService.Join(keys, other.Path), ct) is not { } json) continue;
+                var theirs = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json) ?? [];
+                foreach (var (name, settings) in theirs)
+                    if (mine.TryAdd(name, settings)) added = true;
+            }
+            if (added) Rclone.WriteConfig(Path.Combine(_paths.DataDir, "rclone.conf"), mine);
+        }
+        finally
+        {
+            File.Delete(file);
         }
     }
 

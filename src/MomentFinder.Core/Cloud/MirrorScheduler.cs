@@ -120,6 +120,8 @@ public sealed class MirrorScheduler : IDisposable
     private async Task BackupAsync(CancellationToken ct)
     {
         if (_cloud.BackupCloud is not { } cloud || !Rclone.IsAvailable) return;
+        // Shared with the other computers: the shared library in the cloud is the backup (LibrarySync).
+        if (_db.GetSetting(MomentFinder.Sync.LibrarySync.SharedSetting) == "1") return;
         long.TryParse(_db.GetSetting("backup_tried_at"), out var tried);
         var last = Math.Max(tried, _cloud.Backup.LastAt?.ToUnixTimeMilliseconds() ?? 0);
         var due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - last > IntervalHours * 3600_000;

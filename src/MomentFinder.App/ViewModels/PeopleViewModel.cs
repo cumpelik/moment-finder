@@ -199,7 +199,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         _changed = changed;
     }
 
-    private string CropPath(long detectionId) => _host.Paths.PeopleCropPath(detectionId);
+    private string CropPath(long detectionId) => CropFallback.Ensure(_host.Paths, _host.Db, detectionId);
 
     private void AfterChange()
     {

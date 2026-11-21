@@ -1,5 +1,6 @@
 using Dapper;
 using MomentFinder.Buckets;
+using MomentFinder.Cloud;
 using MomentFinder.Library;
 using MomentFinder.People;
 using MomentFinder.Sync;
@@ -334,6 +335,121 @@ public class SyncTests
             // Stored once: the second computer gives nothing more.
             Assert.Equal(0, await syncB.Content.GiveAsync(ct));
             Assert.Equal(4, Directory.GetFiles(Path.Combine(cloudDir, ".medialens", "shared", "content"), "*", SearchOption.AllDirectories).Length);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task AComputerJoinsTheSharedLibraryAndKeepsItsOwnWork()
+    {
+        Assert.SkipUnless(Cloud.Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        var cloudDir = Path.Combine(Path.GetTempPath(), "momentfinder-shared-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cloudDir);
+        try
+        {
+            using var a = new TestLibrary();
+            using var b = new TestLibrary();
+            // The first computer: a folder backed up to the cloud, one only on its disk, a name, a bucket.
+            a.AddPhoto("shared/a.jpg", color: "red");
+            a.AddPhoto("shared/b.jpg", color: "blue");
+            a.AddPhoto("private/p.jpg", color: "yellow");
+            var shared = a.Repo.AddSource(SourceKinds.Local, Path.Combine(a.MediaDir, "shared"), "Shared");
+            var mine = a.Repo.AddSource(SourceKinds.Local, Path.Combine(a.MediaDir, "private"), "Mine");
+            await new LibraryScanner(a.Repo).ScanAsync(shared, null, ct);
+            await new LibraryScanner(a.Repo).ScanAsync(mine, null, ct);
+            var syncA = await SharedAsync(a, cloudDir, ct);
+            a.Db.SetSetting(LibrarySync.SharedSetting, null);
+            var cloudA = new Cloud.CloudService(a.Paths, a.Db, a.Repo);
+            await cloudA.MirrorAsync((await cloudA.AddMirrorAsync(shared.Id, cloudA.BackupCloud!.Id, false, ct)).Id, null, ct);
+            var photoA = a.Repo.Query(new MediaFilter()).Single(i => i.FileName == "a.jpg");
+            var peopleA = new PeopleRepository(a.Db);
+            peopleA.Confirm([Faces(a, photoA.Id)[0]], peopleA.CreatePerson("Eva").Id);
+            foreach (var item in a.Repo.Query(new MediaFilter()))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(a.Paths.ThumbPath(item.Id))!);
+                File.WriteAllText(a.Paths.ThumbPath(item.Id), "thumb of " + item.FileName);
+                a.Repo.SetThumbState(item.Id, ThumbStates.Ready);
+            }
+
+            // The second computer has a library of its own: a folder on its disk, analyzed and named.
+            b.AddPhoto("own/o.jpg", color: "green");
+            var own = b.Repo.AddSource(SourceKinds.Local, Path.Combine(b.MediaDir, "own"), "Own");
+            await new LibraryScanner(b.Repo).ScanAsync(own, null, ct);
+            var photoB = b.Repo.Query(new MediaFilter()).Single();
+            var peopleB = new PeopleRepository(b.Db);
+            var otaFace = Faces(b, photoB.Id)[0];
+            peopleB.Confirm([otaFace], peopleB.CreatePerson("Ota").Id);
+            Directory.CreateDirectory(Path.GetDirectoryName(b.Paths.ThumbPath(photoB.Id))!);
+            File.WriteAllText(b.Paths.ThumbPath(photoB.Id), "thumb of o.jpg");
+            b.Repo.SetThumbState(photoB.Id, ThumbStates.Ready);
+            Directory.CreateDirectory(Path.GetDirectoryName(b.Paths.PeopleCropPath(otaFace))!);
+            File.WriteAllText(b.Paths.PeopleCropPath(otaFace), "crop of Ota");
+
+            // The first one shares its library; it gives its thumbnails.
+            Assert.False(await syncA.SharedLibraryExistsAsync(ct));
+            await syncA.ShareAsync(null, ct);
+            Assert.True(await syncA.SharedLibraryExistsAsync(ct));
+            await syncA.RunAsync(ct);
+
+            // The second joins it with the recovery string.
+            var recovery = RecoveryString.Parse(await cloudA.RecoveryStringAsync(cloudA.BackupCloud!, ct))!;
+            var restore = new Cloud.LibraryRestore(b.Paths);
+            var found = await restore.FindAsync(recovery, ct);
+            Assert.True(found[0].Shared);
+            await restore.DownloadAsync(recovery, found[0], thumbnails: false, null, ct);
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Assert.True(Cloud.LibraryRestore.ApplyPending(b.Paths));
+            var db = new Data.Database(b.Paths.DbPath);
+            // Another computer: the first one's folders are not on its disk.
+            var away = a.MediaDir + "-elsewhere";
+            Directory.Move(a.MediaDir, away);
+            try
+            {
+                Cloud.LibraryRestore.AdaptToThisComputer(b.Paths, db);
+            }
+            finally
+            {
+                Directory.Move(away, a.MediaDir);
+            }
+            var repo = new MediaRepository(db);
+
+            // The shared folder from the cloud, the first computer's own folder not at all, its own folder with all its work.
+            var sources = repo.ListSources().ToDictionary(s => s.Name);
+            Assert.Equal(["Own", "Shared"], sources.Keys.Order());
+            Assert.Equal((SourceKinds.Cloud, true), (sources["Shared"].Kind, sources["Shared"].ReadOnly));
+            var people = new PeopleRepository(db);
+            var ownPhoto = repo.Query(new MediaFilter { SourceId = sources["Own"].Id }).Single();
+            var ownFace = people.DetectionsOfMedia(ownPhoto.Id).Single();
+            Assert.Equal(("Ota", true), (people.ListPersons().Single(p => p.Id == ownFace.PersonId).Name, ownFace.Confirmed));
+            Assert.Equal("thumb of o.jpg", File.ReadAllText(b.Paths.ThumbPath(ownPhoto.Id)));
+            Assert.Equal("crop of Ota", File.ReadAllText(b.Paths.PeopleCropPath(ownFace.Id)));
+            var restored = Cloud.LibraryRestore.LastRestored(db)!;
+            Assert.Equal((true, 1), (restored.Shared, restored.OwnFolders));
+            // Eva is known with her photo; the photos come with their thumbnails from the shared content.
+            var sharedPhoto = repo.Query(new MediaFilter()).Single(i => i.FileName == "a.jpg");
+            Assert.Equal("Eva", people.ListPersons().Single(p => p.Id == people.DetectionsOfMedia(sharedPhoto.Id).Single().PersonId).Name);
+            var cloudB = new Cloud.CloudService(b.Paths, db, repo);
+            var syncB = new LibrarySync(db, cloudB, b.Paths);
+            Assert.True(syncB.Enabled);
+            // The changes made after the summary (the thumbnails given) come in with the first round.
+            await syncB.RunAsync(ct);
+            Assert.True(await syncB.Content.TakeAsync(ct));
+            Assert.Equal("thumb of a.jpg", File.ReadAllText(b.Paths.ThumbPath(sharedPhoto.Id)));
+
+            // From now on they share: Ota (named on the second one) reaches the first, a new name of Eva the second.
+            await syncB.RunAsync(ct);
+            await syncA.RunAsync(ct);
+            Assert.Contains("Ota", peopleA.ListPersons().Select(p => p.Name));
+            peopleA.RenamePerson(peopleA.FindPerson("Eva")!.Id, "Eva K.");
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            Assert.Contains("Eva K.", people.ListPersons().Select(p => p.Name));
+            Assert.Null(syncB.LastError);
         }
         finally
         {

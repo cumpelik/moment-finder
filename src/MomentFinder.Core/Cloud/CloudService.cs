@@ -530,7 +530,7 @@ public sealed class CloudService
             // The other computers of the library learn which files are in the cloud now (only those: they could not open the rest).
             Catalog.Publish(_db, mirror.SourceId, local.Keys.ToHashSet());
             // The library follows, into the cloud chosen for it (which may be another one, or none).
-            if (BackupCloud is { } home) await Backup.RunAsync(home, full: true, null, ct);
+            if (BackupCloud is { } home && _db.GetSetting(LibrarySync.SharedSetting) != "1") await Backup.RunAsync(home, full: true, null, ct);
             result = "OK";
         }
         catch (Exception e) when (e is RcloneException or IOException)

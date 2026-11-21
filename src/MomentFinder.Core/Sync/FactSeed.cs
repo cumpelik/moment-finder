@@ -56,4 +56,55 @@ public static class FactSeed
         c.Execute("INSERT INTO setting(key, value) VALUES(@Done, '1') ON CONFLICT(key) DO UPDATE SET value='1'", new { Done }, tx);
         tx.Commit();
     }
+
+    /// <summary>
+    /// What the tables hold and no fact says yet (brought in from this computer's own library when it joined the
+    /// shared one): said now, as changes made here, so the other computers get it too. Returns how many.
+    /// </summary>
+    public static int Reconcile(Database db)
+    {
+        var facts = db.Facts;
+        var said = 0;
+        using var c = db.Open();
+        using var tx = c.BeginTransaction();
+        foreach (var p in c.Query<(string Uid, string Name, bool Hidden)>("""
+                     SELECT p.uid, p.name, p.hidden FROM person p WHERE NOT EXISTS(SELECT 1 FROM fact f WHERE f.obj='p:'||p.uid AND f.field='name')
+                     """, transaction: tx).ToList())
+        {
+            facts.Set(c, tx, Keys.Person(p.Uid), "name", p.Name);
+            if (p.Hidden) facts.Set(c, tx, Keys.Person(p.Uid), "hidden", "1");
+            said++;
+        }
+        var decided = c.Query<(long Detection, string Person, string Verdict)>("""
+            SELECT d.id, p.uid, 'yes' FROM detection d JOIN person p ON p.id=d.person_id WHERE d.confirmed=1
+            UNION ALL
+            SELECT r.detection_id, p.uid, 'no' FROM rejection r JOIN person p ON p.id=r.person_id
+            """, transaction: tx).ToList();
+        var keys = PersonFacts.DetectionKeys(c, tx, decided.Select(d => d.Detection)).ToDictionary(k => k.Id, k => k.Key);
+        foreach (var d in decided)
+        {
+            if (!keys.TryGetValue(d.Detection, out var key) || FactStore.Get(c, tx, key, d.Person) != null) continue;
+            facts.Set(c, tx, key, d.Person, d.Verdict);
+            said++;
+        }
+        foreach (var b in c.Query<(long Id, string Uid, string Name)>("SELECT id, uid, name FROM bucket", transaction: tx).ToList())
+        {
+            if (FactStore.Get(c, tx, Keys.Bucket(b.Uid), "name") == null)
+            {
+                facts.Set(c, tx, Keys.Bucket(b.Uid), "name", b.Name);
+                said++;
+            }
+            foreach (var i in c.Query<(string Media, double Position)>(
+                         "SELECT m.uid, i.position FROM bucket_item i JOIN media m ON m.id=i.media_id WHERE i.bucket_id=@Id", new { b.Id }, tx).ToList())
+            {
+                var item = Keys.BucketItem(b.Uid, i.Media);
+                if (FactStore.Get(c, tx, item, "in") != null) continue;
+                facts.Set(c, tx, item, "in", "1");
+                facts.Set(c, tx, item, "pos", i.Position.ToString("R", CultureInfo.InvariantCulture));
+                said++;
+            }
+        }
+        tx.Commit();
+        return said;
+    }
 }

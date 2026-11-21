@@ -21,8 +21,16 @@ public sealed class LibraryRestore
     /// <summary>One computer's library backup found in the cloud.</summary>
     public sealed record Found(string Folder, string Computer, DateTimeOffset When, long Size)
     {
-        public string Title => $"{Computer}, backed up {When.LocalDateTime:d. M. yyyy H:mm}";
+        /// <summary>The library shared by the computers of the family (not one computer's backup).</summary>
+        public bool Shared => Folder.StartsWith(SharedPrefix, StringComparison.Ordinal);
+
+        public string Title => Shared
+            ? $"The shared library of {Computer} (summed up {When.LocalDateTime:d. M. yyyy H:mm}, the changes since come along)"
+            : $"{Computer}, backed up {When.LocalDateTime:d. M. yyyy H:mm}";
     }
+
+    /// <summary>A Found that is the shared library: its folder is the summary's file.</summary>
+    public const string SharedPrefix = "shared:";
 
     public enum CopyState
     {
@@ -39,7 +47,7 @@ public sealed class LibraryRestore
     public sealed record Step(int Number, int Of, string What, int Percent, string Detail);
 
     /// <summary>A library put in place at the start: from where, and how its folders were fitted to this computer.</summary>
-    public sealed record Restored(string Computer, DateTimeOffset When, int FromCloud, int Away, bool ReplacedOwn);
+    public sealed record Restored(string Computer, DateTimeOffset When, int FromCloud, int Away, bool ReplacedOwn, bool Shared = false, int Kept = 0, int OwnFolders = 0);
 
     /// <summary>What is being downloaded, kept with the download so that it goes on after a restart.</summary>
     private sealed record Job(string Recovery, string Folder, string Computer, DateTimeOffset When, bool Thumbnails);
@@ -98,14 +106,27 @@ public sealed class LibraryRestore
     public async Task<List<Found>> FindAsync(Recovery recovery, CancellationToken ct)
     {
         Rclone.WriteConfig(_config, recovery.Remotes);
+        var found = new List<Found>();
+        // The shared library first: joining it is what a second computer of the family wants.
+        if ((await MomentFinder.Sync.LibrarySync.SnapshotsAsync(_rclone, recovery.BackupRoot, ct)).LastOrDefault() is { } snapshot)
+        {
+            var devices = await _rclone.ListAsync(CloudService.Join(recovery.BackupRoot, "shared/devices"), 1, ct);
+            var names = new List<string>();
+            foreach (var d in devices)
+                if (await _rclone.ReadTextAsync(CloudService.Join(recovery.BackupRoot, "shared/devices/" + d.Path), ct) is { } json &&
+                    JsonSerializer.Deserialize<JsonElement>(json).TryGetProperty("Name", out var name))
+                    names.Add(name.GetString() ?? "");
+            found.Add(new Found(SharedPrefix + snapshot.Path, names.Count > 0 ? string.Join(", ", names.Order()) : "the family", snapshot.ModTime, snapshot.Size));
+        }
         var files = await _rclone.ListAsync(recovery.BackupRoot, 2, ct);
-        return files.Where(f => f.Path.Contains('/') && Path.GetFileName(f.Path) == LibraryBackup.DbName)
+        found.AddRange(files.Where(f => f.Path.Contains('/') && Path.GetFileName(f.Path) == LibraryBackup.DbName && !f.Path.StartsWith("shared/", StringComparison.Ordinal))
             .Select(f =>
             {
                 var folder = f.Path[..f.Path.IndexOf('/')];
                 return new Found(folder, folder.LastIndexOf('-') is > 0 and var dash ? folder[..dash] : folder, f.ModTime, f.Size);
             })
-            .OrderByDescending(f => f.When).ToList();
+            .OrderByDescending(f => f.When));
+        return found;
     }
 
     // ---- the copy as a job of the library ----
@@ -214,6 +235,11 @@ public sealed class LibraryRestore
         // Beside the library on this computer, where its own clouds' keys are too.
         File.WriteAllText(Path.Combine(pending, JobName), JsonSerializer.Serialize(job));
 
+        if (backup.Shared)
+        {
+            await DownloadSharedAsync(recovery, backup, pending, progress, ct);
+            return;
+        }
         var root = CloudService.Join(recovery.BackupRoot, backup.Folder);
         var files = (await _rclone.ListAsync(root, 1, ct)).Select(f => f.Path).ToHashSet();
         var steps = thumbnails ? 3 : 2;
@@ -252,6 +278,37 @@ public sealed class LibraryRestore
     }
 
     /// <summary>
+    /// The shared library: its newest summary, and the access to its storages as every computer of it gave them.
+    /// Thumbnails and search data are not downloaded here: they come from the shared content as they are needed.
+    /// </summary>
+    private async Task DownloadSharedAsync(Recovery recovery, Found backup, string pending, IProgress<Step>? progress, CancellationToken ct)
+    {
+        var local = Path.Combine(pending, LibraryBackup.DbName);
+        if (!File.Exists(local))
+        {
+            var gz = local + ".gz";
+            var part = new Callback<Rclone.CopyProgress>(p => progress?.Report(new Step(1, 2, "the shared library", p.Percent, p.Text)));
+            progress?.Report(new Step(1, 2, "the shared library", -1, ""));
+            await _rclone.DownloadAsync(CloudService.Join(recovery.BackupRoot, "shared/snapshot/" + backup.Folder[SharedPrefix.Length..]), gz, part, ct);
+            await using (var from = new System.IO.Compression.GZipStream(File.OpenRead(gz), System.IO.Compression.CompressionMode.Decompress))
+            await using (var to = File.Create(local + ".part"))
+                await from.CopyToAsync(to, ct);
+            File.Move(local + ".part", local, true);
+            File.Delete(gz);
+        }
+        progress?.Report(new Step(2, 2, "the access to the storages", -1, ""));
+        var remotes = new Dictionary<string, Dictionary<string, string>>(recovery.Remotes);
+        var keys = CloudService.Join(recovery.Keys, "shared");
+        foreach (var f in await _rclone.ListAsync(keys, 1, ct))
+            if (await _rclone.ReadTextAsync(CloudService.Join(keys, f.Path), ct) is { } json)
+                foreach (var (name, settings) in JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json) ?? [])
+                    remotes.TryAdd(name, settings);
+        Rclone.WriteConfig(Path.Combine(pending, LibraryBackup.CloudsName), remotes);
+        File.WriteAllText(Path.Combine(pending, ReadyName), "shared");
+        File.Delete(_config);
+    }
+
+    /// <summary>
     /// At the start, before the library is opened: a downloaded backup takes the library's place. What was here is
     /// kept beside it (library.before-restore.db, thumbs.before-restore). True when a library was put in place.
     /// A download that has not finished stays for Resume.
@@ -269,6 +326,7 @@ public sealed class LibraryRestore
             return false;
         }
         var withThumbs = Directory.Exists(Path.Combine(pending, LibraryBackup.ThumbsName));
+        var shared = File.ReadAllText(ready) == "shared";
         var replacedOwn = File.Exists(paths.DbPath) && HasFolders(paths.DbPath);
         SqliteConnection.ClearAllPools();
         if (File.Exists(paths.DbPath)) File.Move(paths.DbPath, Path.Combine(paths.DataDir, "library.before-restore.db"), true);
@@ -291,11 +349,11 @@ public sealed class LibraryRestore
         if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
         Directory.Delete(pending, true);
-        File.WriteAllText(AdaptMarker(paths), JsonSerializer.Serialize(new Marker(withThumbs, job?.Computer ?? "", job?.When ?? DateTimeOffset.Now, replacedOwn)));
+        File.WriteAllText(AdaptMarker(paths), JsonSerializer.Serialize(new Marker(withThumbs, job?.Computer ?? "", job?.When ?? DateTimeOffset.Now, replacedOwn, shared)));
         return true;
     }
 
-    private sealed record Marker(bool Thumbs, string Computer, DateTimeOffset When, bool ReplacedOwn);
+    private sealed record Marker(bool Thumbs, string Computer, DateTimeOffset When, bool ReplacedOwn, bool Shared = false);
 
     /// <summary>The library had folders of its own (one never used has none: nothing is lost by replacing it).</summary>
     private static bool HasFolders(string db)
@@ -350,6 +408,12 @@ public sealed class LibraryRestore
                     // A folder at the same place here (both computers have D:\Photos): read from here, but its backup is
                     // the other computer's (this folder may hold other files): not uploaded from here.
                     c.Execute("DELETE FROM mirror WHERE source_id=@Id", new { s.Id }, tx);
+                    if (marker.Shared)
+                    {
+                        // And it is this computer's own folder, not the other's: a key of its own, and of its photos.
+                        c.Execute("UPDATE source SET uid=lower(hex(randomblob(16))) WHERE id=@Id", new { s.Id }, tx);
+                        c.Execute("UPDATE media SET uid=media_uid((SELECT uid FROM source WHERE id=@Id), rel_path) WHERE source_id=@Id", new { s.Id }, tx);
+                    }
                     continue;
                 }
                 var mirror = c.Query<(string Target, string Remote, string? Own, long CloudId)>("""
@@ -358,7 +422,9 @@ public sealed class LibraryRestore
                     """, new { s.Id }, tx).FirstOrDefault();
                 if (mirror.Target == null)
                 {
-                    away++;
+                    // In the shared library a folder only on the other computer's disk is that computer's own business.
+                    if (marker.Shared) c.Execute("DELETE FROM source WHERE id=@Id", new { s.Id }, tx);
+                    else away++;
                     continue;
                 }
                 // The backup of the other computer's folder: only for looking here, until this computer takes it over.
@@ -374,13 +440,33 @@ public sealed class LibraryRestore
                 c.Execute("DELETE FROM scene_vec", transaction: tx);
                 c.Execute("UPDATE media SET analysis_version=0", transaction: tx);
             }
-            // The backup of the library is that computer's: this one does not upload its copy again (all the
-            // thumbnails once more) until the user says so, in Settings.
-            c.Execute("DELETE FROM setting WHERE key IN ('backup_cloud_id', 'backup_last_at', 'backup_last_result', 'backup_tried_at')", transaction: tx);
+            if (marker.Shared)
+            {
+                // The shared library: its cloud stays this computer's too. Where the computer that summed it up was
+                // in sending its own changes is its business; this one sends from the start.
+                c.Execute("DELETE FROM setting WHERE key IN ('backup_last_at', 'backup_last_result', 'backup_tried_at', 'journal_last_file')", transaction: tx);
+                c.Execute("DELETE FROM outbox", transaction: tx);
+            }
+            else
+            {
+                // The backup of the library is that computer's: this one does not upload its copy again (all the
+                // thumbnails once more) until the user says so, in Settings.
+                c.Execute("DELETE FROM setting WHERE key IN ('backup_cloud_id', 'backup_last_at', 'backup_last_result', 'backup_tried_at')", transaction: tx);
+            }
             tx.Commit();
         }
         foreach (var s in new MediaRepository(db).ListSources().Where(s => s.Kind == SourceKinds.Cloud)) Directory.CreateDirectory(s.Root);
-        db.SetSetting(RestoredKey, JsonSerializer.Serialize(new Restored(marker.Computer, marker.When, fromCloud, away, marker.ReplacedOwn)));
+        // What was named and put in buckets on this computer before it joined stays, and goes to the others.
+        int kept = 0, own = 0;
+        var before = Path.Combine(paths.DataDir, "library.before-restore.db");
+        if (marker.Shared && marker.ReplacedOwn && File.Exists(before))
+        {
+            // Its own folders with all that was found in them, then its names and buckets of the shared photos.
+            own = MomentFinder.Sync.OwnFolders.Carry(paths, db, before, Path.Combine(paths.DataDir, "thumbs.before-restore"));
+            new IndexImport(db).Import(before);
+            kept = MomentFinder.Sync.FactSeed.Reconcile(db);
+        }
+        db.SetSetting(RestoredKey, JsonSerializer.Serialize(new Restored(marker.Computer, marker.When, fromCloud, away, marker.ReplacedOwn, marker.Shared, kept, own)));
         File.Delete(markerPath);
     }
 
