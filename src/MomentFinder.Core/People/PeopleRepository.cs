@@ -276,6 +276,9 @@ public sealed class PeopleRepository
                 new { o.PersonId, source = (int)AssignSource.User, id = ids[scored[0].Index] }, tx);
             carriedOld.Add(o.Id);
         }
+        // What anybody said of this photo's faces and figures, here or on another computer (also before it was
+        // analyzed here, and the "not X" that the new detections would otherwise have lost).
+        FactApplier.PeopleOf(c, tx, mediaId);
         tx.Commit();
         return ids;
     }

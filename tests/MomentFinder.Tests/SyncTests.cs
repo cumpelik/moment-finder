@@ -8,6 +8,7 @@ using Xunit;
 namespace MomentFinder.Tests;
 
 /// <summary>One library on several computers: what the people decide is kept as facts under keys that mean the same everywhere.</summary>
+[Collection("Cloud")]
 public class SyncTests
 {
     private static List<Change> Outbox(TestLibrary lib)
@@ -117,5 +118,109 @@ public class SyncTests
         // The oldest time: whatever anybody changes later wins; and nothing of it is sent (the first snapshot carries it).
         Assert.StartsWith("000000000000.0000.", r.ExecuteScalar<string>("SELECT MIN(hlc) FROM fact"));
         Assert.Equal(0, r.ExecuteScalar<long>("SELECT COUNT(*) FROM outbox"));
+    }
+
+    /// <summary>A computer of a shared library: its cloud is the folder both see.</summary>
+    private static async Task<LibrarySync> SharedAsync(TestLibrary lib, string cloudDir, CancellationToken ct)
+    {
+        var service = new Cloud.CloudService(lib.Paths, lib.Db, lib.Repo);
+        service.BackupCloud = await service.AddFolderAsync("Home", cloudDir, null, ct, encrypt: false);
+        lib.Db.SetSetting(LibrarySync.SharedSetting, "1");
+        return new LibrarySync(lib.Db, service, lib.Paths);
+    }
+
+    private static List<long> Faces(TestLibrary lib, long mediaId) =>
+        new PeopleRepository(lib.Db).ReplaceDetections(mediaId,
+            [new NewDetection(Analysis.DetectionKind.Face, 0, 0.1f, 0.2f, 0.3f, 0.4f, 0.9f, 0.9f, new float[16], null, null)]);
+
+    [Fact]
+    public async Task TwoComputersShareNamesBucketsAndWhoIsWho()
+    {
+        Assert.SkipUnless(Cloud.Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        var cloudDir = Path.Combine(Path.GetTempPath(), "momentfinder-shared-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cloudDir);
+        try
+        {
+            using var a = new TestLibrary();
+            using var b = new TestLibrary();
+            foreach (var lib in new[] { a, b })
+            {
+                lib.AddPhoto("a.jpg", color: "red");
+                lib.AddPhoto("b.jpg", color: "blue");
+            }
+            var sa = a.AddSource();
+            var sb = b.AddSource();
+            // One folder both see (as a folder in the cloud is): the same key, so the same keys of its photos.
+            using (var c = b.Db.Open()) c.Execute("UPDATE source SET uid=@uid WHERE id=@Id", new { uid = Uid(a, "source", sa.Id), sb.Id });
+            await a.ScanAsync(sa);
+            await b.ScanAsync(sb);
+            long Item(TestLibrary lib, string name) => lib.Repo.Query(new MediaFilter()).Single(i => i.FileName == name).Id;
+            var faceA = Faces(a, Item(a, "a.jpg"))[0];
+            var faceB = Faces(b, Item(b, "a.jpg"))[0];
+            var syncA = await SharedAsync(a, cloudDir, ct);
+            var syncB = await SharedAsync(b, cloudDir, ct);
+            var peopleA = new PeopleRepository(a.Db);
+            var peopleB = new PeopleRepository(b.Db);
+
+            // Named on one computer: the other knows the person, who is on the face, and the bucket in its order.
+            var eva = peopleA.CreatePerson("Eva");
+            peopleA.Confirm([faceA], eva.Id);
+            var bucketsA = new BucketService(a.Db, a.Repo);
+            var book = bucketsA.Create("Book");
+            bucketsA.Add(book.Id, [Item(a, "b.jpg"), Item(a, "a.jpg")]);
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            var evaB = peopleB.FindPerson("Eva")!;
+            var detB = peopleB.DetectionsOfMedia(Item(b, "a.jpg")).Single();
+            Assert.Equal((evaB.Id, true), (detB.PersonId!.Value, detB.Confirmed));
+            var bucketsB = new BucketService(b.Db, b.Repo);
+            var bookB = bucketsB.Find("Book")!;
+            Assert.Equal([Item(b, "b.jpg"), Item(b, "a.jpg")], b.Repo.Query(new MediaFilter { BucketId = bookB.Id }).Select(i => i.Id));
+
+            // Corrected on the other one: "not Eva", and her new name, come back.
+            peopleB.Reject([faceB], evaB.Id);
+            peopleB.RenamePerson(evaB.Id, "Eva K.");
+            await syncB.RunAsync(ct);
+            await syncA.RunAsync(ct);
+            var detA = peopleA.DetectionsOfMedia(Item(a, "a.jpg")).Single();
+            Assert.False(detA.Confirmed);
+            Assert.Equal("Eva K.", peopleA.ListPersons().Single().Name);
+            using (var c = a.Db.Open())
+                Assert.Equal(1, c.ExecuteScalar<long>("SELECT COUNT(*) FROM rejection WHERE detection_id=@faceA AND person_id=@Id", new { faceA, eva.Id }));
+            // A new analysis of the photo keeps the "not Eva" (it used to drop it).
+            var again = Faces(a, Item(a, "a.jpg"))[0];
+            using (var c = a.Db.Open())
+                Assert.Equal(1, c.ExecuteScalar<long>("SELECT COUNT(*) FROM rejection WHERE detection_id=@again", new { again }));
+
+            // Both rename at once: the later name counts on both.
+            peopleA.RenamePerson(eva.Id, "Eva A");
+            // Within one millisecond neither is later (the computer decides then): this one is clearly later.
+            await Task.Delay(20, ct);
+            peopleB.RenamePerson(evaB.Id, "Eva B");
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            await syncA.RunAsync(ct);
+            Assert.Equal("Eva B", peopleA.ListPersons().Single().Name);
+            Assert.Equal("Eva B", peopleB.ListPersons().Single().Name);
+
+            // Said of a photo the other computer has not analyzed yet: it waits, and is there when it is analyzed.
+            using (var c = b.Db.Open()) c.Execute("DELETE FROM detection WHERE media_id=@id", new { id = Item(b, "b.jpg") });
+            var faceBb = Faces(a, Item(a, "b.jpg"))[0];
+            peopleA.Confirm([faceBb], eva.Id);
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            var later = Faces(b, Item(b, "b.jpg"))[0];
+            Assert.Equal(evaB.Id, peopleB.DetectionsOfMedia(Item(b, "b.jpg")).Single(d => d.Id == later).PersonId);
+
+            // Nothing is taken in twice, nothing is lost: one more round changes nothing.
+            await syncB.RunAsync(ct);
+            Assert.Null(syncB.LastError);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+        }
     }
 }

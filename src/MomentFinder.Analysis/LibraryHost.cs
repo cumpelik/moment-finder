@@ -28,6 +28,8 @@ public sealed class LibraryHost : IDisposable
     public EventBuilder Events { get; }
     public CloudService Cloud { get; }
     public MirrorScheduler Mirrors { get; }
+    /// <summary>The library shared with the other computers that use it: changes go out and come in.</summary>
+    public MomentFinder.Sync.LibrarySync Sync { get; }
     /// <summary>Copying the library of another computer here (put in place at the next start).</summary>
     public LibraryRestore Restore { get; }
     public PeopleModel? PeopleModel { get; private set; }
@@ -60,6 +62,8 @@ public sealed class LibraryHost : IDisposable
         Cloud = new CloudService(Paths, Db, Repo);
         Indexer = new Indexer(Paths, Repo, Cloud.Rclone);
         Mirrors = new MirrorScheduler(Cloud, Db);
+        Sync = new MomentFinder.Sync.LibrarySync(Db, Cloud, Paths);
+        Db.Facts.Recorded += Sync.Wake;
         Models = new ModelManager(Paths.ModelDir);
         People = new PeopleRepository(Db);
         Identity = new IdentityService(People);
@@ -114,6 +118,7 @@ public sealed class LibraryHost : IDisposable
     {
         Indexer.Dispose();
         Mirrors.Dispose();
+        Sync.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();
         Translator?.Dispose();

@@ -127,6 +127,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
         host.Mirrors.MirrorsChanged += () => Dispatcher.UIThread.Post(OnCloudChanged);
         host.Mirrors.FoldersChanged += host.Indexer.RequestScan;
+        // Another computer of the library changed something: names, buckets and who is who show it, its folders are read.
+        host.Sync.FoldersChanged += () => Dispatcher.UIThread.Post(() =>
+        {
+            RebuildSidebar();
+            host.Indexer.RequestScan();
+        });
+        host.Sync.Changed += () => Dispatcher.UIThread.Post(() =>
+        {
+            host.RefreshNames();
+            host.Indexer.RequestIdentity();
+            RebuildSidebar();
+            _refreshPending = true;
+            if (!_refreshThrottle!.IsEnabled) _refreshThrottle.Start();
+        });
         host.Mirrors.Copying += (id, p) => Dispatcher.UIThread.Post(() => OnCopying(id, p));
         host.Indexer.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
         {
@@ -145,6 +159,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _ = RunSearchAsync(keepSelection: false);
         _host.Indexer.Start(scanNow: true);
         _host.Mirrors.Start();
+        _host.Sync.Start();
         // A folder that changed is read again, and its backup follows, once it has been quiet for a while.
         _watcher = new FolderWatcher(_host.Repo);
         _watcher.FolderChanged += id =>
@@ -1100,7 +1115,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     /// <summary>All background work: the reading and analysis, and what goes to the cloud.</summary>
-    private void TogglePause() => _host.Indexer.Paused = _host.Mirrors.Paused = !_host.Indexer.Paused;
+    private void TogglePause() => _host.Indexer.Paused = _host.Mirrors.Paused = _host.Sync.Paused = !_host.Indexer.Paused;
 
     private async Task LoadModelAsync()
     {

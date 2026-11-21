@@ -27,6 +27,9 @@ public sealed class FactStore
 
     public FactStore(string device) => Device = device;
 
+    /// <summary>A change was made here (it is sent soon).</summary>
+    public event Action? Recorded;
+
     /// <summary>This computer, as it signs its changes.</summary>
     public string Device { get; }
 
@@ -87,6 +90,7 @@ public sealed class FactStore
             ON CONFLICT(obj, field) DO UPDATE SET value=excluded.value, hlc=excluded.hlc
             """, new { obj, field, value, hlc }, tx);
         c.Execute("INSERT INTO outbox(obj, field, value, hlc) VALUES(@obj, @field, @value, @hlc)", new { obj, field, value, hlc }, tx);
+        Recorded?.Invoke();
     }
 
     /// <summary>A fact the library had before it was shared (kept, not sent: the first snapshot carries it).</summary>

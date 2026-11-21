@@ -271,6 +271,8 @@ public sealed class Database
         CREATE TABLE sync_seen(device TEXT PRIMARY KEY, seq INTEGER NOT NULL, name TEXT, last_seen INTEGER);
         CREATE TABLE person_alias(from_uid TEXT PRIMARY KEY, into_uid TEXT NOT NULL);
         """,
+        // 16: the last file of each other computer's changes taken in (they are named by time, so later ones sort after).
+        "ALTER TABLE sync_seen ADD COLUMN last_file TEXT;",
     ];
 
     /// <summary>
