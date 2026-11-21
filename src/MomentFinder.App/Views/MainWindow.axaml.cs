@@ -32,6 +32,10 @@ public partial class MainWindow : Window
         Preview.FullScreenRequested += OnPanelFullScreen;
         Preview.KeyboardWanted += () => GridScroll.Focus();
         PreviewSplitter.DragCompleted += OnPreviewSplitterDragged;
+        TreeSplitter.DragCompleted += (_, _) =>
+        {
+            if (_vm?.ShowGroupTree == true) _vm.SaveSize("group_tree_width", TreeSplit.ColumnDefinitions[0].ActualWidth);
+        };
         SidebarSplitter.DragCompleted += (_, _) =>
         {
             if (_vm?.SidebarVisible == true) _vm.SaveSize("sidebar_width", MainSplit.ColumnDefinitions[0].ActualWidth);
@@ -56,6 +60,7 @@ public partial class MainWindow : Window
         ShowGridItems();
         ApplyTileSize();
         ApplySidebar();
+        ApplyGroupTree();
         // After the first layout, so one row of thumbnails can be measured.
         Avalonia.Threading.Dispatcher.UIThread.Post(ApplyPreviewPanel, DispatcherPriority.Loaded);
     }
@@ -66,6 +71,7 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.GridItems)) ShowGridItems();
         if (e.PropertyName is nameof(MainViewModel.ShowPreviewPanel) or nameof(MainViewModel.PreviewMode)) ApplyPreviewPanel();
         if (e.PropertyName == nameof(MainViewModel.SidebarVisible)) ApplySidebar();
+        if (e.PropertyName == nameof(MainViewModel.ShowGroupTree)) ApplyGroupTree();
     }
 
     private void OnResultsReset()
@@ -158,8 +164,9 @@ public partial class MainWindow : Window
             }
             return;
         }
-        // Typing in the search box (or another text field) is not a shortcut.
+        // Typing in the search box (or another text field) is not a shortcut; in the groups' tree the arrows move in the tree.
         if (e.Source is TextBox || e.Source is NumericUpDown || e.Source is AutoCompleteBox) return;
+        if ((e.Source as Visual)?.FindAncestorOfType<TreeView>(includeSelf: true) != null) return;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
         if (_vm.IsReviewMode)
         {
@@ -471,6 +478,16 @@ public partial class MainWindow : Window
         var column = MainSplit.ColumnDefinitions[0];
         column.MinWidth = _vm.SidebarVisible ? minWidth : 0;
         column.Width = _vm.SidebarVisible ? new GridLength(Math.Max(minWidth, _vm.SavedSize("sidebar_width") ?? 250)) : new GridLength(0);
+    }
+
+    /// <summary>The groups' tree takes the width it was dragged to, or none when it is off.</summary>
+    private void ApplyGroupTree()
+    {
+        if (_vm == null) return;
+        const double minWidth = 160;
+        var column = TreeSplit.ColumnDefinitions[0];
+        column.MinWidth = _vm.ShowGroupTree ? minWidth : 0;
+        column.Width = _vm.ShowGroupTree ? new GridLength(Math.Max(minWidth, _vm.SavedSize("group_tree_width") ?? 260)) : new GridLength(0);
     }
 
     /// <summary>The panel's full screen button: the same item in the full screen viewer.</summary>

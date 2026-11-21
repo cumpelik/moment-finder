@@ -1,5 +1,6 @@
 using Dapper;
 using MomentFinder.Data;
+using MomentFinder.Library;
 
 namespace MomentFinder.People;
 
@@ -20,8 +21,11 @@ public sealed class EventBuilder
     public int Rebuild()
     {
         using var c = _db.Open();
-        var items = c.Query<(long Id, long TakenAt, double? Lat, double? Lon)>(
-            "SELECT id, taken_at, lat, lon FROM media WHERE missing=0 ORDER BY taken_at, id").ToList();
+        var all = c.Query<(long Id, long TakenAt, double? Lat, double? Lon, int Kind, bool HasCamera, long Mtime)>(
+            "SELECT id, taken_at, lat, lon, kind, camera IS NOT NULL, mtime FROM media WHERE missing=0 ORDER BY taken_at, id").ToList();
+        var copied = CopiedInBulk(all.Where(i => i.Kind == (int)MediaKind.Photo && !i.HasCamera && i.Lat == null && IsFileTime(i.TakenAt, i.Mtime))
+            .Select(i => (i.Id, i.TakenAt)).ToList());
+        var items = all.Where(i => !copied.Contains(i.Id)).ToList();
         var events = new List<(long Start, long End, List<long> Ids)>();
         (double Lat, double Lon)? lastGps = null;
         long lastTime = long.MinValue;
@@ -51,6 +55,41 @@ public sealed class EventBuilder
         }
         tx.Commit();
         return events.Count;
+    }
+
+    /// <summary>Photos this many within minutes of each other, all dated only by their file time, were copied then.</summary>
+    public int BulkCount { get; set; } = 50;
+    private static readonly long BulkWindowMs = (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
+
+    /// <summary>
+    /// The capture time is the file's own time (the wall clock of its modification time): the photo had no date
+    /// of its own. The two differ by the time zone only (whole quarters of an hour).
+    /// </summary>
+    private static bool IsFileTime(long takenAt, long mtime)
+    {
+        const long quarter = 15 * 60 * 1000;
+        var offset = takenAt - mtime;
+        if (Math.Abs(offset) > 14 * 4 * quarter) return false;
+        var rest = ((offset % quarter) + quarter) % quarter;
+        return Math.Min(rest, quarter - rest) <= 2000;
+    }
+
+    /// <summary>
+    /// Photos without a date of their own that came by the dozens within minutes (scanned slides, a folder
+    /// uploaded to the cloud): their time is when they were copied, not taken, so they make no day out
+    /// (outfits are matched within a day out, and this one would hold everybody).
+    /// </summary>
+    private HashSet<long> CopiedInBulk(List<(long Id, long TakenAt)> undated)
+    {
+        var copied = new HashSet<long>();
+        int from = 0, to = 0;
+        for (var i = 0; i < undated.Count; i++)
+        {
+            while (undated[from].TakenAt < undated[i].TakenAt - BulkWindowMs) from++;
+            while (to + 1 < undated.Count && undated[to + 1].TakenAt <= undated[i].TakenAt + BulkWindowMs) to++;
+            if (to - from + 1 >= BulkCount) copied.Add(undated[i].Id);
+        }
+        return copied;
     }
 
     private static double Km(double lat1, double lon1, double lat2, double lon2)

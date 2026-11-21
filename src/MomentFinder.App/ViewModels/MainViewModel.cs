@@ -115,6 +115,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             "below" => PreviewMode.Below,
             "right" => PreviewMode.Right,
+            "window" => PreviewMode.Window,
+            // Saved by an older version, before the choice of where.
             _ => host.Db.GetSetting("open_in_panel") == "1" ? PreviewMode.Below : PreviewMode.Window,
         };
         _sidebarVisible = host.Db.GetSetting("sidebar_hidden") != "1";
@@ -435,6 +437,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsPersonScope));
         if (!same) ShowPersonFaces = false;
         OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(ShowGroupTree));
         OnPropertyChanged(nameof(ShowPreviewPanel));
         OnPropertyChanged(nameof(IsGroupsMode));
         OnPropertyChanged(nameof(IsReviewMode));
@@ -549,6 +552,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     partial void OnShowPersonFacesChanged(bool value)
     {
         OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(ShowGroupTree));
         OnPropertyChanged(nameof(ShowPreviewPanel));
         if (value && CurrentScope is { Kind: SidebarKind.Person } p) People.LoadPerson(p.Id);
     }

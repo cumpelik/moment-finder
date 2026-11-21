@@ -18,11 +18,29 @@ public sealed record GroupOption(GroupMode Mode, string Label)
 }
 
 /// <summary>A titled part of the results (a day, a month, a person).</summary>
-public sealed class TileGroup(string title, string count, IReadOnlyList<TileViewModel> tiles)
+public sealed class TileGroup(string title, string count, IReadOnlyList<TileViewModel> tiles, IReadOnlyList<string>? path = null)
 {
     public string Title { get; } = title;
     public string Count { get; } = count;
     public IReadOnlyList<TileViewModel> Tiles { get; } = tiles;
+    /// <summary>Where it is in the groups' tree: a folder under its parent folders, a day under its year and month.</summary>
+    public IReadOnlyList<string> Path { get; } = path ?? [title];
+}
+
+/// <summary>A place in the groups' tree: a folder with its subfolders, a year with its months.</summary>
+public sealed partial class GroupNode(string key, string title) : ObservableObject
+{
+    /// <summary>The whole path: the same place after the results refresh.</summary>
+    public string Key { get; } = key;
+    public string Title { get; } = title;
+    public List<GroupNode> Children { get; } = [];
+    /// <summary>Its own group and those of everything under it, in the order the grid shows them.</summary>
+    public List<TileGroup> Groups { get; set; } = [];
+    public int Total { get; set; }
+    [ObservableProperty] private string _count = "";
+    [ObservableProperty] private bool _isExpanded;
+
+    public IEnumerable<GroupNode> SelfAndBelow() => Children.SelectMany(c => c.SelfAndBelow()).Prepend(this);
 }
 
 /// <summary>A year or a month in the date filter, with how many items it has.</summary>
@@ -66,6 +84,88 @@ public sealed partial class MainViewModel
 
     public bool IsGrouped => GroupBy.Mode != GroupMode.None;
 
+    /// <summary>The groups as a tree on the left (like folders in a file manager); the grid shows the chosen one.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowGroupTree))] private bool _groupTree;
+    public bool ShowGroupTree => GroupTree && IsGrouped && IsGridMode;
+    [ObservableProperty] private List<GroupNode> _groupRoots = [];
+    [ObservableProperty] private GroupNode? _selectedGroup;
+    private List<TileGroup> _allGroups = [];
+    private bool _applyingTree;
+
+    partial void OnGroupTreeChanged(bool value)
+    {
+        _host.Db.SetSetting("group_tree", value ? "1" : "0");
+        ShowChosenGroups();
+        ResultsReset?.Invoke();
+    }
+
+    partial void OnSelectedGroupChanged(GroupNode? value)
+    {
+        if (_applyingTree) return;
+        ShowChosenGroups();
+        ResultsReset?.Invoke();
+    }
+
+    /// <summary>All groups under each other, or with the tree only the chosen place.</summary>
+    private void ShowChosenGroups()
+    {
+        if (!IsGrouped) return;
+        var groups = GroupTree && SelectedGroup != null ? SelectedGroup.Groups : _allGroups;
+        ShowGrid(TileGrid.Grouped(groups), groups.SelectMany(g => g.Tiles).ToList());
+    }
+
+    /// <summary>
+    /// New groups: the tree keeps what was open and chosen. The same places with the same counts (a refresh while
+    /// indexing) keep the tree as it is, so it does not jump.
+    /// </summary>
+    private void ApplyGroups(List<TileGroup> groups, List<GroupNode> roots)
+    {
+        _allGroups = groups;
+        var old = GroupRoots.SelectMany(r => r.SelfAndBelow()).ToList();
+        var fresh = roots.SelectMany(r => r.SelfAndBelow()).ToList();
+        _applyingTree = true;
+        if (old.Count == fresh.Count && old.Zip(fresh).All(p => p.First.Key == p.Second.Key && p.First.Total == p.Second.Total))
+            foreach (var (o, f) in old.Zip(fresh)) o.Groups = f.Groups;
+        else
+        {
+            var open = old.Where(n => n.IsExpanded).Select(n => n.Key).ToHashSet();
+            foreach (var node in fresh) node.IsExpanded = open.Contains(node.Key);
+            // The first time one top place opens by itself (the source of the folders, the only year).
+            if (old.Count == 0 && roots.Count == 1) roots[0].IsExpanded = true;
+            var chosen = SelectedGroup?.Key;
+            GroupRoots = roots;
+            SelectedGroup = fresh.FirstOrDefault(n => n.Key == chosen) ?? roots.FirstOrDefault();
+        }
+        _applyingTree = false;
+        ShowChosenGroups();
+    }
+
+    /// <summary>The tree of the groups' paths; each place collects the groups under it.</summary>
+    private static List<GroupNode> BuildTree(List<TileGroup> groups)
+    {
+        var roots = new List<GroupNode>();
+        var byKey = new Dictionary<string, GroupNode>();
+        foreach (var group in groups)
+        {
+            GroupNode? parent = null;
+            var key = "";
+            foreach (var part in group.Path)
+            {
+                key += "\u0001" + part;
+                if (!byKey.TryGetValue(key, out var node))
+                {
+                    byKey[key] = node = new GroupNode(key, part);
+                    (parent?.Children ?? roots).Add(node);
+                }
+                node.Groups.Add(group);
+                node.Total += group.Tiles.Count;
+                parent = node;
+            }
+        }
+        foreach (var node in byKey.Values) node.Count = node.Total.ToString("N0", CultureInfo.CurrentCulture);
+        return roots;
+    }
+
     /// <summary>The panel under the thumbnails is open (the choice is on and the grid is shown).</summary>
     public bool ShowPreviewPanel => OpenInPanel && IsGridMode;
     partial void OnTilesChanged(ObservableCollection<TileViewModel> value) => RebuildGroups();
@@ -80,6 +180,7 @@ public sealed partial class MainViewModel
     private void LoadBrowseSettings()
     {
         _groupBy = GroupOptions.FirstOrDefault(o => o.Mode.ToString() == _host.Db.GetSetting("group_by")) ?? GroupOptions[0];
+        _groupTree = _host.Db.GetSetting("group_tree") == "1";
     }
 
     /// <summary>Days and months newest first; a text search keeps its best matches first inside a group.</summary>
@@ -90,18 +191,21 @@ public sealed partial class MainViewModel
         var version = ++_groupsVersion;
         if (!IsGrouped)
         {
+            OnPropertyChanged(nameof(ShowGroupTree));
             ShowGrid(TileGrid.Plain(Tiles), Tiles.ToList());
             return;
         }
         // Grouped off the UI thread: a library of millions takes a moment.
         var tiles = Tiles.ToList();
         var mode = GroupBy.Mode;
-        var (groups, shown) = await Task.Run(() =>
+        var (groups, roots) = await Task.Run(() =>
         {
             var groups = BuildGroups(tiles, mode);
-            return (groups, groups.SelectMany(g => g.Tiles).ToList());
+            return (groups, BuildTree(groups));
         });
-        if (version == _groupsVersion) ShowGrid(TileGrid.Grouped(groups), shown);
+        if (version != _groupsVersion) return;
+        OnPropertyChanged(nameof(ShowGroupTree));
+        ApplyGroups(groups, roots);
     }
 
     private List<TileGroup> BuildGroups(List<TileViewModel> tiles, GroupMode mode)
@@ -121,10 +225,12 @@ public sealed partial class MainViewModel
                     var source = sources.GetValueOrDefault(g.Key.SourceId, "");
                     var title = g.Key.Folder.Length == 0 ? source
                         : several ? $"{source}  \u00b7  {g.Key.Folder.Replace("/", " / ")}" : g.Key.Folder.Replace("/", " / ");
-                    return (Title: title, Group: g);
+                    // In the tree each source is the top, its folders under it.
+                    string[] path = g.Key.Folder.Length == 0 ? [source] : [source, .. g.Key.Folder.Split('/')];
+                    return (Title: title, Path: path, Group: g);
                 })
                 .OrderBy(x => x.Title, StringComparer.Create(culture, CompareOptions.IgnoreCase))
-                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList()))
+                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList(), x.Path))
                 .ToList();
         }
         else if (mode == GroupMode.Person)
@@ -150,14 +256,27 @@ public sealed partial class MainViewModel
                     _ => new DateTime(t.Item.Taken.Year, 1, 1),
                 })
                 .OrderByDescending(g => g.Key)
-                .Select(g => new TileGroup(
-                    mode switch
+                .Select(g =>
+                {
+                    var place = mode == GroupMode.Day ? PlaceOf(g) : "";
+                    // In the tree: the year, its months, their days.
+                    var year = g.Key.Year.ToString(culture);
+                    var month = culture.TextInfo.ToTitleCase(g.Key.ToString("MMMM", culture));
+                    string[] path = mode switch
                     {
-                        GroupMode.Day => g.Key.ToString("dddd d. MMMM yyyy", culture) + PlaceOf(g),
-                        GroupMode.Month => g.Key.ToString("MMMM yyyy", culture),
-                        _ => g.Key.Year.ToString(culture),
-                    },
-                    Items(g.Count()), g.ToList()))
+                        GroupMode.Day => [year, month, g.Key.ToString("d. dddd", culture) + place],
+                        GroupMode.Month => [year, month],
+                        _ => [year],
+                    };
+                    return new TileGroup(
+                        mode switch
+                        {
+                            GroupMode.Day => g.Key.ToString("dddd d. MMMM yyyy", culture) + place,
+                            GroupMode.Month => g.Key.ToString("MMMM yyyy", culture),
+                            _ => year,
+                        },
+                        Items(g.Count()), g.ToList(), path);
+                })
                 .ToList();
         }
         return groups;

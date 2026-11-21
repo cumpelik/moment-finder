@@ -13,6 +13,10 @@ public static class MediaFiles
     private static Rclone? _rclone;
     private static string? _cacheDir;
     private static readonly SemaphoreSlim Gate = new(3);
+    /// <summary>Somebody waits for these (the viewer): they do not queue behind the background work.</summary>
+    private static readonly SemaphoreSlim WaitedGate = new(3);
+    /// <summary>Files being fetched now: a second request for one waits for the same download.</summary>
+    private static readonly Dictionary<string, Task> Fetching = [];
 
     private static Func<MediaItem, string?>? _localTwin;
 
@@ -31,7 +35,11 @@ public static class MediaFiles
     private static bool IsCached(MediaItem item) =>
         new FileInfo(item.FullPath) is { Exists: true } fi && fi.Length == item.Size;
 
-    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct)
+    /// <summary>
+    /// The local path of the item's bytes, downloaded first when needed. Waited: somebody is looking at the screen
+    /// for it (the viewer), so it does not wait for the downloads of the background analysis.
+    /// </summary>
+    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct, bool waited = false)
     {
         if (item.Remote == null) return item.FullPath;
         if (IsCached(item))
@@ -42,14 +50,35 @@ public static class MediaFiles
         }
         if (_localTwin?.Invoke(item) is { } twin) return twin;
         if (_rclone == null) throw new InvalidOperationException("Cloud access is not configured");
-        await Gate.WaitAsync(ct);
+        var gate = waited ? WaitedGate : Gate;
+        await gate.WaitAsync(ct);
         try
         {
-            if (!IsCached(item)) await _rclone.DownloadAsync(item.Remote, item.FullPath, ct);
+            var mine = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            while (true)
+            {
+                Task? running;
+                lock (Fetching)
+                    if (!Fetching.TryAdd(item.FullPath, mine.Task)) running = Fetching[item.FullPath];
+                    else running = null;
+                if (running == null) break;
+                // Already on its way (the analysis fetches it): that download, not a second one into the same file.
+                await running.WaitAsync(ct);
+                if (IsCached(item)) return item.FullPath;
+            }
+            try
+            {
+                if (!IsCached(item)) await _rclone.DownloadAsync(item.Remote, item.FullPath, ct);
+            }
+            finally
+            {
+                lock (Fetching) Fetching.Remove(item.FullPath);
+                mine.SetResult();
+            }
         }
         finally
         {
-            Gate.Release();
+            gate.Release();
         }
         return item.FullPath;
     }

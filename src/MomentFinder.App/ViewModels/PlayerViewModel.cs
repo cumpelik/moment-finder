@@ -572,7 +572,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LoadingText = "Downloading from the cloud...";
         try
         {
-            var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
+            var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None, waited: true);
             if (version != _loadVersion || _video == null) return;
             LoadingText = "Loading...";
             _playingPath = Is360 ? Path360(entry.Item, path, version) : path;
@@ -597,6 +597,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             await Show360PhotoAsync(entry, version);
             return;
         }
+        // A photo that lives in the cloud is downloaded first: the wait says so.
+        if (!Cloud.MediaFiles.IsLocal(entry.Item) && !_prefetch.ContainsKey(entry.Item.Id)) LoadingText = "Downloading from the cloud...";
         var decoded = await DecodeAsync(entry.Item);
         if (version != _loadVersion) return;
         if (decoded == null)
@@ -611,6 +613,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             ContentWidth = decoded.Width;
             ContentHeight = decoded.Height;
             EndLoading();
+            // The boxes are placed in the photo's pixels: now that its size is known.
+            PeopleChanged?.Invoke();
         }
         if (AutoPlay) _slideTimer.Start();
     }
@@ -623,7 +627,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             try
             {
-                return ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(item, CancellationToken.None), w, h);
+                return ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(item, CancellationToken.None, waited: true), w, h);
             }
             catch (Exception)
             {

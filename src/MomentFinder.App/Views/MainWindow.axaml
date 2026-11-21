@@ -293,7 +293,14 @@
                 <!-- How the results look -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
                     <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
-                              ToolTip.Tip="Show the results in groups: by day, month, year or person" />
+                              ToolTip.Tip="Show the results in groups: by day, month, year, person or folder" />
+                    <ToggleButton IsChecked="{Binding GroupTree}" IsVisible="{Binding IsGrouped}" VerticalAlignment="Center"
+                                  ToolTip.Tip="The groups as a tree on the left, like folders: the thumbnails show only the chosen one">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="FileTree" />
+                            <TextBlock Text="Tree" />
+                        </StackPanel>
+                    </ToggleButton>
                     <!-- Where a clicked photo or video shows -->
                     <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" Margin="6,0,0,0">
                         <Button Classes="segment" Classes.selected="{Binding IsPreviewWindow}" Command="{Binding SetPreviewModeCommand}"
@@ -339,7 +346,29 @@
 
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->
             <!-- Thumbnails, and the viewer under or right of them; the code arranges the rows and columns by the mode -->
-            <Grid x:Name="BrowseArea" Grid.Row="2" RowDefinitions="*,Auto,0" ColumnDefinitions="*,Auto,0" IsVisible="{Binding IsGridMode}">
+            <!-- The groups' tree (when chosen), and the thumbnails of the chosen place -->
+            <Grid x:Name="TreeSplit" Grid.Row="2" ColumnDefinitions="0,Auto,*" IsVisible="{Binding IsGridMode}">
+            <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0" IsVisible="{Binding ShowGroupTree}">
+                <TreeView x:Name="GroupTreeView" ItemsSource="{Binding GroupRoots}" SelectedItem="{Binding SelectedGroup}" Margin="4,0,0,8">
+                    <TreeView.Styles>
+                        <Style Selector="TreeViewItem" x:DataType="vm:GroupNode">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            <Setter Property="MinHeight" Value="28" />
+                        </Style>
+                    </TreeView.Styles>
+                    <TreeView.ItemTemplate>
+                        <TreeDataTemplate DataType="vm:GroupNode" ItemsSource="{Binding Children}">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Count}" Classes="muted" Margin="10,0,8,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </TreeDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+            </Border>
+            <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="4" ResizeDirection="Columns" Background="Transparent"
+                          IsVisible="{Binding ShowGroupTree}" />
+            <Grid x:Name="BrowseArea" Grid.Column="2" RowDefinitions="*,Auto,0" ColumnDefinitions="*,Auto,0">
             <ScrollViewer x:Name="GridScroll" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10">
                 <!-- The code gives it the list, the layout (TileGridLayout) and the templates of a tile and a group's title -->
@@ -353,6 +382,7 @@
                 <!-- No inherited DataContext: its bindings are for a PlayerViewModel, set when something is shown -->
                 <views:PlayerView x:Name="Preview" IsVisible="False" DataContext="{x:Null}" />
             </Panel>
+            </Grid>
             </Grid>
 
             <!-- Who is this: everybody without a name, groups of faces and people without a visible face -->

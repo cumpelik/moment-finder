@@ -222,7 +222,7 @@ public sealed partial class PlayerViewModel
         {
             try
             {
-                return ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None), 5760, 2880);
+                return ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None, waited: true), 5760, 2880);
             }
             catch (Exception)
             {

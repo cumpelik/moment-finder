@@ -267,6 +267,21 @@ public class PeopleTests
         Assert.Equal(3, new EventBuilder(lib.Db).Rebuild());
     }
 
+    /// <summary>Scans or a folder put into the cloud: hundreds of undated photos copied within minutes are no day out.</summary>
+    [Fact]
+    public async Task PhotosCopiedInBulkMakeNoEvent()
+    {
+        using var lib = new TestLibrary();
+        var start = DateTime.Parse("2026-11-21 12:00", System.Globalization.CultureInfo.InvariantCulture);
+        for (var i = 0; i < 60; i++) File.SetLastWriteTime(lib.AddPhoto($"scan{i}.jpg"), start.AddSeconds(5 * i));
+        File.SetLastWriteTime(lib.AddPhoto("trip1.jpg"), DateTime.Parse("2024-02-10 09:00", System.Globalization.CultureInfo.InvariantCulture));
+        File.SetLastWriteTime(lib.AddPhoto("trip2.jpg"), DateTime.Parse("2024-02-10 10:00", System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        Assert.Equal(1, new EventBuilder(lib.Db).Rebuild());
+        using var c = lib.Db.Open();
+        Assert.Equal(2, Dapper.SqlMapper.ExecuteScalar<int>(c, "SELECT COUNT(*) FROM media WHERE event_id IS NOT NULL"));
+    }
+
     [Fact]
     public void TrackerFollowsAppearanceAcrossFrames()
     {
