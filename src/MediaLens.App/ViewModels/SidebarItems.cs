@@ -67,7 +67,14 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
 
     public bool CanRename => Kind is SidebarKind.Bucket or SidebarKind.Person;
     public bool CanRescan => Kind == SidebarKind.Source;
-    public bool CanRemove => Kind is SidebarKind.Source or SidebarKind.Bucket or SidebarKind.Person;
+    public bool CanRemove => Kind is SidebarKind.Bucket or SidebarKind.Person || Kind == SidebarKind.Source && !IsLocked;
+
+    // ---- read-only (ReadOnlyLock) ----
+    /// <summary>Read-only now: nothing in it changes from MediaLens.</summary>
+    public bool IsLocked { get; init; }
+    /// <summary>Read-only, but turned off with the password until it is turned on again or the app ends.</summary>
+    public bool IsTurnedOff { get; init; }
+    public bool CanMakeReadOnly => Kind == SidebarKind.Source && !IsLocked && !IsTurnedOff;
     public bool HasMenu => CanRename || CanRescan || CanRemove || HasCloudButton;
     public string RemoveText => Kind switch
     {

@@ -29,6 +29,8 @@ public sealed class Source
     public bool ReadOnly { get; init; }
     /// <summary>The computer whose folder that is.</summary>
     public string? HomeName { get; init; }
+    /// <summary>Read-only by the user's choice (ReadOnlyLock): changed only after read-only is turned off with the password.</summary>
+    public bool Protected { get; init; }
 }
 
 /// <summary>One photo or video. TakenAt is the wall clock of the camera (EXIF has no time zone), stored as if it were UTC.</summary>

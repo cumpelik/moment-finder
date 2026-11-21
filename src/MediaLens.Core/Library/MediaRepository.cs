@@ -39,7 +39,14 @@ public sealed class MediaRepository
 
     static MediaRepository() => DefaultTypeMap.MatchNamesWithUnderscores = true;
 
-    public MediaRepository(Database db) => _db = db;
+    public MediaRepository(Database db)
+    {
+        _db = db;
+        ReadOnly = new ReadOnlyLock(db);
+    }
+
+    /// <summary>Which sources are read-only now.</summary>
+    public ReadOnlyLock ReadOnly { get; }
 
     public Database Db => _db;
 
@@ -80,6 +87,7 @@ public sealed class MediaRepository
 
     public void RemoveSource(long id)
     {
+        ReadOnly.ThrowIfLocked(id);
         using var c = _db.Open();
         c.Execute("DELETE FROM source WHERE id=@id", new { id });
     }

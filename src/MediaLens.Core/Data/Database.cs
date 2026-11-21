@@ -208,6 +208,8 @@ public sealed class Database
             subfolder TEXT NOT NULL DEFAULT '',
             last_result TEXT);
         """,
+        // 12: a source can be read-only: nothing in it changes from MediaLens until read-only is turned off with the password.
+        "ALTER TABLE source ADD COLUMN protected INTEGER NOT NULL DEFAULT 0;",
     ];
 
     /// <summary>

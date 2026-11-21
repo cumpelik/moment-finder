@@ -102,11 +102,23 @@
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
                                     <MenuItem Header="Cloud..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
                                     <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding IsAway}" />
+                                    <MenuItem Header="Make read-only..." Click="OnMakeReadOnly" IsVisible="{Binding CanMakeReadOnly}"
+                                              ToolTip.Tip="Nothing in it can be deleted, moved or added from MediaLens, and it cannot be removed from the library, until read-only is turned off with a password" />
+                                    <MenuItem Header="Turn read-only off..." Click="OnTurnReadOnlyOff" IsVisible="{Binding IsLocked}"
+                                              ToolTip.Tip="Asks for the password; it is read-only again when you turn it on or start MediaLens again" />
+                                    <MenuItem Header="Read-only again" Click="OnTurnReadOnlyOn" IsVisible="{Binding IsTurnedOff}" />
+                                    <MenuItem Header="Not read-only any more" Click="OnUnprotect" IsVisible="{Binding IsTurnedOff}" />
                                     <MenuItem Header="{Binding RemoveText}" Click="OnRemoveEntry" IsVisible="{Binding CanRemove}" />
                                 </ContextMenu>
                             </Grid.ContextMenu>
                             <mi:MaterialIcon Kind="{Binding Icon}" Margin="0,0,8,0" />
-                            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <DockPanel Grid.Column="1">
+                                <mi:MaterialIcon DockPanel.Dock="Right" Kind="LockOutline" Width="13" Height="13" Margin="4,0,0,0" Opacity="0.6"
+                                                 IsVisible="{Binding IsLocked}" ToolTip.Tip="Read-only: right click to turn it off (with the password)" />
+                                <mi:MaterialIcon DockPanel.Dock="Right" Kind="LockOpenVariantOutline" Width="13" Height="13" Margin="4,0,0,0" Foreground="#F59E0B"
+                                                 IsVisible="{Binding IsTurnedOff}" ToolTip.Tip="Read-only is turned off until you turn it on or start MediaLens again" />
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </DockPanel>
                             <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Count}" VerticalAlignment="Center" Margin="6,0,0,0"
                                        IsVisible="{Binding HasCount}" />
                             <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Progress.Text}" VerticalAlignment="Center"

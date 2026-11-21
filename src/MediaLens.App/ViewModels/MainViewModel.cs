@@ -270,7 +270,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var tip = away ? $"{s.Root} is not on this computer. Right click, Locate folder: say where it is now."
             : s.Kind == SourceKinds.Cloud ? $"In the cloud: files are fetched when opened ({s.Remote})" : s.Root;
-        var entry = new SidebarEntry(SidebarKind.Source, s.Id, away ? s.Name + " (not here)" : s.Name, count.ToString("N0"), tip) { IsAway = away };
+        var locked = s.Protected && _host.Repo.ReadOnly.IsLocked(s.Id);
+        var entry = new SidebarEntry(SidebarKind.Source, s.Id, away ? s.Name + " (not here)" : s.Name, count.ToString("N0"),
+            tip + (locked ? "\nRead-only" : ""))
+        {
+            IsAway = away,
+            IsLocked = locked,
+            IsTurnedOff = s.Protected && !locked,
+        };
         if (s.Kind == SourceKinds.Cloud)
             return s.ReadOnly
                 ? entry with
@@ -318,6 +325,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             MirrorText = CloudSummary();
         _host.Indexer.Wake();
     }
+
+    // ---- read-only sources ----
+
+    public ReadOnlyLock ReadOnly => _host.Repo.ReadOnly;
+
+    /// <summary>A source became read-only or not: its row (lock, menu) and its window show it.</summary>
+    public void OnReadOnlyChanged() => RebuildSidebar();
 
     public SourceCloudViewModel CreateSourceCloudViewModel(long sourceId)
     {
@@ -402,6 +416,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     public LibraryCloudViewModel CreateLibraryCloudViewModel() => new(_host);
+
+    public AddCloudFolderViewModel CreateAddCloudFolderViewModel()
+    {
+        var vm = new AddCloudFolderViewModel(_host);
+        vm.Added += id =>
+        {
+            RebuildSidebar();
+            SelectedSidebarItem = SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == SidebarKind.Source && e.Id == id);
+        };
+        return vm;
+    }
 
     /// <summary>
     /// macOS: the originals of the Photos app (iCloud Photos with "Download Originals to this Mac") as a

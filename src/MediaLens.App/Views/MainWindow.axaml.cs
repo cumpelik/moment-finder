@@ -517,6 +517,13 @@ public partial class MainWindow : Window
             var folder = new MenuItem { Header = "Folder..." };
             folder.Click += async (_, _) => await AddSourceAsync();
             menu.Items.Add(folder);
+            var inCloud = new MenuItem { Header = "Folder in the cloud..." };
+            inCloud.Click += (_, _) =>
+            {
+                var vm = _vm.CreateAddCloudFolderViewModel();
+                ShowOverlay(new AddCloudFolderPanel(vm));
+            };
+            menu.Items.Add(inCloud);
             if (MainViewModel.ApplePhotosOriginals() != null)
             {
                 var photos = new MenuItem { Header = "Apple Photos library" };
@@ -637,6 +644,33 @@ public partial class MainWindow : Window
         };
         OverlayHost.Content = panel;
         Overlay.IsVisible = true;
+    }
+
+    // ---- read-only sources ----
+
+    private async void OnMakeReadOnly(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        if (await Dialogs.MakeReadOnlyAsync(this, _vm.ReadOnly, entry.Id, entry.Name)) _vm.OnReadOnlyChanged();
+    }
+
+    private async void OnTurnReadOnlyOff(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        if (await Dialogs.TurnReadOnlyOffAsync(this, _vm.ReadOnly, entry.Id, entry.Name)) _vm.OnReadOnlyChanged();
+    }
+
+    private void OnTurnReadOnlyOn(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        _vm.ReadOnly.TurnOn(entry.Id);
+        _vm.OnReadOnlyChanged();
+    }
+
+    private async void OnUnprotect(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source } entry) return;
+        if (await Dialogs.UnprotectAsync(this, _vm.ReadOnly, entry.Id, entry.Name)) _vm.OnReadOnlyChanged();
     }
 
     private async void OnLocateEntry(object? sender, RoutedEventArgs e)

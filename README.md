@@ -43,6 +43,12 @@ and then work offline. Windows, Linux and macOS.
     or written over, a file already there is skipped, another file of the same name goes beside it as `name (2).jpg`.
     The folder here stays as it is; a break (a disk away, the app closed) goes on where it stopped.
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
+- **A folder in the cloud as a source** (SOURCES +, Folder in the cloud): photos put into a storage by other means
+  (its own app, another program) are added from there, browsing its folders; files are fetched when needed.
+- **Read-only sources** (right click a source, or its cloud window): nothing in it is deleted, moved or added from
+  MediaLens and it is not removed from the library, until read-only is turned off with the password (one for all,
+  chosen the first time); it is read-only again when turned on or at the next start. A guard against mistakes in
+  MediaLens, not against whoever has the storage's keys.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
   On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a

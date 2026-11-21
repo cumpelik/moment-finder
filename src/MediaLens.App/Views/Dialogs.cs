@@ -27,6 +27,97 @@ public static class Dialogs
         return result;
     }
 
+    /// <summary>
+    /// A password: once to check it, or twice to choose it (both the same, not empty). Null when cancelled. A wrong
+    /// one is said in the dialog by the caller's check, and the dialog stays.
+    /// </summary>
+    public static async Task<string?> PasswordAsync(Window owner, string title, string text, bool choose, Func<string, bool>? check = null)
+    {
+        var first = new TextBox { PasswordChar = '\u2022', PlaceholderText = "Password" };
+        var second = new TextBox { PasswordChar = '\u2022', PlaceholderText = "The same once more", IsVisible = choose };
+        var problem = new TextBlock { Foreground = Avalonia.Media.Brush.Parse("#F97066"), TextWrapping = Avalonia.Media.TextWrapping.Wrap, IsVisible = false };
+        string? result = null;
+        var dialog = Build(title, new StackPanel
+        {
+            Spacing = 8,
+            Children = { new TextBlock { Text = text, TextWrapping = Avalonia.Media.TextWrapping.Wrap }, first, second, problem },
+        }, out var ok, out var cancel, "OK");
+        void Try()
+        {
+            var password = first.Text ?? "";
+            var wrong = password.Length == 0 ? "Type the password."
+                : choose && password != (second.Text ?? "") ? "The two are not the same."
+                : check != null && !check(password) ? "Wrong password."
+                : null;
+            if (wrong != null)
+            {
+                problem.Text = wrong;
+                problem.IsVisible = true;
+                first.Focus();
+                first.SelectAll();
+                return;
+            }
+            result = password;
+            dialog.Close();
+        }
+        ok.Click += (_, _) => Try();
+        cancel.Click += (_, _) => dialog.Close();
+        // Enter in the first box goes to the second one when there is one (not to OK).
+        first.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            e.Handled = true;
+            if (choose) second.Focus();
+            else Try();
+        };
+        second.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            e.Handled = true;
+            Try();
+        };
+        dialog.Opened += (_, _) => first.Focus();
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    /// <summary>Makes a source read-only; the first time the password of all read-only folders is chosen. False when cancelled.</summary>
+    public static async Task<bool> MakeReadOnlyAsync(Window owner, MediaLens.Library.ReadOnlyLock locks, long sourceId, string name)
+    {
+        if (!locks.HasPassword)
+        {
+            var password = await PasswordAsync(owner, "Make read-only",
+                $"\"{name}\" becomes read-only: nothing in it can be deleted, moved or added from MediaLens, and it cannot be removed " +
+                "from the library. To change it later, read-only is turned off with a password. Choose it now; it is the same for all " +
+                "read-only folders. Without it read-only cannot be turned off.", choose: true);
+            if (password == null) return false;
+            locks.SetPassword(password);
+        }
+        else if (!await ConfirmAsync(owner, "Make read-only",
+                     $"Make \"{name}\" read-only? Nothing in it can be deleted, moved or added from MediaLens, and it cannot be removed " +
+                     "from the library, until read-only is turned off with the password."))
+            return false;
+        locks.Protect(sourceId);
+        return true;
+    }
+
+    /// <summary>Turns read-only off for now, after the password. False when cancelled.</summary>
+    public static async Task<bool> TurnReadOnlyOffAsync(Window owner, MediaLens.Library.ReadOnlyLock locks, long sourceId, string name)
+    {
+        var password = await PasswordAsync(owner, "Turn read-only off",
+            $"\"{name}\" can be changed until you turn read-only on again or start MediaLens again.", choose: false, check: locks.Check);
+        return password != null && locks.TurnOff(sourceId, password);
+    }
+
+    /// <summary>Not read-only any more, for good (it was turned off with the password before).</summary>
+    public static async Task<bool> UnprotectAsync(Window owner, MediaLens.Library.ReadOnlyLock locks, long sourceId, string name)
+    {
+        if (!await ConfirmAsync(owner, "Stop read-only",
+                $"\"{name}\" stops being read-only, also after MediaLens starts again. You can make it read-only again any time.")) return false;
+        locks.Unprotect(sourceId);
+        return true;
+    }
+
     /// <summary>A name, offering the people already known as you type.</summary>
     public static async Task<string?> PromptNameAsync(Window owner, string title, IEnumerable<string> names, string initial = "")
     {

@@ -38,6 +38,16 @@
         </Border>
         <ScrollViewer>
             <StackPanel Margin="24,24,24,16" Spacing="16">
+                <!-- Read-only: what is below can be looked at, not changed -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsLocked}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="Read-only" />
+                        <TextBlock TextWrapping="Wrap"
+                                   Text="Nothing in this folder can be deleted, moved or added from MediaLens, and it cannot be removed from the library. To change it, turn read-only off; it is read-only again when you turn it on or start MediaLens again." />
+                        <Button Click="OnTurnReadOnlyOff" HorizontalAlignment="Left">Turn read-only off...</Button>
+                    </StackPanel>
+                </Border>
+            <StackPanel Spacing="16" IsEnabled="{Binding CanChange}">
 
                 <!-- A folder here, not connected yet -->
                 <StackPanel Spacing="16" IsVisible="{Binding IsLocal}">
@@ -195,7 +205,7 @@
                         <TextBlock Classes="section" Text="In the cloud" />
                         <TextBlock TextWrapping="Wrap" Text="{Binding CloudText}" />
                         <TextBlock Classes="muted" TextWrapping="Wrap"
-                                   Text="To have it on this computer again as the main one: it is downloaded into a folder you choose (files already there are not downloaded again), and the copy in the cloud becomes its backup." />
+                                   Text="To have it on this computer as the main one: it is downloaded into a folder you choose (files already there are not downloaded again), and the copy in the cloud becomes its backup." />
                         <Button Click="OnMakeHome" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Keep it on this computer, backed up...</Button>
                     </StackPanel>
                 </Border>
@@ -208,6 +218,27 @@
                         <TextBlock Classes="muted" TextWrapping="Wrap"
                                    Text="When that computer is gone, or this one should be the main one now: the folder is downloaded into a folder you choose here, this computer backs it up from then on, and the other one stops changing the backup." />
                         <Button Click="OnMakeHome" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Make this computer its home...</Button>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+                <!-- Read-only: turned off for now, or not at all -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsTurnedOff}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="Read-only is off for now" />
+                        <TextBlock Classes="muted" TextWrapping="Wrap" Text="It can be changed until you turn read-only on again or start MediaLens again." />
+                        <WrapPanel>
+                            <Button Click="OnTurnReadOnlyOn" Margin="0,0,8,0">Read-only again</Button>
+                            <Button Click="OnUnprotect">Not read-only any more...</Button>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+                <Border Classes="card" Padding="18" IsVisible="{Binding CanMakeReadOnly}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="Read-only?" />
+                        <TextBlock Classes="muted" TextWrapping="Wrap"
+                                   Text="Read-only, nothing in it can be deleted, moved or added from MediaLens, and it cannot be removed from the library, until read-only is turned off with a password. It guards against mistakes in MediaLens; whoever has the storage's keys can still change the files with other tools." />
+                        <Button Click="OnMakeReadOnly" HorizontalAlignment="Left">Make read-only...</Button>
                     </StackPanel>
                 </Border>
             </StackPanel>

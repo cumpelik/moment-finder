@@ -385,6 +385,8 @@ public sealed class CloudService
     public async Task<MirrorInfo> AddMirrorAsync(long sourceId, long cloudId, bool encrypt, CancellationToken ct, bool clone = false, string? target = null)
     {
         var source = _repo.ListSources().First(s => s.Id == sourceId);
+        // A backup only reads the folder; a clone makes it another source.
+        if (clone) _repo.ReadOnly.ThrowIfLocked(sourceId, source.Name);
         var cloud = Clouds().First(x => x.Id == cloudId);
         var reuse = !encrypt && !clone;
         if (target == null) target = await FreeFolderAsync(cloudId, $"{Device.MirrorFolder}/{Sanitize(source.Name)}", reuse, ct);
@@ -540,6 +542,7 @@ public sealed class CloudService
     public async Task DeleteGoneAsync(long mirrorId, CancellationToken ct)
     {
         var mirror = Mirrors().First(m => m.Id == mirrorId);
+        _repo.ReadOnly.ThrowIfLocked(mirror.SourceId, mirror.SourceName);
         var gone = Gone(mirrorId).Select(g => g.Path)
             .Where(p => !File.Exists(Path.Combine(mirror.SourceRoot, p.Replace('/', Path.DirectorySeparatorChar)))).ToList();
         await Rclone.DeleteFilesAsync(mirror.Place, gone, ct);
@@ -551,6 +554,7 @@ public sealed class CloudService
     public async Task BringBackGoneAsync(long mirrorId, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
     {
         var mirror = Mirrors().First(m => m.Id == mirrorId);
+        _repo.ReadOnly.ThrowIfLocked(mirror.SourceId, mirror.SourceName);
         await Rclone.CopyFilesAsync(mirror.Place, mirror.SourceRoot, Gone(mirrorId).Select(g => g.Path).ToList(), progress, ct);
         using var c = _db.Open();
         c.Execute("DELETE FROM mirror_gone WHERE mirror_id=@mirrorId", new { mirrorId });
@@ -584,6 +588,7 @@ public sealed class CloudService
     /// </summary>
     public async Task<long> MoveToCloudAsync(long mirrorId, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
     {
+        if (Mirrors().FirstOrDefault(m => m.Id == mirrorId) is { } before) _repo.ReadOnly.ThrowIfLocked(before.SourceId, before.SourceName);
         await MirrorAsync(mirrorId, progress, ct);
         var mirror = Mirrors().First(m => m.Id == mirrorId);
         if (mirror.Gone > 0)
@@ -618,9 +623,13 @@ public sealed class CloudService
 
     // ---- a folder added to a folder in the cloud ----
 
-    /// <summary>The folders in a cloud that a local folder can be added to: shared ones (not another computer's backup).</summary>
+    /// <summary>
+    /// The folders in a cloud that a local folder can be added to: shared ones (not another computer's backup), not
+    /// read-only now.
+    /// </summary>
     public List<Source> MergeTargets() =>
-        _repo.ListSources().Where(s => s.Kind == SourceKinds.Cloud && !s.ReadOnly && s.Remote != null && CloudOf(s) != null).ToList();
+        _repo.ListSources().Where(s => s.Kind == SourceKinds.Cloud && !s.ReadOnly && s.Remote != null && CloudOf(s) != null &&
+                                       !_repo.ReadOnly.IsLocked(s.Id)).ToList();
 
     public List<MergeInfo> Merges()
     {
@@ -635,6 +644,7 @@ public sealed class CloudService
     /// <summary>The folder is added to the cloud folder by the background work (it may take hours; a break resumes).</summary>
     public void RequestMerge(long sourceId, long targetId, string subfolder)
     {
+        _repo.ReadOnly.ThrowIfLocked(targetId);
         using var c = _db.Open();
         c.Execute("""
             INSERT INTO merge_job(source_id, target_id, subfolder) VALUES(@sourceId, @targetId, @subfolder)
@@ -678,6 +688,7 @@ public sealed class CloudService
         var sources = _repo.ListSources();
         var source = sources.First(s => s.Id == job.SourceId);
         var target = sources.First(s => s.Id == job.TargetId);
+        _repo.ReadOnly.ThrowIfLocked(target.Id, target.Name);
         if (!Directory.Exists(source.Root)) throw new InvalidOperationException($"The folder {source.Root} is not on this computer now.");
         if (target.Remote is not { } remote || CloudOf(target) == null) throw new InvalidOperationException("The cloud of that folder is not connected.");
         // The library knows the folder as it is now: its rows go with the files.
@@ -743,6 +754,7 @@ public sealed class CloudService
     public async Task<string> MakeHomeAsync(long sourceId, string folder, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
     {
         var source = _repo.ListSources().First(s => s.Id == sourceId);
+        _repo.ReadOnly.ThrowIfLocked(sourceId, source.Name);
         if (source.Kind != SourceKinds.Cloud || source.Remote is not { } remote) throw new InvalidOperationException("This is not a folder in a cloud.");
         var cloud = CloudOf(source) ?? throw new InvalidOperationException("The cloud of this folder is not connected.");
         var name = source.Name.EndsWith($" ({cloud.Name})", StringComparison.Ordinal) ? source.Name[..^(cloud.Name.Length + 3)] : source.Name;
@@ -800,6 +812,39 @@ public sealed class CloudService
         var cloud = Clouds().First(x => x.Id == cloudId);
         Directory.CreateDirectory(localDir);
         return Rclone.CopyAsync(Join(cloud.Remote, folder), localDir, [], progress, ct);
+    }
+
+    /// <summary>
+    /// Where a storage begins: the bucket (or the drive, or the folder) the library's own folder is in. Folders the
+    /// user put there themselves are found from here.
+    /// </summary>
+    public async Task<string> StorageRootAsync(CloudInfo cloud, CancellationToken ct)
+    {
+        var remote = cloud.Remote;
+        // A cloud encrypted as a whole (an older setup): the folders are found on the storage under it.
+        if (cloud.Encrypted && remote.EndsWith(':') && (await Rclone.DumpAsync(ct)).GetValueOrDefault(remote.TrimEnd(':')) is { } crypt &&
+            crypt.GetValueOrDefault("remote") is { } under)
+            remote = under;
+        foreach (var home in new[] { "/" + HomeFolder, ":" + HomeFolder })
+            if (remote.EndsWith(home, StringComparison.Ordinal)) return remote[..^HomeFolder.Length].TrimEnd('/');
+        return remote;
+    }
+
+    /// <summary>The folders in a folder of a storage, without the library's own data.</summary>
+    public async Task<List<string>> FoldersAsync(string remotePath, CancellationToken ct) =>
+        (await Rclone.DirsAsync(remotePath, ct)).Select(d => d[(d.LastIndexOf('/') + 1)..])
+            .Where(d => !d.StartsWith("media-lens-", StringComparison.Ordinal) && !d.StartsWith('.'))
+            .Order(StringComparer.CurrentCultureIgnoreCase).ToList();
+
+    /// <summary>A folder of a storage (the user's photos put there by other means) as a source of the library.</summary>
+    public Source AddCloudSourceAt(long cloudId, string remotePath, string name)
+    {
+        var source = _repo.AddSource(SourceKinds.Cloud, "", name, remotePath);
+        var root = Path.Combine(_paths.CacheDir, "cloud", source.Id.ToString());
+        Directory.CreateDirectory(root);
+        _repo.SetSourceRoot(source.Id, root);
+        using (var c = _db.Open()) c.Execute("UPDATE source SET cloud_id=@cloudId WHERE id=@Id", new { cloudId, source.Id });
+        return _repo.ListSources().First(s => s.Id == source.Id);
     }
 
     /// <summary>A folder of the cloud as a source: browsed and analyzed without keeping a full local copy.</summary>

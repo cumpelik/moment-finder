@@ -192,6 +192,25 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         SourcesChanged?.Invoke();
     }
 
+    // ---- read-only ----
+    /// <summary>Read-only now: the window shows it, and what would change the folder is off.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanChange))] private bool _isLocked;
+    public bool CanChange => !IsLocked;
+    /// <summary>Read-only, turned off with the password for now.</summary>
+    [ObservableProperty] private bool _isTurnedOff;
+    /// <summary>Not read-only: it can be made so.</summary>
+    [ObservableProperty] private bool _canMakeReadOnly;
+
+    public ReadOnlyLock ReadOnlyLock => _host.Repo.ReadOnly;
+
+    /// <summary>Read-only was turned on or off: the window and the sidebar show it.</summary>
+    public void ReadOnlyChanged(string status)
+    {
+        Status = status;
+        Reload();
+        SourcesChanged?.Invoke();
+    }
+
     // ---- in the cloud ----
     [ObservableProperty] private string _cloudText = "";
     [ObservableProperty] private string _homeText = "";
@@ -273,7 +292,11 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         if (_incoming is { } other) IncomingText = $"{other.SourceName} is being added here. " + MergeState(other, null);
         OnPropertyChanged(nameof(IncomingSourceId));
         OnPropertyChanged(nameof(IncomingName));
-        IsLocal = here && _mirror == null && _merge == null;
+        IsLocked = source.Protected && _host.Repo.ReadOnly.IsLocked(_sourceId);
+        IsTurnedOff = source.Protected && !IsLocked;
+        CanMakeReadOnly = !source.Protected;
+        // A read-only folder is not connected anew (a clone would make it another source); its window says why.
+        IsLocal = here && _mirror == null && _merge == null && !IsLocked;
         IsAway = local && !here && _mirror == null;
         AwayText = $"The folder {source.Root} is not on this computer now. Connect its disk, or say where it is: right click the folder, Locate folder.";
         IsShared = !local && !source.ReadOnly;

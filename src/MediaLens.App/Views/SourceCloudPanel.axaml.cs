@@ -86,6 +86,32 @@ public partial class SourceCloudPanel : UserControl, IOverlayPanel
             vm.StopMerge(from);
     }
 
+    private async void OnTurnReadOnlyOff(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { } vm) return;
+        if (await Dialogs.TurnReadOnlyOffAsync(Owner, vm.ReadOnlyLock, vm.SourceId, vm.SourceName))
+            vm.ReadOnlyChanged("Read-only is off until you turn it on again or start MediaLens again.");
+    }
+
+    private async void OnMakeReadOnly(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { } vm) return;
+        if (await Dialogs.MakeReadOnlyAsync(Owner, vm.ReadOnlyLock, vm.SourceId, vm.SourceName)) vm.ReadOnlyChanged("Read-only.");
+    }
+
+    private void OnTurnReadOnlyOn(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { } vm) return;
+        vm.ReadOnlyLock.TurnOn(vm.SourceId);
+        vm.ReadOnlyChanged("Read-only again.");
+    }
+
+    private async void OnUnprotect(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { } vm) return;
+        if (await Dialogs.UnprotectAsync(Owner, vm.ReadOnlyLock, vm.SourceId, vm.SourceName)) vm.ReadOnlyChanged("Not read-only any more.");
+    }
+
     private async void OnMakeHome(object? sender, RoutedEventArgs e)
     {
         if (Vm is not { } vm) return;
