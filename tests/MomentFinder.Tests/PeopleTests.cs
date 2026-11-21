@@ -202,6 +202,14 @@ public class PeopleTests
         Assert.Equal(new Dictionary<int, int> { [2] = 0, [3] = 1 },
             FaceLinks.Link(new[] { motherBody, childBody, motherFace, childFace }.Select(d => (d.Kind, new Box(d.X, d.Y, d.W, d.H))).ToList()));
 
+        // A man behind a woman leaning into the picture: her face is in his box too (high and to the side), his
+        // box is the smaller one; each face still goes with its own body.
+        Assert.Equal(new Dictionary<int, int> { [2] = 0, [3] = 1 }, FaceLinks.Link(new (DetectionKind, Box)[]
+        {
+            (DetectionKind.Body, new Box(97, 72, 800, 998)), (DetectionKind.Body, new Box(693, 7, 752, 1063)),
+            (DetectionKind.Face, new Box(579, 120, 109, 142)), (DetectionKind.Face, new Box(740, 60, 260, 270)),
+        }));
+
         using var lib = new TestLibrary();
         foreach (var (f, t) in new[] { ("a.jpg", "2024-06-01 10:00"), ("b.jpg", "2024-06-01 11:00") })
             File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
