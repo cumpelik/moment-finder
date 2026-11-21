@@ -359,6 +359,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (newValue is not SidebarEntry entry) return;
         var same = _scope != null && _scope.Kind == entry.Kind && _scope.Id == entry.Id;
         _scope = entry;
+        UpdateScopeBanner();
         OnPropertyChanged(nameof(IsBucketScope));
         OnPropertyChanged(nameof(IsPersonScope));
         if (!same) ShowPersonFaces = false;
@@ -659,6 +660,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void UpdateSummary(int count, bool hasText)
     {
         var text = Format.Count(count, "item", "items");
+        UpdateScopeBanner();
         if (CurrentScope?.Kind == SidebarKind.Best && !hasText)
             text = count == 0 ? "No best moments yet. They come with the people you name in your videos (Who is this?)."
                 : Format.Count(count, "video", "videos");
@@ -893,8 +895,51 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Recent (time, done) points of the running phase: the speed over the last minutes, not since the start.</summary>
     private readonly Queue<(DateTime At, int Done)> _progressSamples = new();
 
+    // ---- the folder shown: being read, or empty ----
+    [ObservableProperty] private bool _scopeBanner;
+    [ObservableProperty] private string _scopeBannerText = "";
+    /// <summary>The banner shows a progress bar (reading), not only words.</summary>
+    [ObservableProperty] private bool _scopeBusy;
+    [ObservableProperty] private double _scopeReadingProgress;
+    [ObservableProperty] private bool _scopeReadingKnown;
+
+    /// <summary>
+    /// A folder read for the first time (thousands of photos from the cloud take a while) says how far it is, and an
+    /// empty one why, above where its photos would be: not only in the status bar.
+    /// </summary>
+    private void UpdateScopeBanner()
+    {
+        var st = _host.Indexer.Status;
+        var source = CurrentScope is { Kind: SidebarKind.Source or SidebarKind.Clone } scope
+            ? _host.Repo.ListSources().FirstOrDefault(s => s.Id == scope.Id) : null;
+        if (source == null)
+        {
+            ScopeBanner = false;
+            return;
+        }
+        var cloud = source.Kind == SourceKinds.Cloud;
+        var away = source.Kind == SourceKinds.Local && !Directory.Exists(source.Root);
+        var reading = st.Phase == IndexerPhase.Scanning && _host.Indexer.ScanningSourceId == source.Id;
+        var waiting = !reading && source.LastScanAt == null && !away;
+        var empty = !reading && !waiting && Tiles.Count == 0 && !IsDateFiltered &&
+                    string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text);
+        ScopeBanner = reading || waiting || empty;
+        ScopeBusy = reading || waiting;
+        ScopeReadingKnown = reading && st.Total > 0;
+        ScopeReadingProgress = ScopeReadingKnown ? 100.0 * st.Done / st.Total : 0;
+        var where = cloud ? source.Remote?[(source.Remote.IndexOf(':') + 1)..] : source.Root;
+        ScopeBannerText =
+            reading && st.Total > 0 ? $"Reading this folder{(cloud ? " from the cloud" : "")}: {st.Done:N0} of {st.Total:N0} files. What is read shows below as it comes."
+            : reading ? (cloud ? "Looking through the folder in the cloud (its folders inside too)..." : "Looking through the folder...")
+            : waiting ? "This folder waits to be read: another one is read first."
+            : away ? $"The folder {source.Root} is not on this computer now."
+            : $"No photos or videos found in {where} (its folders inside too). If it is not the right folder, remove it and add the right one" +
+              (source.Protected ? " (turn read-only off first)." : ".");
+    }
+
     private void OnIndexerStatus(IndexerStatus st)
     {
+        UpdateScopeBanner();
         IndexerPaused = st.Paused;
         IndexerBusy = st.Phase != IndexerPhase.Idle;
         IndexerProgress = st.Total > 0 ? 100.0 * st.Done / st.Total : 0;

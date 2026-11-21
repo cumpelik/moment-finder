@@ -280,9 +280,7 @@
 
             <!-- Result line; a bucket gets its own actions -->
             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
-                <StackPanel Orientation="Horizontal" Spacing="14">
-                    <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
-                </StackPanel>
+                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
                 <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -327,6 +325,15 @@
                     </Button>
                 </StackPanel>
             </Grid>
+
+            <!-- The folder shown is being read (how far), or is empty (why): right where its photos would be -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding ScopeBanner}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="{Binding ScopeBannerText}" TextWrapping="Wrap" />
+                    <ProgressBar Value="{Binding ScopeReadingProgress}" Minimum="0" Maximum="100" IsIndeterminate="{Binding !ScopeReadingKnown}"
+                                 IsVisible="{Binding ScopeBusy}" />
+                </StackPanel>
+            </Border>
             </StackPanel>
 
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->

@@ -98,6 +98,9 @@ public sealed class Indexer : IDisposable
         _wake.Release();
     }
 
+    /// <summary>The source being scanned now (its window and its place in the library show how far).</summary>
+    public long? ScanningSourceId { get; private set; }
+
     public void RequestScan()
     {
         _scanRequested = true;
@@ -248,11 +251,15 @@ public sealed class Indexer : IDisposable
     {
         foreach (var source in _repo.ListSources().Where(s => s.Enabled && (only == null || only.Contains(s.Id))))
         {
+            ScanningSourceId = source.Id;
             Report(new IndexerStatus(IndexerPhase.Scanning, $"Scanning {source.Name}", 0, 0, false));
             // What a long scan found so far shows while it runs (a cloud folder of thousands of photos takes a while).
             var progress = new Progress<string>(m =>
             {
-                Report(new IndexerStatus(IndexerPhase.Scanning, m, 0, 0, false));
+                var count = System.Text.RegularExpressions.Regex.Match(m, @"(\d+)/(\d+)$");
+                Report(count.Success
+                    ? new IndexerStatus(IndexerPhase.Scanning, m[..count.Index].TrimEnd(' ', ':'), int.Parse(count.Groups[1].Value), int.Parse(count.Groups[2].Value), false)
+                    : new IndexerStatus(IndexerPhase.Scanning, m, 0, 0, false));
                 LibraryChanged?.Invoke();
             });
             try
@@ -262,6 +269,10 @@ public sealed class Indexer : IDisposable
             catch (DirectoryNotFoundException)
             {
                 // Disconnected disk: its items stay, just are not updated.
+            }
+            finally
+            {
+                ScanningSourceId = null;
             }
             LibraryChanged?.Invoke();
         }

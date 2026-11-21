@@ -162,6 +162,7 @@ public sealed class LibraryScanner
         var movedIds = new HashSet<long>();
 
         var done = 0;
+        progress?.Report($"Reading {source.Name}: 0/{todo.Count}");
         // Small batches: every file is fetched before it is read, and each batch shows in the library at once.
         foreach (var chunk in todo.Chunk(20))
         {
