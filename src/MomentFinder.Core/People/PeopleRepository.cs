@@ -51,7 +51,7 @@ public sealed class DetectionRow
     public float Score { get; init; }
     public float Quality { get; init; }
     public long? Track { get; init; }
-    public long? LinkedId { get; init; }
+    public long? LinkedId { get; set; }
     public long? Cluster { get; set; }
     public long? PersonId { get; set; }
     public AssignSource? AssignSource { get; set; }
@@ -376,6 +376,16 @@ public sealed class PeopleRepository
     }
 
     /// <summary>Writes the automatic results (only rows whose values changed are passed).</summary>
+    /// <summary>Faces paired with another body (or none) than when they were analyzed.</summary>
+    public void SaveLinks(IEnumerable<DetectionRow> faces)
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        foreach (var f in faces)
+            c.Execute("UPDATE detection SET linked_id=@LinkedId WHERE id=@Id", new { f.LinkedId, f.Id }, tx);
+        tx.Commit();
+    }
+
     public void SaveAssignments(IEnumerable<DetectionRow> rows)
     {
         using var c = _db.Open();

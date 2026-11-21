@@ -169,21 +169,7 @@ public sealed class PeopleAnalyzer
     private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, int width, int height, int timeMs, int[]? tracks)
     {
         var list = new List<(NewDetection, RgbImage?)>();
-        var faces = found.Select((d, i) => (d, i)).Where(x => x.d.Kind == DetectionKind.Face).ToList();
-        var bodies = found.Select((d, i) => (d, i)).Where(x => x.d.Kind == DetectionKind.Body).ToList();
-        var linkOf = new Dictionary<int, int>();
-        var usedBodies = new HashSet<int>();
-        foreach (var (face, fi) in faces.OrderByDescending(f => f.d.Box.W))
-        {
-            var body = bodies.Where(b => !usedBodies.Contains(b.i) && b.d.Box.Contains(face.Box.CenterX, face.Box.CenterY) &&
-                                         face.Box.CenterY <= b.d.Box.Y + b.d.Box.H * 0.4f && face.Box.W <= b.d.Box.W)
-                .OrderBy(b => b.d.Box.W * b.d.Box.H).Select(b => (int?)b.i).FirstOrDefault();
-            if (body is { } bi)
-            {
-                linkOf[fi] = bi;
-                usedBodies.Add(bi);
-            }
-        }
+        var linkOf = FaceLinks.Link(found.Select(d => (d.Kind, d.Box)).ToList());
         for (var i = 0; i < found.Count; i++)
         {
             var d = found[i];

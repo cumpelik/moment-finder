@@ -188,6 +188,43 @@ public class PeopleTests
         Assert.Single(repo.DetectionsOfMedia(id), d => d.Confirmed && d.PersonId != null);
     }
 
+    /// <summary>
+    /// A mother holding her child, both in pink stripes: each face goes with its own body (the child's face is
+    /// in the mother's box too, but low in it), and the child's body is not taken for the mother by the clothes.
+    /// </summary>
+    [Fact]
+    public async Task MotherAndChildInOneShirtAreTwoPeople()
+    {
+        var motherBody = new NewDetection(DetectionKind.Body, 0, 0f, 0.03f, 0.79f, 0.97f, 0.9f, 0.8f, Emb(5, 0.15f), null, null);
+        var childBody = new NewDetection(DetectionKind.Body, 0, 0.2f, 0.45f, 0.755f, 0.55f, 0.9f, 0.8f, Emb(5, 0.2f), null, null);
+        var motherFace = new NewDetection(DetectionKind.Face, 0, 0.25f, 0.14f, 0.45f, 0.36f, 0.9f, 0.8f, Emb(0, 0.2f), null, null);
+        var childFace = new NewDetection(DetectionKind.Face, 0, 0.465f, 0.545f, 0.365f, 0.36f, 0.9f, 0.8f, Emb(3), null, null);
+        Assert.Equal(new Dictionary<int, int> { [2] = 0, [3] = 1 },
+            FaceLinks.Link(new[] { motherBody, childBody, motherFace, childFace }.Select(d => (d.Kind, new Box(d.X, d.Y, d.W, d.H))).ToList()));
+
+        using var lib = new TestLibrary();
+        foreach (var (f, t) in new[] { ("a.jpg", "2024-06-01 10:00"), ("b.jpg", "2024-06-01 11:00") })
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        repo.ReplaceDetections(items["a.jpg"], [Face(Emb(0), link: 1), Body(Emb(5))]);
+        // Analyzed before the better pairing: no links at all.
+        repo.ReplaceDetections(items["b.jpg"], [motherBody, childBody, motherFace, childFace]);
+        var vendy = repo.CreatePerson("Vendy");
+        repo.Confirm(repo.DetectionsOfMedia(items["a.jpg"]).Select(d => d.Id), vendy.Id);
+        new IdentityService(repo).Recompute();
+
+        var b = repo.DetectionsOfMedia(items["b.jpg"]);
+        var (mother, child) = (b.Single(d => d.Kind == DetectionKind.Body && d.X == 0), b.Single(d => d.Kind == DetectionKind.Body && d.X > 0));
+        Assert.Equal(mother.Id, b.Single(d => d.Kind == DetectionKind.Face && d.Y < 0.3f).LinkedId);
+        Assert.Equal(child.Id, b.Single(d => d.Kind == DetectionKind.Face && d.Y > 0.3f).LinkedId);
+        Assert.Equal(vendy.Id, mother.PersonId);
+        Assert.Null(child.PersonId);
+        Assert.NotEqual(vendy.Id, child.SuggestPersonId);
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

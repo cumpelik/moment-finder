@@ -59,11 +59,14 @@ public sealed class IdentityService
             var faces = all.Where(d => d.Kind == DetectionKind.Face).ToList();
             var bodies = all.Where(d => d.Kind == DetectionKind.Body).ToList();
 
+            var relinked = Relink(all);
+            if (relinked.Count > 0) _repo.SaveLinks(relinked);
             MatchFaces(faces, rejections);
             LinkBodies(faces, byId);
             SpreadTracks(all);
-            MatchOutfits(bodies, rejections);
+            MatchOutfits(bodies, faces, rejections);
             SpreadTracks(all);
+            OncePerPicture(all);
             ClusterFaces(faces);
             ClusterFigures(bodies);
 
@@ -89,20 +92,32 @@ public sealed class IdentityService
             if (list.Count < MaxPrototypes) list.Add(e);
         }
 
-        /// <summary>Best and second best person by the closest prototype; rejected persons are skipped.</summary>
+        /// <summary>
+        /// Best and second best person; rejected persons are skipped. A person counts by the average of their
+        /// three closest pictures, not the single closest: among hundreds of pictures of one person one is
+        /// close to anybody by chance, so the person with the most pictures would win everybody.
+        /// </summary>
         public (long Person, float Score, float Second) Best(float[] e, HashSet<long>? rejected)
         {
             long best = 0;
             float bestScore = -1, second = -1;
+            Span<float> top = stackalloc float[3];
             foreach (var (person, list) in ByPerson)
             {
                 if (rejected != null && rejected.Contains(person)) continue;
-                var max = -1f;
+                top.Fill(float.MinValue);
                 foreach (var p in list)
                 {
                     var s = TensorPrimitives.Dot(e, p);
-                    if (s > max) max = s;
+                    if (s <= top[2]) continue;
+                    if (s > top[0]) (top[0], top[1], top[2]) = (s, top[0], top[1]);
+                    else if (s > top[1]) (top[1], top[2]) = (s, top[1]);
+                    else top[2] = s;
                 }
+                var n = Math.Min(3, list.Count);
+                var max = 0f;
+                for (var k = 0; k < n; k++) max += top[k];
+                max /= n;
                 if (max > bestScore)
                 {
                     second = bestScore;
@@ -205,8 +220,11 @@ public sealed class IdentityService
     /// Within an event (a day out), people keep their clothes: an unknown body that looks like a known one
     /// of the same event is that person. Across events only a suggestion, clothes change.
     /// </summary>
-    private void MatchOutfits(List<DetectionRow> bodies, Dictionary<long, HashSet<long>> rejections)
+    private void MatchOutfits(List<DetectionRow> bodies, List<DetectionRow> faces, Dictionary<long, HashSet<long>> rejections)
     {
+        // A body with a clear face of its own: the face says who it is (or that it is nobody known), not the clothes.
+        // A child in the same striped shirt as her mother is not her mother.
+        var faceShown = faces.Where(f => f.LinkedId != null && f.Quality >= 0.3f).Select(f => f.LinkedId!.Value).ToHashSet();
         foreach (var ev in bodies.Where(b => b.EventId != null).GroupBy(b => b.EventId!.Value))
         {
             var protos = new Prototypes();
@@ -215,7 +233,7 @@ public sealed class IdentityService
                          .OrderByDescending(b => b.Quality))
                 protos.Add(b.PersonId!.Value, b.Embedding);
             if (protos.ByPerson.Count == 0) continue;
-            foreach (var b in ev.Where(b => !b.Confirmed && b.PersonId == null && b.Quality >= BodyMinQuality))
+            foreach (var b in ev.Where(b => !b.Confirmed && b.PersonId == null && b.Quality >= BodyMinQuality && !faceShown.Contains(b.Id)))
             {
                 var (person, score, second) = protos.Best(b.Embedding, rejections.GetValueOrDefault(b.Id));
                 if (person == 0) continue;
@@ -231,6 +249,87 @@ public sealed class IdentityService
                     b.SuggestScore = score;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Faces of photos paired with bodies again (the pairing got better; photos analyzed before keep their old,
+    /// sometimes wrong pairs otherwise). Video frames keep theirs: a face rides on the track of its body.
+    /// </summary>
+    private static List<DetectionRow> Relink(List<DetectionRow> all)
+    {
+        var changed = new List<DetectionRow>();
+        foreach (var frame in all.GroupBy(d => (d.MediaId, d.TimeMs)))
+        {
+            var dets = frame.ToList();
+            if (dets.Any(d => d.Track != null) || !dets.Any(d => d.Kind == DetectionKind.Face)) continue;
+            var links = FaceLinks.Link(dets.Select(d => (d.Kind, new Box(d.X, d.Y, d.W, d.H))).ToList());
+            for (var i = 0; i < dets.Count; i++)
+            {
+                if (dets[i].Kind != DetectionKind.Face) continue;
+                long? body = links.TryGetValue(i, out var b) ? dets[b].Id : null;
+                if (dets[i].LinkedId == body) continue;
+                dets[i].LinkedId = body;
+                changed.Add(dets[i]);
+            }
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// Nobody is twice in one picture: when two people in it are both taken for the same person, the one with the
+    /// stronger reason keeps the name (confirmed, then the face, then the body of a known face, a video track, the
+    /// clothes; then the higher confidence). The same for suggestions.
+    /// </summary>
+    private static void OncePerPicture(List<DetectionRow> all)
+    {
+        static int Rank(AssignSource? s) => s switch
+        {
+            AssignSource.User => 5, AssignSource.Face => 4, AssignSource.Linked => 3, AssignSource.Track => 2, AssignSource.Outfit => 1, _ => 0,
+        };
+        foreach (var frame in all.GroupBy(d => (d.MediaId, d.TimeMs)))
+        {
+            var dets = frame.ToList();
+            if (dets.Count < 2) continue;
+            // One person in the picture: a body with its face, or a face or a body alone.
+            var faceOf = dets.Where(d => d.Kind == DetectionKind.Face && d.LinkedId != null).GroupBy(d => d.LinkedId!.Value)
+                .ToDictionary(g => g.Key, g => g.First());
+            var bodyIds = dets.Where(d => d.Kind == DetectionKind.Body).Select(d => d.Id).ToHashSet();
+            var people = dets.Where(d => d.Kind == DetectionKind.Body || d.LinkedId is not { } l || !bodyIds.Contains(l))
+                .Select(d => d.Kind == DetectionKind.Body && faceOf.TryGetValue(d.Id, out var f) ? new List<DetectionRow> { d, f } : [d])
+                .ToList();
+            if (people.Count < 2) continue;
+
+            foreach (var same in people.Where(p => p.Any(d => d.PersonId != null))
+                         .GroupBy(p => p.First(d => d.PersonId != null).PersonId!.Value).Where(g => g.Count() > 1))
+            {
+                var ranked = same.OrderByDescending(p => p.Any(d => d.Confirmed && d.PersonId == same.Key))
+                    .ThenByDescending(p => p.Where(d => d.PersonId == same.Key).Max(d => Rank(d.AssignSource)))
+                    .ThenByDescending(p => p.Where(d => d.PersonId == same.Key).Max(d => d.Confidence ?? 0)).ToList();
+                foreach (var other in ranked.Skip(1))
+                    foreach (var d in other.Where(d => !d.Confirmed && d.PersonId == same.Key))
+                    {
+                        d.PersonId = null;
+                        d.AssignSource = null;
+                        d.Confidence = null;
+                    }
+            }
+
+            var named = people.SelectMany(p => p).Where(d => d.PersonId != null).Select(d => d.PersonId!.Value).ToHashSet();
+            foreach (var p in people.Where(p => p.All(d => d.PersonId == null)))
+                foreach (var d in p.Where(d => d.SuggestPersonId is { } s && named.Contains(s)))
+                {
+                    d.SuggestPersonId = null;
+                    d.SuggestScore = null;
+                }
+            foreach (var same in people.Where(p => p.All(d => d.PersonId == null) && p.Any(d => d.SuggestPersonId != null))
+                         .GroupBy(p => p.First(d => d.SuggestPersonId != null).SuggestPersonId!.Value).Where(g => g.Count() > 1))
+                foreach (var other in same.OrderByDescending(p => p.Max(d => d.SuggestScore ?? 0)).Skip(1))
+                    foreach (var d in other.Where(d => d.SuggestPersonId == same.Key))
+                    {
+                        d.SuggestPersonId = null;
+                        d.SuggestScore = null;
+                    }
         }
     }
 
