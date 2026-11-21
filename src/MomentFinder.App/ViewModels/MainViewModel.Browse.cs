@@ -78,22 +78,34 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>Days and months newest first; a text search keeps its best matches first inside a group.</summary>
-    private void RebuildGroups()
+    private int _groupsVersion;
+
+    private async void RebuildGroups()
     {
+        var version = ++_groupsVersion;
         if (!IsGrouped)
         {
             if (Groups.Count > 0) Groups = [];
             return;
         }
+        // Grouped off the UI thread: a library of millions takes a moment.
+        var tiles = Tiles.ToList();
+        var mode = GroupBy.Mode;
+        var groups = await Task.Run(() => BuildGroups(tiles, mode));
+        if (version == _groupsVersion) Groups = new ObservableCollection<TileGroup>(groups);
+    }
+
+    private List<TileGroup> BuildGroups(List<TileViewModel> tiles, GroupMode mode)
+    {
         var culture = CultureInfo.CurrentCulture;
         string Items(int n) => Format.Count(n, "item", "items");
         List<TileGroup> groups;
-        if (GroupBy.Mode == GroupMode.Folder)
+        if (mode == GroupMode.Folder)
         {
             // The folders as they are on the disk or in the cloud; the source's name too when several are shown.
             var sources = _host.Repo.ListSources().ToDictionary(s => s.Id, s => s.Name);
-            var several = Tiles.Select(t => t.Item.SourceId).Distinct().Count() > 1;
-            groups = Tiles
+            var several = tiles.Select(t => t.Item.SourceId).Distinct().Count() > 1;
+            groups = tiles
                 .GroupBy(t => (t.Item.SourceId, Folder: t.Item.RelPath.Contains('/') ? t.Item.RelPath[..t.Item.RelPath.LastIndexOf('/')] : ""))
                 .Select(g =>
                 {
@@ -106,23 +118,23 @@ public sealed partial class MainViewModel
                 .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList()))
                 .ToList();
         }
-        else if (GroupBy.Mode == GroupMode.Person)
+        else if (mode == GroupMode.Person)
         {
             var byMedia = _host.People.PersonsByMedia();
             var names = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
-            var named = Tiles
+            var named = tiles
                 .SelectMany(t => byMedia.GetValueOrDefault(t.Item.Id, []).Where(names.ContainsKey).Select(p => (Person: p, Tile: t)))
                 .GroupBy(x => x.Person)
                 .OrderByDescending(g => g.Count()).ThenBy(g => names[g.Key], StringComparer.CurrentCulture)
                 .Select(g => new TileGroup(names[g.Key], Items(g.Count()), g.Select(x => x.Tile).ToList()));
-            var nobody = Tiles.Where(t => !byMedia.GetValueOrDefault(t.Item.Id, []).Any(names.ContainsKey)).ToList();
+            var nobody = tiles.Where(t => !byMedia.GetValueOrDefault(t.Item.Id, []).Any(names.ContainsKey)).ToList();
             groups = named.ToList();
             if (nobody.Count > 0) groups.Add(new TileGroup("Nobody named", Items(nobody.Count), nobody));
         }
         else
         {
-            groups = Tiles
-                .GroupBy(t => GroupBy.Mode switch
+            groups = tiles
+                .GroupBy(t => mode switch
                 {
                     GroupMode.Day => t.Item.Taken.Date,
                     GroupMode.Month => new DateTime(t.Item.Taken.Year, t.Item.Taken.Month, 1),
@@ -130,7 +142,7 @@ public sealed partial class MainViewModel
                 })
                 .OrderByDescending(g => g.Key)
                 .Select(g => new TileGroup(
-                    GroupBy.Mode switch
+                    mode switch
                     {
                         GroupMode.Day => g.Key.ToString("dddd d. MMMM yyyy", culture) + PlaceOf(g),
                         GroupMode.Month => g.Key.ToString("MMMM yyyy", culture),
@@ -139,7 +151,7 @@ public sealed partial class MainViewModel
                     Items(g.Count()), g.ToList()))
                 .ToList();
         }
-        Groups = new ObservableCollection<TileGroup>(groups);
+        return groups;
     }
 
     /// <summary>"  ·  Sölden" for a day whose photos have GPS, once the place names are downloaded.</summary>

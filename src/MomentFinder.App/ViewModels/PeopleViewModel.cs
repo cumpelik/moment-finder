@@ -35,15 +35,53 @@ public sealed partial class CropViewModel : ObservableObject
 
     public void Load(string path, int width)
     {
-        if (Image != null || !File.Exists(path)) return;
+        if (Image != null) return;
+        Image = Decode(path, width);
+    }
+
+    private static Bitmap? Decode(string path, int width)
+    {
+        if (!File.Exists(path)) return null;
         try
         {
             using var s = File.OpenRead(path);
-            Image = Bitmap.DecodeToWidth(s, width);
+            return Bitmap.DecodeToWidth(s, width);
         }
         catch (Exception e) when (e is IOException or InvalidOperationException or ArgumentException)
         {
+            return null;
         }
+    }
+
+    // ---- in a gallery of thousands: decoded only while on screen, off the UI thread ----
+    private string? _path;
+    private int _width;
+    private int _version;
+
+    /// <summary>Where the picture is; it is decoded when the card comes on screen (Show).</summary>
+    public void LoadLater(string path, int width)
+    {
+        _path = path;
+        _width = width;
+    }
+
+    public void Show()
+    {
+        if (Image != null || _path is not { } path) return;
+        var version = ++_version;
+        var width = _width;
+        _ = Task.Run(() => Decode(path, width)).ContinueWith(t =>
+        {
+            if (version == _version && t.Result is { } bitmap) Image = bitmap;
+        }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    /// <summary>Off screen: the picture is let go (thousands of them would fill the memory).</summary>
+    public void Hide()
+    {
+        if (_path == null) return;
+        _version++;
+        Image = null;
     }
 }
 
@@ -67,8 +105,8 @@ public sealed partial class PeopleViewModel : ObservableObject
     private int _queueIndex;
     private Dictionary<long, string> _names = [];
 
-    public ObservableCollection<CropViewModel> Clusters { get; } = [];
-    public ObservableCollection<FigureSection> FigureSections { get; } = [];
+    [ObservableProperty] private ObservableCollection<CropViewModel> _clusters = [];
+    [ObservableProperty] private ObservableCollection<FigureSection> _figureSections = [];
 
     public IReadOnlyList<string> FigureGroupings { get; } = ["By day and place", "By video"];
     [ObservableProperty] private string _figureGrouping = "By day and place";
@@ -77,6 +115,9 @@ public sealed partial class PeopleViewModel : ObservableObject
     [ObservableProperty] private string _seenOnceText = "";
     [ObservableProperty] private bool _hasSeenOnce;
     private List<PeopleRepository.FigureInfo> _figures = [];
+    /// <summary>The photos and videos of the figures, and the GPS positions of their days: read with the figures.</summary>
+    private Dictionary<long, Library.MediaItem> _figureItems = [];
+    private Dictionary<long, List<(double Lat, double Lon)>> _eventPositions = [];
 
     partial void OnFigureGroupingChanged(string value) => BuildFigureSections();
     partial void OnShowSeenOnceChanged(bool value) => BuildFigureSections();
@@ -87,23 +128,22 @@ public sealed partial class PeopleViewModel : ObservableObject
     /// </summary>
     private void BuildFigureSections()
     {
-        FigureSections.Clear();
+        var built = new List<FigureSection>();
         var once = _figures.Count(f => f.Tracks <= 1);
         HasSeenOnce = once > 0;
         SeenOnceText = $"Also people seen only once ({once:N0})";
         var shown = ShowSeenOnce ? _figures : _figures.Where(f => f.Tracks > 1).ToList();
-        var items = shown.Select(f => f.MediaId).Distinct().ToDictionary(id => id, id => _host.Repo.Get(id));
         var culture = System.Globalization.CultureInfo.CurrentCulture;
         IEnumerable<IGrouping<long, PeopleRepository.FigureInfo>> sections;
         Func<IGrouping<long, PeopleRepository.FigureInfo>, string> title;
         if (FigureGrouping == "By video")
         {
             sections = shown.GroupBy(f => f.MediaId).OrderByDescending(g => g.Max(f => f.TakenAt));
-            title = g => items[g.Key] is { } item ? $"{item.FileName}  \u00b7  {item.Taken.ToString("d. M. yyyy", culture)}" : "";
+            title = g => _figureItems.GetValueOrDefault(g.Key) is { } item ? $"{item.FileName}  \u00b7  {item.Taken.ToString("d. M. yyyy", culture)}" : "";
         }
         else
         {
-            var positions = _host.Repo.EventPositions(shown.Select(f => f.EventId));
+            var positions = _eventPositions;
             sections = shown.GroupBy(f => f.EventId).OrderByDescending(g => g.Max(f => f.TakenAt));
             title = g =>
             {
@@ -115,7 +155,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         {
             var cards = g.OrderByDescending(f => f.Tracks).ThenByDescending(f => f.Media).Select(f =>
             {
-                var item = items.GetValueOrDefault(f.MediaId);
+                var item = _figureItems.GetValueOrDefault(f.MediaId);
                 var crop = new CropViewModel(f.CoverId, f.MediaId, DetectionKind.Body)
                 {
                     FigureKey = f.GroupKey,
@@ -124,14 +164,15 @@ public sealed partial class PeopleViewModel : ObservableObject
                         f.Tracks > 1 ? $"{f.Tracks} times in {item?.FileName}" :
                         item == null ? "" : item.IsVideo ? $"{item.FileName} {TimeSpan.FromMilliseconds(f.TimeMs):m\\:ss}" : item.FileName,
                 };
-                crop.Load(CropPath(f.CoverId), 160);
+                crop.LoadLater(CropPath(f.CoverId), 160);
                 return crop;
             }).ToList();
-            FigureSections.Add(new FigureSection(title(g), Format.Count(cards.Count, "person", "people"), cards));
+            built.Add(new FigureSection(title(g), Format.Count(cards.Count, "person", "people"), cards));
         }
+        FigureSections = new ObservableCollection<FigureSection>(built);
         HasFigures = FigureSections.Count > 0 || HasSeenOnce;
     }
-    public ObservableCollection<CropViewModel> PersonCrops { get; } = [];
+    [ObservableProperty] private ObservableCollection<CropViewModel> _personCrops = [];
 
     [ObservableProperty] private string _clustersSummary = "";
     [ObservableProperty] private bool _hasClusters;
@@ -171,11 +212,34 @@ public sealed partial class PeopleViewModel : ObservableObject
 
     // ---- unnamed groups ----
 
-    public void LoadClusters()
+    /// <summary>The photos of an unnamed group, to see the whole pictures (a face crop alone can be too small to tell).</summary>
+    public List<(long MediaId, int TimeMs)> ClusterMoments(CropViewModel card) =>
+        card.Cluster is { } cluster ? _host.People.ClusterMoments(cluster, 30) : [];
+
+    /// <summary>The photo (or the video moment) of the question in review.</summary>
+    public (long MediaId, int TimeMs)? ReviewMoment => HasReview ? (_queue[_queueIndex].MediaId, _queue[_queueIndex].TimeMs) : null;
+
+    private int _clustersVersion;
+
+    /// <summary>
+    /// Who is this: read in the background (thousands of faces in a big library), shown when ready; what is shown
+    /// meanwhile stays.
+    /// </summary>
+    public async void LoadClusters()
     {
-        Clusters.Clear();
-        var groups = _host.People.UnnamedClusters();
-        foreach (var c in groups)
+        var version = ++_clustersVersion;
+        if (Clusters.Count == 0 && FigureSections.Count == 0) ClustersSummary = "Looking for the people nobody named yet...";
+        var (groups, figures, items, positions) = await Task.Run(() =>
+        {
+            var groups = _host.People.UnnamedClusters();
+            var figures = _host.People.UnnamedFigures(groups.Select(g => g.Cluster).ToHashSet());
+            var items = _host.Repo.Query(new Library.MediaFilter { Ids = figures.Select(f => f.MediaId).Distinct().ToList() })
+                .ToDictionary(i => i.Id);
+            var positions = _host.Repo.EventPositions(figures.Select(f => f.EventId).Distinct());
+            return (groups, figures, items, positions);
+        });
+        if (version != _clustersVersion) return;
+        Clusters = new ObservableCollection<CropViewModel>(groups.Select(c =>
         {
             var crop = new CropViewModel(c.CoverId, 0, DetectionKind.Face)
             {
@@ -183,10 +247,12 @@ public sealed partial class PeopleViewModel : ObservableObject
                 Count = c.Media,
                 Caption = c.Media == 1 ? "1 photo" : $"{c.Media} photos",
             };
-            crop.Load(CropPath(c.CoverId), 160);
-            Clusters.Add(crop);
-        }
-        _figures = _host.People.UnnamedFigures(groups.Select(g => g.Cluster).ToHashSet());
+            crop.LoadLater(CropPath(c.CoverId), 160);
+            return crop;
+        }));
+        _figures = figures;
+        _figureItems = items;
+        _eventPositions = positions;
         BuildFigureSections();
         HasClusters = Clusters.Count > 0;
         ClustersSummary = Clusters.Count + _figures.Count == 0
@@ -301,8 +367,9 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         if (!HasReview) return;
         var d = _queue[_queueIndex];
-        _host.People.Confirm([d.Id], d.SuggestPersonId!.Value);
-        Next();
+        var ids = WithAlike(d);
+        _host.People.Confirm(ids, d.SuggestPersonId!.Value);
+        Next(ids.Count - 1);
     }
 
     [RelayCommand]
@@ -310,8 +377,39 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         if (!HasReview) return;
         var d = _queue[_queueIndex];
-        _host.People.Reject([d.Id], d.SuggestPersonId!.Value);
-        Next();
+        var ids = WithAlike(d);
+        _host.People.Reject(ids, d.SuggestPersonId!.Value);
+        Next(ids.Count - 1);
+    }
+
+    /// <summary>Near the same picture: taken within a few minutes and looking almost the same (a burst, a copy).</summary>
+    private static readonly TimeSpan AlikeWithin = TimeSpan.FromMinutes(5);
+    private const float AlikeFace = 0.85f;
+    private const float AlikeBody = 0.92f;
+
+    /// <summary>
+    /// The answered suggestion and the ones further in the queue that are almost the same picture (the same
+    /// suggested person, taken within minutes, nearly the same look): one answer is enough for all of them.
+    /// </summary>
+    private List<long> WithAlike(DetectionRow answered)
+    {
+        var ids = new List<long> { answered.Id };
+        var rest = _queue.Skip(_queueIndex + 1)
+            .Where(q => q.SuggestPersonId == answered.SuggestPersonId && q.Kind == answered.Kind &&
+                        Math.Abs(q.TakenAt - answered.TakenAt) <= AlikeWithin.TotalMilliseconds)
+            .ToList();
+        if (rest.Count == 0) return ids;
+        var vectors = _host.People.Embeddings(rest.Select(r => r.Id).Append(answered.Id));
+        if (!vectors.TryGetValue(answered.Id, out var look)) return ids;
+        var limit = answered.Kind == DetectionKind.Face ? AlikeFace : AlikeBody;
+        foreach (var q in rest)
+        {
+            if (!vectors.TryGetValue(q.Id, out var other) || PeopleRepository.Similarity(look, other) < limit) continue;
+            ids.Add(q.Id);
+            // Answered with this one: the queue skips it.
+            q.SuggestPersonId = null;
+        }
+        return ids;
     }
 
     [RelayCommand]
@@ -327,16 +425,26 @@ public sealed partial class PeopleViewModel : ObservableObject
         if (!HasReview || string.IsNullOrWhiteSpace(name)) return;
         var d = _queue[_queueIndex];
         var person = _host.People.FindOrCreatePerson(name);
-        if (person.Id != d.SuggestPersonId) _host.People.Reject([d.Id], d.SuggestPersonId!.Value);
-        _host.People.Confirm([d.Id], person.Id);
-        Next();
+        var ids = WithAlike(d);
+        if (person.Id != d.SuggestPersonId) _host.People.Reject(ids, d.SuggestPersonId!.Value);
+        _host.People.Confirm(ids, person.Id);
+        Next(ids.Count - 1);
     }
 
-    private void Next()
+    /// <summary>Said under the question: the last answer counted for alike pictures too.</summary>
+    [ObservableProperty] private string _reviewNote = "";
+
+    private void Next(int alike = 0)
     {
         _queueIndex++;
         AfterChange();
         ShowReview();
+        ReviewNote = alike switch
+        {
+            0 => "",
+            1 => "The last answer counted for 1 almost the same picture too.",
+            _ => $"The last answer counted for {alike} almost the same pictures too.",
+        };
     }
 
     // ---- one person ----
@@ -344,7 +452,8 @@ public sealed partial class PeopleViewModel : ObservableObject
     public void LoadPerson(long personId)
     {
         Person = _host.People.ListPersons(true).FirstOrDefault(p => p.Id == personId);
-        PersonCrops.Clear();
+        var crops = new List<CropViewModel>();
+        PersonCrops = [];
         if (Person == null) return;
         var rows = _host.People.Detections(personId: personId, limit: 400);
         foreach (var d in rows)
@@ -360,9 +469,10 @@ public sealed partial class PeopleViewModel : ObservableObject
                     _ => "",
                 },
             };
-            crop.Load(CropPath(d.Id), 120);
-            PersonCrops.Add(crop);
+            crop.LoadLater(CropPath(d.Id), 120);
+            crops.Add(crop);
         }
+        PersonCrops = new ObservableCollection<CropViewModel>(crops);
         PersonSummary = $"{Person.Name}: {rows.Count(r => r.Kind == DetectionKind.Face)} faces, {rows.Count(r => r.Kind == DetectionKind.Body)} figures. " +
                         "Select the wrong ones: It is someone else says who they are, Not this person (Delete) only takes them away.";
     }

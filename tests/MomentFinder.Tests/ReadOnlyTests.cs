@@ -66,3 +66,26 @@ public class ReadOnlyTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.MakeHomeAsync(source.Id, Path.Combine(lib.Root, "home"), null, ct));
     }
 }
+
+public class LibraryLockTests
+{
+    [Fact]
+    public void OneProgramAtATimeWorksOnALibrary()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "momentfinder-lock-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (var first = LibraryLock.TryAcquire(dir))
+            {
+                Assert.NotNull(first);
+                Assert.Null(LibraryLock.TryAcquire(dir));
+            }
+            using var again = LibraryLock.TryAcquire(dir);
+            Assert.NotNull(again);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
+    }
+}

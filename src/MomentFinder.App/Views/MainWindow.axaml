@@ -378,22 +378,25 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Spacing="8">
                         <TextBlock Classes="heading" Text="FACES" IsVisible="{Binding People.HasClusters}" Margin="0" />
-                        <ItemsControl ItemsSource="{Binding People.Clusters}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
+                        <!-- Virtualized: a big library has thousands of faces; only those on screen are decoded -->
+                        <ItemsRepeater ItemsSource="{Binding People.Clusters}" ElementPrepared="OnCropPrepared" ElementClearing="OnCropClearing">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout MinItemWidth="150" MinItemHeight="196" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
                                 <DataTemplate DataType="vm:CropViewModel">
                                     <Border Classes="card" Margin="0,0,10,10">
                                         <StackPanel Spacing="6" Width="140">
                                             <Button Padding="0" Click="OnNameCluster" ToolTip.Tip="Who is it?" Background="Transparent">
                                                 <Image Source="{Binding Image}" Width="140" Height="140" Stretch="UniformToFill" />
                                             </Button>
-                                            <Grid ColumnDefinitions="*,Auto">
+                                            <Grid ColumnDefinitions="*,Auto,Auto">
                                                 <TextBlock Text="{Binding Caption}" Classes="muted small" VerticalAlignment="Center" />
-                                                <Button Grid.Column="1" Classes="icon" Click="OnIgnoreCluster"
+                                                <Button Grid.Column="1" Classes="icon" Click="OnShowClusterPhotos"
+                                                        ToolTip.Tip="See the whole photos (with the boxes): when the face alone is too small to tell">
+                                                    <mi:MaterialIcon Kind="ImageMultipleOutline" />
+                                                </Button>
+                                                <Button Grid.Column="2" Classes="icon" Click="OnIgnoreCluster"
                                                         ToolTip.Tip="A stranger: never show this group again">
                                                     <mi:MaterialIcon Kind="EyeOffOutline" />
                                                 </Button>
@@ -401,8 +404,8 @@
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
 
                         <!-- People without a visible face: by day and place (or video), the ones seen most often first -->
                         <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,8,0,0" IsVisible="{Binding People.HasFigures}">
@@ -412,21 +415,19 @@
                                       ToolTip.Tip="Seen once are mostly strangers passing by; named friends are found there by their clothes anyway" />
                             <ComboBox Grid.Column="2" ItemsSource="{Binding People.FigureGroupings}" SelectedItem="{Binding People.FigureGrouping}" MinWidth="160" />
                         </Grid>
-                        <ItemsControl ItemsSource="{Binding People.FigureSections}">
-                            <ItemsControl.ItemTemplate>
+                        <ItemsRepeater ItemsSource="{Binding People.FigureSections}">
+                            <ItemsRepeater.ItemTemplate>
                                 <DataTemplate DataType="vm:FigureSection">
                                     <StackPanel Margin="0,6,0,4">
                                         <StackPanel Orientation="Horizontal" Spacing="10" Margin="2,0,0,8">
                                             <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" />
                                             <TextBlock Text="{Binding Count}" Classes="muted" VerticalAlignment="Bottom" />
                                         </StackPanel>
-                                        <ItemsControl ItemsSource="{Binding Cards}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
+                                        <ItemsRepeater ItemsSource="{Binding Cards}" ElementPrepared="OnCropPrepared" ElementClearing="OnCropClearing">
+                                            <ItemsRepeater.Layout>
+                                                <UniformGridLayout MinItemWidth="130" MinItemHeight="262" />
+                                            </ItemsRepeater.Layout>
+                                            <ItemsRepeater.ItemTemplate>
                                                 <DataTemplate DataType="vm:CropViewModel">
                                                     <Border Classes="card" Margin="0,0,10,10">
                                                         <StackPanel Spacing="6" Width="120">
@@ -449,12 +450,12 @@
                                                         </StackPanel>
                                                     </Border>
                                                 </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                            </ItemsRepeater.ItemTemplate>
+                                        </ItemsRepeater>
                                     </StackPanel>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
                     </StackPanel>
                 </ScrollViewer>
             </DockPanel>
@@ -465,6 +466,8 @@
                     <TextBlock Text="{Binding People.ReviewQuestion}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
                     <TextBlock Text="{Binding People.ReviewDetail}" Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding People.ReviewProgress}" Classes="muted small" HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding People.ReviewNote}" Classes="muted small" HorizontalAlignment="Center"
+                               IsVisible="{Binding People.ReviewNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                 </StackPanel>
                 <Grid Grid.Row="1" ColumnDefinitions="*,*" Margin="0,16" IsVisible="{Binding People.HasReview}">
                     <Image Source="{Binding People.ReviewCrop.Image}" Stretch="Uniform" MaxHeight="320" Margin="10" />
@@ -484,6 +487,8 @@
                     <Button Command="{Binding People.ReviewNoCommand}" MinWidth="110" HorizontalContentAlignment="Center">No (N)</Button>
                     <Button Click="OnReviewOther" MinWidth="110" HorizontalContentAlignment="Center">Someone else (O)</Button>
                     <Button Command="{Binding People.ReviewSkipCommand}" MinWidth="110" HorizontalContentAlignment="Center">Skip (S)</Button>
+                    <Button Click="OnReviewWholePhoto" MinWidth="110" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="The whole photo (or the video at that moment) with the boxes, when the crop is too small to tell">Whole photo (W)</Button>
                 </StackPanel>
             </Grid>
 
@@ -499,21 +504,19 @@
                     </StackPanel>
                 </Grid>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding People.PersonCrops}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
+                    <ItemsRepeater ItemsSource="{Binding People.PersonCrops}" ElementPrepared="OnCropPrepared" ElementClearing="OnCropClearing">
+                        <ItemsRepeater.Layout>
+                            <UniformGridLayout MinItemWidth="122" MinItemHeight="122" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
                             <DataTemplate DataType="vm:CropViewModel">
                                 <Border Classes="tile" Classes.selected="{Binding IsSelected}" Margin="0,0,6,6" Tapped="OnCropTapped"
                                         DoubleTapped="OnCropDoubleTapped" ToolTip.Tip="{Binding Caption}">
                                     <Image Source="{Binding Image}" Width="110" Height="110" Stretch="Uniform" />
                                 </Border>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
                 </ScrollViewer>
             </DockPanel>
 

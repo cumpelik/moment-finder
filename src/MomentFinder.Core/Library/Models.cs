@@ -53,11 +53,15 @@ public sealed class MediaItem
     public int ThumbState { get; init; }
     public int AnalysisVersion { get; init; }
 
-    /// <summary>Filled by the repository from the source root. For a cloud item, the place in the local cache.</summary>
-    public string FullPath { get; set; } = "";
+    /// <summary>The root of the source (shared by all its items); the paths below are made from it when asked for.</summary>
+    public string SourceRoot { get; init; } = "";
+    public string? SourceRemote { get; init; }
+
+    /// <summary>The file on this computer. For a cloud item, the place in the local cache.</summary>
+    public string FullPath => Path.Combine(SourceRoot, RelPath.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>The rclone path of a cloud item (fetched on demand, see Cloud.MediaFiles); null for local files.</summary>
-    public string? Remote { get; set; }
+    public string? Remote => SourceRemote == null ? null : Cloud.CloudService.Join(SourceRemote, RelPath);
 
     public string FileName => Path.GetFileName(RelPath);
     public DateTime Taken => DateTime.UnixEpoch.AddMilliseconds(TakenAt);

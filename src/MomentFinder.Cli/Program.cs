@@ -56,7 +56,14 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
     return 0;
 }
 
-using var host = new LibraryHost();
+var paths = new AppPaths();
+using var libraryLock = LibraryLock.TryAcquire(paths.DataDir);
+if (libraryLock == null)
+{
+    Console.Error.WriteLine("MomentFinder is running with this library: close it first (one program at a time works on a library).");
+    return 1;
+}
+using var host = new LibraryHost(paths);
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 var ct = cts.Token;

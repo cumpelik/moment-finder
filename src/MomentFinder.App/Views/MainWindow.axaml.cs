@@ -189,6 +189,7 @@ public partial class MainWindow : Window
                 case Key.N: _vm.People.ReviewNoCommand.Execute(null); break;
                 case Key.S or Key.Right: _vm.People.ReviewSkipCommand.Execute(null); break;
                 case Key.O: _ = ReviewOtherAsync(); break;
+                case Key.W: ShowReviewWholePhoto(); break;
                 default: return;
             }
             e.Handled = true;
@@ -291,6 +292,13 @@ public partial class MainWindow : Window
 
     private void OnTileClearing(object? sender, ItemsRepeaterElementClearingEventArgs e) =>
         (e.Element.DataContext as TileViewModel)?.Unrealize();
+
+    /// <summary>A face or figure card came on screen (Who is this, a person's faces): its picture is decoded.</summary>
+    private void OnCropPrepared(object? sender, ItemsRepeaterElementPreparedEventArgs e) =>
+        (e.Element.DataContext as CropViewModel)?.Show();
+
+    private void OnCropClearing(object? sender, ItemsRepeaterElementClearingEventArgs e) =>
+        (e.Element.DataContext as CropViewModel)?.Hide();
 
     private void OnDateFlyoutOpening(object? sender, EventArgs e) => _vm?.LoadDateChoices();
 
@@ -595,6 +603,18 @@ public partial class MainWindow : Window
     }
 
     private async void OnReviewOther(object? sender, RoutedEventArgs e) => await ReviewOtherAsync();
+
+    private void OnReviewWholePhoto(object? sender, RoutedEventArgs e) => ShowReviewWholePhoto();
+
+    private void ShowReviewWholePhoto()
+    {
+        if (_vm?.People.ReviewMoment is { } m) _vm.OpenMedia(m.MediaId, m.TimeMs, showPeople: true);
+    }
+
+    private void OnShowClusterPhotos(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel card) _vm.OpenMoments(_vm.People.ClusterMoments(card));
+    }
 
     private async void OnFacesSomeoneElse(object? sender, RoutedEventArgs e)
     {

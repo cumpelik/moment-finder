@@ -98,6 +98,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _refreshThrottle = new DispatcherTimer(TimeSpan.FromSeconds(3), DispatcherPriority.Background, (_, _) =>
         {
             _refreshThrottle!.Stop();
+            // The next wait: a few seconds, longer the longer the search takes (at most a minute and a half).
+            _refreshThrottle.Interval = TimeSpan.FromSeconds(Math.Clamp(_lastSearch.TotalSeconds * 8, 3, 90));
             if (!_refreshPending) return;
             _refreshPending = false;
             RefreshSidebarCounts();
@@ -152,7 +154,75 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     // ---- sidebar ----
 
+    /// <summary>
+    /// The counts that take a while in a big library (groups of unnamed faces and figures, suggestions, best moments):
+    /// worked out in the background, the sidebar shows the last ones and is built again when they change.
+    /// </summary>
+    private sealed record SidebarCounts(int Groups, long Suggestions, int Best, LibraryStats Stats, Dictionary<long, long> BySource,
+        List<Person> Persons)
+    {
+        // Equal when the sidebar would look the same (the dictionaries and lists compared by content).
+        public bool Same(SidebarCounts? other) => other != null && Groups == other.Groups && Suggestions == other.Suggestions &&
+            Best == other.Best && Stats.Total == other.Stats.Total && Stats.Photos == other.Stats.Photos &&
+            Stats.Videos == other.Stats.Videos && Stats.Analyzed == other.Stats.Analyzed && BySource.Count == other.BySource.Count &&
+            BySource.All(kv => other.BySource.GetValueOrDefault(kv.Key, -1) == kv.Value) &&
+            Persons.Select(p => (p.Id, p.Name, p.MediaCount)).SequenceEqual(other.Persons.Select(p => (p.Id, p.Name, p.MediaCount)));
+    }
+
+    private SidebarCounts? _counts;
+    private int _countsRunning;
+    private bool _countsAgain;
+
+    private void RefreshCounts()
+    {
+        if (Interlocked.Exchange(ref _countsRunning, 1) == 1)
+        {
+            _countsAgain = true;
+            return;
+        }
+        _ = Task.Run(() =>
+        {
+            SidebarCounts? counts = null;
+            try
+            {
+                var clusters = _host.People.UnnamedClusters();
+                counts = new SidebarCounts(
+                    clusters.Count + _host.People.UnnamedFigures(clusters.Select(c => c.Cluster).ToHashSet()).Count,
+                    _host.People.SuggestionCount(),
+                    InterestingMoments.Find(_host.Db).Count,
+                    _host.Repo.Stats(Indexer.AnalysisVersion),
+                    _host.Repo.CountBySource(),
+                    _host.People.ListPersons());
+            }
+            catch (Exception e) when (e is InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
+            {
+                // Tried again at the next change.
+            }
+            Dispatcher.UIThread.Post(() =>
+            {
+                Interlocked.Exchange(ref _countsRunning, 0);
+                if (counts != null && !counts.Same(_counts))
+                {
+                    _counts = counts;
+                    BuildSidebar();
+                }
+                if (_countsAgain)
+                {
+                    _countsAgain = false;
+                    RefreshCounts();
+                }
+            });
+        });
+    }
+
+    /// <summary>The sidebar as the library is now; the slow counts follow in the background.</summary>
     private void RebuildSidebar()
+    {
+        BuildSidebar();
+        RefreshCounts();
+    }
+
+    private void BuildSidebar()
     {
         // A folder added, removed or located elsewhere is watched from now on (off this thread: a network folder may be slow).
         if (_watcher is { } watcher) _ = Task.Run(watcher.Refresh);
@@ -161,15 +231,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var selected = _scope;
         var activeId = ActiveBucket?.Id;
         SidebarItems.Clear();
-        var stats = _host.Repo.Stats(Indexer.AnalysisVersion);
-        SidebarItems.Add(new SidebarEntry(SidebarKind.All, 0, "All photos and videos", stats.Total.ToString("N0"),
-            $"{stats.Photos:N0} photos, {stats.Videos:N0} videos"));
-        var best = InterestingMoments.Find(_host.Db).Count;
+        var stats = _counts?.Stats;
+        SidebarItems.Add(new SidebarEntry(SidebarKind.All, 0, "All photos and videos", stats?.Total.ToString("N0") ?? "",
+            stats == null ? "" : $"{stats.Photos:N0} photos, {stats.Videos:N0} videos"));
+        var best = _counts?.Best ?? 0;
         if (best > 0 || _host.PeopleModel != null)
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Best, 0, "Best moments", best.ToString("N0"), "The best moments of your videos"));
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Best, 0, "Best moments", _counts == null ? "" : best.ToString("N0"), "The best moments of your videos"));
         SidebarItems.Add(new SidebarHeader("SOURCES", "Add a folder", SidebarKind.Source));
         var sources = _host.Repo.ListSources();
-        var counts = _host.Repo.CountBySource();
+        _sources = sources;
+        var counts = _counts?.BySource ?? [];
         var mirrors = _host.Cloud.Mirrors().GroupBy(m => m.SourceId).ToDictionary(g => g.Key, g => g.First());
         var merges = _host.Cloud.Merges();
         foreach (var s in sources)
@@ -178,6 +249,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var away = s.Kind == SourceKinds.Local && !Directory.Exists(s.Root);
             var mirror = mirrors.GetValueOrDefault(s.Id);
             var entry = SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirror);
+            if (_counts == null) entry = entry with { Count = "" };
             // A folder being added to a cloud folder: how far it is shows at the cloud folder it goes to.
             if (merges.FirstOrDefault(j => j.TargetId == s.Id) is { } incoming) entry = MergeTarget(entry, incoming);
             if (merges.FirstOrDefault(j => j.SourceId == s.Id) is { } outgoing)
@@ -187,16 +259,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (mirror != null && _host.Cloud.MoveRequested(mirror.Id)) SidebarItems.Add(CloneEntry(s, mirror));
         }
         IsLibraryEmpty = sources.Count == 0;
-        var persons = _host.People.ListPersons();
-        var clusters = _host.People.UnnamedClusters();
-        var groups = clusters.Count + _host.People.UnnamedFigures(clusters.Select(c => c.Cluster).ToHashSet()).Count;
-        var suggestions = _host.People.SuggestionCount();
+        var persons = _counts?.Persons ?? [];
+        var groups = _counts?.Groups ?? 0;
+        var suggestions = _counts?.Suggestions ?? 0;
         if (persons.Count > 0 || groups > 0 || suggestions > 0 || _host.PeopleModel != null)
         {
             SidebarItems.Add(new SidebarHeader("PEOPLE", "", SidebarKind.Person));
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Groups, 0, "Who is this?", groups.ToString("N0"),
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Groups, 0, "Who is this?", _counts == null ? "" : groups.ToString("N0"),
                 "People nobody named yet: groups of faces, and people without a visible face (helmets, from behind)"));
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Review, 0, "Review suggestions", suggestions.ToString("N0"),
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Review, 0, "Review suggestions", _counts == null ? "" : suggestions.ToString("N0"),
                 "The analysis is not sure: confirm or reject, one key per answer"));
             foreach (var p in persons)
                 SidebarItems.Add(new SidebarEntry(SidebarKind.Person, p.Id, p.Name, p.MediaCount.ToString("N0"), p.Name));
@@ -620,32 +691,56 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var scope = ScopeFilter();
         var hasText = !string.IsNullOrWhiteSpace(QueryParser.Parse(text, _host.Search.People).Text);
         if (hasText) ResultSummary = "Searching...";
-        List<SearchHit> hits;
+        var best = CurrentScope?.Kind == SidebarKind.Best && !hasText;
+        var old = Tiles;
+        var bucket = ActiveBucket?.Id;
+        // Everything that grows with the library is done off the UI thread (millions of photos): the search, the
+        // tiles (the ones already shown kept with their thumbnails), the bucket marks.
+        ObservableCollection<TileViewModel>? tiles;
+        HashSet<long> inBucket = [];
+        int count;
+        var started = DateTime.UtcNow;
         try
         {
-            hits = await Task.Run(() => _host.Search.Search(text, scope), cts.Token);
+            (tiles, count) = await Task.Run(() =>
+            {
+                var hits = _host.Search.Search(text, scope);
+                cts.Token.ThrowIfCancellationRequested();
+                // The same items in the same order: nothing changes (the tiles and their thumbnails stay).
+                if (keepSelection && hits.Count == old.Count && hits.Select(h => h.Item.Id).SequenceEqual(old.Select(t => t.Item.Id)))
+                    return ((ObservableCollection<TileViewModel>?)null, hits.Count);
+                var kept = keepSelection ? old.GroupBy(t => (t.Item.Id, t.StartMs)).ToDictionary(g => g.Key, g => g.First()) : [];
+                var notes = best ? BestNotes() : null;
+                inBucket = bucket is { } b ? _host.Buckets.MediaIds(b).ToHashSet() : [];
+                var list = new List<TileViewModel>(hits.Count);
+                // Tiles shown already are touched on the UI thread only (below); new ones are not shown yet.
+                foreach (var h in hits)
+                    list.Add(kept.GetValueOrDefault((h.Item.Id, h.TimeMs)) ?? new TileViewModel(h.Item, h.TimeMs) { Note = notes?.GetValueOrDefault(h.Item.Id) });
+                return (new ObservableCollection<TileViewModel>(list), hits.Count);
+            }, cts.Token);
         }
         catch (OperationCanceledException)
         {
             return;
         }
         if (cts.IsCancellationRequested) return;
-
-        var selectedIds = keepSelection ? SelectedTiles().Select(t => t.Item.Id).ToHashSet() : [];
-        // The same items in the same order: keep the tiles (and their loaded thumbnails).
-        if (keepSelection && hits.Count == Tiles.Count && hits.Select(h => h.Item.Id).SequenceEqual(Tiles.Select(t => t.Item.Id)))
+        _lastSearch = DateTime.UtcNow - started;
+        if (tiles != null)
         {
-            UpdateSummary(hits.Count, hasText);
-            return;
+            foreach (var t in tiles)
+            {
+                if (!keepSelection) t.IsSelected = false;
+                t.InBucket = inBucket.Contains(t.Item.Id);
+            }
+            Tiles = tiles;
+            _anchorIndex = -1;
         }
-        var notes = CurrentScope?.Kind == SidebarKind.Best && !hasText ? BestNotes() : null;
-        var tiles = hits.Select(h => new TileViewModel(h.Item, h.TimeMs) { IsSelected = selectedIds.Contains(h.Item.Id), Note = notes?.GetValueOrDefault(h.Item.Id) });
-        Tiles = new ObservableCollection<TileViewModel>(tiles);
-        _anchorIndex = -1;
-        MarkBucketMembership();
-        UpdateSummary(hits.Count, hasText);
+        UpdateSummary(count, hasText);
         if (!keepSelection) ResultsReset?.Invoke();
     }
+
+    /// <summary>How long the last search took: a library of millions is not searched again every few seconds while it is indexed.</summary>
+    private TimeSpan _lastSearch;
 
     /// <summary>For each video of Best moments: its score and its moments, when and who (to see why it is there).</summary>
     private Dictionary<long, string> BestNotes()
@@ -673,8 +768,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var english = _host.Search.QueryPhrase(phrase);
             if (!string.Equals(english.Trim('.', ' '), phrase.Trim('.', ' '), StringComparison.OrdinalIgnoreCase))
                 text += $" for \"{english.Trim('.', ' ').ToLowerInvariant()}\"";
-            var stats = _host.Repo.Stats(Indexer.AnalysisVersion);
-            if (stats.Analyzed < stats.Total)
+            if (_counts?.Stats is { } stats && stats.Analyzed < stats.Total)
                 text += $" (the AI has looked at {stats.Analyzed:N0} of {stats.Total:N0} so far, search again later for more)";
         }
         ResultSummary = text;
@@ -755,6 +849,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // Opened to say who someone is: the boxes for this viewer, the remembered choice stays.
         if (showPeople) player.ShowPeopleHere();
         player.PauseOnOpen = showPeople;
+        PlayerRequested?.Invoke(player, true);
+    }
+
+    /// <summary>Several photos (and video moments) in the viewer with the people boxes: to see who someone is when a crop is too small.</summary>
+    public void OpenMoments(IEnumerable<(long MediaId, int TimeMs)> moments)
+    {
+        var tiles = moments.Select(m => _host.Repo.Get(m.MediaId) is { } item ? new TileViewModel(item, m.TimeMs) : null)
+            .OfType<TileViewModel>().ToList();
+        if (tiles.Count == 0) return;
+        var player = CreatePlayer(tiles, 0, autoPlay: false);
+        player.ShowPeopleHere();
+        player.PauseOnOpen = true;
         PlayerRequested?.Invoke(player, true);
     }
 
@@ -907,18 +1013,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// A folder read for the first time (thousands of photos from the cloud take a while) says how far it is, and an
     /// empty one why, above where its photos would be: not only in the status bar.
     /// </summary>
+    /// <summary>The sources as the sidebar shows them (the indexer reports many times a second: no query for each).</summary>
+    private List<Source> _sources = [];
+
     private void UpdateScopeBanner()
     {
         var st = _host.Indexer.Status;
         var source = CurrentScope is { Kind: SidebarKind.Source or SidebarKind.Clone } scope
-            ? _host.Repo.ListSources().FirstOrDefault(s => s.Id == scope.Id) : null;
+            ? _sources.FirstOrDefault(s => s.Id == scope.Id) : null;
         if (source == null)
         {
             ScopeBanner = false;
             return;
         }
         var cloud = source.Kind == SourceKinds.Cloud;
-        var away = source.Kind == SourceKinds.Local && !Directory.Exists(source.Root);
+        var away = CurrentScope?.IsAway == true;
         var reading = st.Phase == IndexerPhase.Scanning && _host.Indexer.ScanningSourceId == source.Id;
         var waiting = !reading && source.LastScanAt == null && !away;
         var empty = !reading && !waiting && Tiles.Count == 0 && !IsDateFiltered &&

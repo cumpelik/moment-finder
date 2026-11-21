@@ -237,7 +237,40 @@ public sealed class MediaRepository
         if (limit != int.MaxValue) { sql.Append(" LIMIT @limit"); p.Add("limit", limit); }
 
         using var c = _db.Open();
-        return c.Query<MediaRow>(sql.ToString(), p).Select(r => r.ToItem()).ToList();
+        return Read(c, sql.ToString(), p);
+    }
+
+    /// <summary>
+    /// The rows of a query with MediaColumns, SourceRoot and SourceRemote, read straight (a library of millions: no
+    /// per row reflection, the strings of the sources and cameras shared).
+    /// </summary>
+    private static List<MediaItem> Read(System.Data.IDbConnection c, string sql, DynamicParameters p)
+    {
+        var items = new List<MediaItem>();
+        var shared = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? Share(System.Data.IDataReader r, int i)
+        {
+            if (r.IsDBNull(i)) return null;
+            var s = r.GetString(i);
+            if (shared.TryGetValue(s, out var known)) return known;
+            if (shared.Count < 10_000) shared[s] = s;
+            return s;
+        }
+        using var reader = c.ExecuteReader(sql, p);
+        while (reader.Read())
+        {
+            items.Add(new MediaItem
+            {
+                Id = reader.GetInt64(0), SourceId = reader.GetInt64(1), RelPath = reader.GetString(2), Kind = (MediaKind)reader.GetInt32(3),
+                Size = reader.GetInt64(4), Mtime = reader.GetInt64(5), QuickHash = reader.IsDBNull(6) ? null : reader.GetString(6),
+                TakenAt = reader.GetInt64(7), Width = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                Height = reader.IsDBNull(9) ? null : reader.GetInt32(9), DurationMs = reader.IsDBNull(10) ? null : reader.GetInt64(10),
+                Lat = reader.IsDBNull(11) ? null : reader.GetDouble(11), Lon = reader.IsDBNull(12) ? null : reader.GetDouble(12),
+                Camera = Share(reader, 13), ThumbState = reader.GetInt32(14), AnalysisVersion = reader.GetInt32(15),
+                SourceRoot = Share(reader, 16) ?? "", SourceRemote = Share(reader, 17),
+            });
+        }
+        return items;
     }
 
     public Dictionary<long, MediaItem> Get(IEnumerable<long> ids)
@@ -369,8 +402,7 @@ public sealed class MediaRepository
             Id = Id, SourceId = SourceId, RelPath = RelPath, Kind = (MediaKind)Kind, Size = Size, Mtime = Mtime,
             QuickHash = QuickHash, TakenAt = TakenAt, Width = Width, Height = Height, DurationMs = DurationMs,
             Lat = Lat, Lon = Lon, Camera = Camera, ThumbState = ThumbState, AnalysisVersion = AnalysisVersion,
-            FullPath = Path.Combine(SourceRoot, RelPath.Replace('/', Path.DirectorySeparatorChar)),
-            Remote = SourceRemote == null ? null : Cloud.CloudService.Join(SourceRemote, RelPath),
+            SourceRoot = SourceRoot, SourceRemote = SourceRemote,
         };
     }
 }

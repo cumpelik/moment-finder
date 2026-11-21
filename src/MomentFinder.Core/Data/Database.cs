@@ -210,6 +210,16 @@ public sealed class Database
         """,
         // 12: a source can be read-only: nothing in it changes from MomentFinder until read-only is turned off with the password.
         "ALTER TABLE source ADD COLUMN protected INTEGER NOT NULL DEFAULT 0;",
+        // 13: a library of millions of photos: what the sidebar, Who is this and the review ask for is answered from
+        // indexes, without reading the detections themselves (their appearance vectors make the table large).
+        """
+        CREATE INDEX IF NOT EXISTS detection_person_media ON detection(person_id, media_id);
+        CREATE INDEX IF NOT EXISTS detection_unnamed ON detection(person_id, kind, cluster, media_id, quality);
+        CREATE INDEX IF NOT EXISTS detection_cluster_quality ON detection(cluster, quality);
+        CREATE INDEX IF NOT EXISTS detection_suggest_open ON detection(suggest_person_id, confirmed, kind, suggest_score);
+        CREATE INDEX IF NOT EXISTS media_source_state ON media(source_id, missing, kind, thumb_state, analysis_version, people_version);
+        ANALYZE;
+        """,
     ];
 
     /// <summary>

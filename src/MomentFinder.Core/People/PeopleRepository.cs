@@ -544,6 +544,17 @@ public sealed class PeopleRepository
             """, new { groupKey, body = (int)DetectionKind.Body, face = (int)DetectionKind.Face }).ToList();
     }
 
+    /// <summary>The photos and video moments of an unnamed group of faces, the clearest first.</summary>
+    public List<(long MediaId, int TimeMs)> ClusterMoments(long cluster, int limit)
+    {
+        using var c = _db.Open();
+        return c.Query<(long MediaId, long TimeMs)>("""
+            SELECT d.media_id, MIN(d.time_ms) FROM detection d JOIN media m ON m.id=d.media_id
+            WHERE d.cluster=@cluster AND d.person_id IS NULL AND m.missing=0
+            GROUP BY d.media_id ORDER BY MAX(d.quality) DESC LIMIT @limit
+            """, new { cluster, limit }).Select(r => (r.MediaId, (int)r.TimeMs)).ToList();
+    }
+
     public List<long> ClusterDetectionIds(long cluster)
     {
         using var c = _db.Open();
@@ -563,6 +574,30 @@ public sealed class PeopleRepository
             WHERE d.suggest_person_id IS NOT NULL AND d.confirmed=0 AND m.missing=0
             ORDER BY d.kind, d.suggest_score DESC LIMIT @limit
             """, new { limit }).ToList();
+    }
+
+    /// <summary>The appearance vectors of these detections (face or figure), by detection.</summary>
+    public Dictionary<long, float[]> Embeddings(IEnumerable<long> detectionIds)
+    {
+        var ids = detectionIds.ToList();
+        if (ids.Count == 0) return [];
+        using var c = _db.Open();
+        return c.Query<(long Id, byte[] Embedding)>("SELECT id, embedding FROM detection WHERE id IN @ids", new { ids })
+            .ToDictionary(r => r.Id, r => FromBlob(r.Embedding));
+    }
+
+    /// <summary>How alike two appearance vectors are (cosine similarity, 1 = the same).</summary>
+    public static float Similarity(float[] a, float[] b)
+    {
+        if (a.Length != b.Length || a.Length == 0) return 0;
+        double dot = 0, na = 0, nb = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        return na == 0 || nb == 0 ? 0 : (float)(dot / Math.Sqrt(na * nb));
     }
 
     public long SuggestionCount()

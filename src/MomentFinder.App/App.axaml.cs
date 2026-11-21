@@ -9,6 +9,7 @@ namespace MomentFinder.App;
 public sealed class App : Application
 {
     private LibraryHost? _host;
+    private LibraryLock? _lock;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -26,13 +27,31 @@ public sealed class App : Application
         };
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            _host = new LibraryHost();
+            // MomentFinder is open already with this library (another window, or the command line indexing it).
+            var paths = new AppPaths();
+            if (LibraryLock.TryAcquire(paths.DataDir) is not { } libraryLock)
+            {
+                var window = new Avalonia.Controls.Window { Title = "MomentFinder", Width = 1, Height = 1, ShowInTaskbar = false, Opacity = 0 };
+                desktop.MainWindow = window;
+                window.Opened += async (_, _) =>
+                {
+                    await Views.Dialogs.InfoAsync(window, "MomentFinder is open already",
+                        "MomentFinder is running already with this library (look in the taskbar). It works on one library from one place at a time, " +
+                        "so that the analysis is not done twice. Close the other one first to open it here.");
+                    desktop.Shutdown();
+                };
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+            _lock = libraryLock;
+            _host = new LibraryHost(paths);
             var vm = new MainViewModel(_host);
             desktop.MainWindow = new MainWindow { DataContext = vm };
             desktop.ShutdownRequested += (_, _) =>
             {
                 vm.Dispose();
                 _host.Dispose();
+                _lock?.Dispose();
             };
             vm.Start();
         }
