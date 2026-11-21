@@ -34,7 +34,11 @@ public sealed class LibrarySync : IDisposable
         _db = db;
         _cloud = cloud;
         _paths = paths;
+        Content = new SharedContent(db, cloud, paths, () => Enabled && _cloud.BackupCloud is { } c ? Root(_cloud, c) : null);
     }
+
+    /// <summary>Thumbnails and search data, computed once for all the computers.</summary>
+    public SharedContent Content { get; }
 
     /// <summary>The library is shared through its cloud.</summary>
     public bool Enabled => _db.GetSetting(SharedSetting) == "1" && _cloud.BackupCloud != null;
@@ -85,6 +89,8 @@ public sealed class LibrarySync : IDisposable
         {
             var root = Root(_cloud, cloud);
             await PushAsync(root, ct);
+            // What this computer computed for shared photos goes up; the facts saying so go out with the next changes.
+            if (await Content.GiveAsync(ct) > 0) await PushAsync(root, ct);
             var taken = await PullAsync(root, ct);
             if (DateTime.UtcNow - _deviceWritten > TimeSpan.FromMinutes(10)) await WriteDeviceAsync(root, ct);
             LastSync = DateTimeOffset.UtcNow;

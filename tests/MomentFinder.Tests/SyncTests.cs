@@ -282,4 +282,63 @@ public class SyncTests
             try { Directory.Delete(cloudDir, true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public async Task ThumbnailsAndSearchDataAreMadeOnceForAllComputers()
+    {
+        Assert.SkipUnless(Cloud.Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        var cloudDir = Path.Combine(Path.GetTempPath(), "momentfinder-shared-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cloudDir);
+        try
+        {
+            using var a = new TestLibrary();
+            using var b = new TestLibrary();
+            a.AddPhoto("a.jpg", color: "red");
+            a.AddPhoto("b.jpg", color: "blue");
+            var folder = a.AddSource();
+            await a.ScanAsync(folder);
+            var syncA = await SharedAsync(a, cloudDir, ct);
+            var syncB = await SharedAsync(b, cloudDir, ct);
+            var cloudA = new Cloud.CloudService(a.Paths, a.Db, a.Repo);
+            await cloudA.MirrorAsync((await cloudA.AddMirrorAsync(folder.Id, cloudA.BackupCloud!.Id, false, ct)).Id, null, ct);
+
+            // The first computer made the thumbnails and the search data.
+            using var sceneA = new Vectors.FlatVectorIndex(a.Db, Path.Combine(a.Paths.VectorDir, "scene.vec"), "test-model", 4, () => { });
+            using var sceneB = new Vectors.FlatVectorIndex(b.Db, Path.Combine(b.Paths.VectorDir, "scene.vec"), "test-model", 4, () => { });
+            syncA.Content.Scene = sceneA;
+            syncB.Content.Scene = sceneB;
+            foreach (var item in a.Repo.Query(new MediaFilter()))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(a.Paths.ThumbPath(item.Id))!);
+                File.WriteAllText(a.Paths.ThumbPath(item.Id), "thumb of " + item.FileName);
+                a.Repo.SetThumbState(item.Id, ThumbStates.Ready);
+                sceneA.Put(item.Id, [new Vectors.VectorRow(item.Id, 0, [1, 0, 0, item.Id])]);
+                a.Repo.SetAnalysisVersion(item.Id, Indexer.AnalysisVersion);
+            }
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+
+            // The other one takes them, without the photos.
+            Assert.True(await syncB.Content.TakeAsync(ct));
+            await syncB.Content.TakeAsync(ct);
+            foreach (var item in b.Repo.Query(new MediaFilter()))
+            {
+                Assert.Equal("thumb of " + item.FileName, File.ReadAllText(b.Paths.ThumbPath(item.Id)));
+                var original = a.Repo.Query(new MediaFilter()).Single(i => i.RelPath == item.RelPath);
+                Assert.Equal(original.Id, sceneB.RowsOf(item.Id).Single().Vector[3]);
+            }
+            using (var c = b.Db.Open())
+                Assert.Equal(0, c.ExecuteScalar<long>("SELECT COUNT(*) FROM media WHERE thumb_state<>1 OR analysis_version<@v", new { v = Indexer.AnalysisVersion }));
+            Assert.Empty(Directory.GetFiles(Path.Combine(b.Paths.CacheDir, "cloud"), "*", SearchOption.AllDirectories));
+            // Stored once: the second computer gives nothing more.
+            Assert.Equal(0, await syncB.Content.GiveAsync(ct));
+            Assert.Equal(4, Directory.GetFiles(Path.Combine(cloudDir, ".medialens", "shared", "content"), "*", SearchOption.AllDirectories).Length);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+        }
+    }
 }

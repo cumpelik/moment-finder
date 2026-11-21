@@ -194,7 +194,7 @@ public sealed class Indexer : IDisposable
         // Named or corrected by the user: matched again between the batches of a long analysis (at most twice a
         // minute, a review gives many answers in a row), so the names show while the library is still being analyzed.
         var wanted = _identityWanted && DateTime.UtcNow - _lastIdentity > TimeSpan.FromSeconds(30);
-        if (!wanted && (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct)))
+        if (!wanted && (await SharedBatchAsync(ct) || TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct)))
             return true;
         if (_identityDirty && _identity != null)
         {
@@ -208,6 +208,28 @@ public sealed class Indexer : IDisposable
         }
         if (Proxies360 && await Proxy360BatchAsync(ct)) return true;
         return false;
+    }
+
+    /// <summary>
+    /// Thumbnails and search data another computer of the shared library made already: taken instead of computed
+    /// (set by the host when the library is shared).
+    /// </summary>
+    public Func<CancellationToken, Task<bool>>? SharedContentBatch { get; set; }
+
+    private async Task<bool> SharedBatchAsync(CancellationToken ct)
+    {
+        if (SharedContentBatch == null) return false;
+        try
+        {
+            if (!await SharedContentBatch(ct)) return false;
+            Report(new IndexerStatus(IndexerPhase.Thumbnails, "Taking thumbnails and search data the other computers made", 0, 0, false));
+            LibraryChanged?.Invoke();
+            return true;
+        }
+        catch (Cloud.RcloneException)
+        {
+            return false;
+        }
     }
 
     /// <summary>The app makes light playing copies of 360 videos when everything else is done (not the command line).</summary>

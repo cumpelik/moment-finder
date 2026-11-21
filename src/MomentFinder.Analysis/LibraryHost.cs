@@ -64,6 +64,7 @@ public sealed class LibraryHost : IDisposable
         Mirrors = new MirrorScheduler(Cloud, Db);
         Sync = new MomentFinder.Sync.LibrarySync(Db, Cloud, Paths);
         Db.Facts.Recorded += Sync.Wake;
+        Indexer.SharedContentBatch = Sync.Content.TakeAsync;
         Models = new ModelManager(Paths.ModelDir);
         People = new PeopleRepository(Db);
         Identity = new IdentityService(People);
@@ -109,6 +110,7 @@ public sealed class LibraryHost : IDisposable
             });
         SceneModel = model;
         SceneIndex = index;
+        Sync.Content.Scene = index;
         Search.AttachSceneModel(model, index);
         Indexer.AttachSceneModel(model, index);
         return true;
