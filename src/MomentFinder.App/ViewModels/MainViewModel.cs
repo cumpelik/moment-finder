@@ -1122,7 +1122,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (scene) parts.Add("search");
             if (people) parts.Add("people");
             var device = _host.SceneModel?.Device ?? _host.PeopleModel?.Device;
-            ModelText = $"AI ready: {string.Join(", ", parts)} ({device})" + (missing.Count > 0 ? ", more after the download" : "");
+            // CPU, or the graphics card (DirectML, CUDA, CoreML).
+            var where = device == null ? "" : device.Contains("CPU", StringComparison.OrdinalIgnoreCase) ? " on the processor" : " on the graphics card";
+            ModelText = $"AI ready: {string.Join(", ", parts)}{where}" + (missing.Count > 0 ? ", more after the download" : "");
             CanDownloadModel = missing.Count > 0;
             if (people) RebuildSidebar();
             if (!string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text))

@@ -146,7 +146,7 @@ public sealed class Indexer : IDisposable
             {
                 if (!await StepAsync(ct))
                 {
-                    Report(new IndexerStatus(IndexerPhase.Idle, _paused ? "Paused" : "Up to date", 0, 0, _paused));
+                    Report(new IndexerStatus(IndexerPhase.Idle, _paused ? "Paused: press the button on the left to go on" : "Everything is ready", 0, 0, _paused));
                     // Everything is analyzed: cloud files fetched for it may leave the cache.
                     Cloud.MediaFiles.TrimCache();
                     await _wake.WaitAsync(ct);
@@ -192,7 +192,7 @@ public sealed class Indexer : IDisposable
         {
             _identityDirty = false;
             _sinceIdentity = 0;
-            Report(new IndexerStatus(IndexerPhase.People, "Matching people", 0, 0, false));
+            Report(new IndexerStatus(IndexerPhase.People, "Working out who is who", 0, 0, false));
             await Task.Run(() => _identity.Recompute(), ct);
             return true;
         }
@@ -252,7 +252,7 @@ public sealed class Indexer : IDisposable
         foreach (var source in _repo.ListSources().Where(s => s.Enabled && (only == null || only.Contains(s.Id))))
         {
             ScanningSourceId = source.Id;
-            Report(new IndexerStatus(IndexerPhase.Scanning, $"Scanning {source.Name}", 0, 0, false));
+            Report(new IndexerStatus(IndexerPhase.Scanning, $"Looking for new photos and videos in {source.Name}", 0, 0, false));
             // What a long scan found so far shows while it runs (a cloud folder of thousands of photos takes a while).
             var progress = new Progress<string>(m =>
             {
@@ -283,7 +283,7 @@ public sealed class Indexer : IDisposable
     {
         var done = _twins.CopyBatch(_sceneIndex, 200);
         if (done == 0) return false;
-        Report(new IndexerStatus(IndexerPhase.Thumbnails, $"Copies of known files: {done}", 0, 0, false));
+        Report(new IndexerStatus(IndexerPhase.Thumbnails, $"Copies of files it knows already: {done}", 0, 0, false));
         LibraryChanged?.Invoke();
         return true;
     }
@@ -299,7 +299,7 @@ public sealed class Indexer : IDisposable
             {
                 await EnsureThumbnailAsync(item, token, regenerate: true);
                 var n = Interlocked.Increment(ref done);
-                Report(new IndexerStatus(IndexerPhase.Thumbnails, "Thumbnails", n, (int)stats.Total, false));
+                Report(new IndexerStatus(IndexerPhase.Thumbnails, "Making thumbnails", n, (int)stats.Total, false));
             });
         LibraryChanged?.Invoke();
         return true;
@@ -342,7 +342,6 @@ public sealed class Indexer : IDisposable
         if (batch.Count == 0) return false;
         var stats = _repo.Stats(AnalysisVersion);
         var done = (int)stats.Analyzed;
-        var device = model.Device;
 
         // 360 photos: views all around, like the frames of a 360 video.
         foreach (var photo in batch.Where(i => !i.IsVideo && Fisheye360.IsDualFisheye(i.FullPath)))
@@ -350,7 +349,7 @@ public sealed class Indexer : IDisposable
             var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(photo.FullPath, 2048)), ct);
             await Embed360Async(photo, [(0, lens0, lens1)], model, index, ct);
             _repo.SetAnalysisVersion(photo.Id, AnalysisVersion);
-            Report(new IndexerStatus(IndexerPhase.Analysis, $"Analyzing ({device})", ++done, (int)stats.Total, false));
+            Report(new IndexerStatus(IndexerPhase.Analysis, "Learning what is in the pictures, for the search", ++done, (int)stats.Total, false));
         }
         var photos = batch.Where(i => !i.IsVideo && !Fisheye360.IsDualFisheye(i.FullPath)).ToList();
         if (photos.Count > 0)
@@ -362,7 +361,7 @@ public sealed class Indexer : IDisposable
                 _repo.SetAnalysisVersion(photos[i].Id, AnalysisVersion);
             }
             done += photos.Count;
-            Report(new IndexerStatus(IndexerPhase.Analysis, $"Analyzing ({device})", done, (int)stats.Total, false));
+            Report(new IndexerStatus(IndexerPhase.Analysis, "Learning what is in the pictures, for the search", done, (int)stats.Total, false));
         }
 
         foreach (var video in batch.Where(i => i.IsVideo))
@@ -370,7 +369,7 @@ public sealed class Indexer : IDisposable
             if (_paused) break;
             await AnalyzeVideoAsync(video, model, index, ct);
             _repo.SetAnalysisVersion(video.Id, AnalysisVersion);
-            Report(new IndexerStatus(IndexerPhase.Analysis, $"Analyzing ({device})", ++done, (int)stats.Total, false));
+            Report(new IndexerStatus(IndexerPhase.Analysis, "Learning what is in the pictures, for the search", ++done, (int)stats.Total, false));
         }
         return true;
     }
@@ -394,7 +393,7 @@ public sealed class Indexer : IDisposable
                 // Unreadable file: it stays without people, the rest goes on.
             }
             _repo.SetPeopleVersion(item.Id, PeopleVersion);
-            Report(new IndexerStatus(IndexerPhase.People, $"Looking for people ({people.Model.Device})", ++done, (int)stats.Total, false));
+            Report(new IndexerStatus(IndexerPhase.People, "Looking for people in the pictures", ++done, (int)stats.Total, false));
             // Match from time to time, so names spread while a large library is still being analyzed.
             if (++_sinceIdentity >= 300) _identityDirty = true;
         }

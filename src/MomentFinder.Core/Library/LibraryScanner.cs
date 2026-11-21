@@ -77,7 +77,7 @@ public sealed class LibraryScanner
                 {
                 }
                 var n = Interlocked.Increment(ref done);
-                if (n % 50 == 0) progress?.Report($"Reading {source.Name}: {n}/{todo.Count}");
+                if (n % 50 == 0) progress?.Report($"Reading the new photos and videos of {source.Name}: {n}/{todo.Count}");
                 // Save in batches, so a large first scan shows up in the grid while it runs.
                 if (scanned.Count >= 200)
                     Flush();
@@ -137,7 +137,7 @@ public sealed class LibraryScanner
     private async Task<ScanResult> ScanCloudAsync(Source source, IProgress<string>? progress, CancellationToken ct)
     {
         if (_rclone == null || source.Remote == null) throw new InvalidOperationException("Cloud access is not configured");
-        progress?.Report($"Listing {source.Name}");
+        progress?.Report($"Looking for new photos and videos in {source.Name} in the cloud");
         var remote = await _rclone.ListAsync(source.Remote, ct);
         // Whose the folder is: the backup of another computer's folder is only for looking here.
         if (await Cloud.FolderMarker.ReadAsync(_rclone, source.Remote, ct) is { } marker)
@@ -162,7 +162,7 @@ public sealed class LibraryScanner
         var movedIds = new HashSet<long>();
 
         var done = 0;
-        progress?.Report($"Reading {source.Name}: 0/{todo.Count}");
+        progress?.Report($"Reading the new photos and videos of {source.Name}: 0/{todo.Count}");
         // Small batches: every file is fetched before it is read, and each batch shows in the library at once.
         foreach (var chunk in todo.Chunk(20))
         {
@@ -200,7 +200,7 @@ public sealed class LibraryScanner
             }
             _repo.Upsert(source.Id, fresh);
             done += chunk.Length;
-            progress?.Report($"Reading {source.Name}: {done}/{todo.Count}");
+            progress?.Report($"Reading the new photos and videos of {source.Name}: {done}/{todo.Count}");
         }
 
         var missing = known.Values.Where(k => !k.IsMissing && !seen.Contains(k.RelPath) && !movedIds.Contains(k.Id)).Select(k => k.Id).ToList();
