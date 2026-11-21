@@ -64,7 +64,7 @@
                 BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
             <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
                 <Button Grid.Column="0" Classes="icon" Command="{Binding TogglePauseCommand}"
-                        ToolTip.Tip="Pause / continue the background work">
+                        ToolTip.Tip="Pause / continue all background work: reading the folders, the analysis and the backups to the cloud">
                     <Panel>
                         <mi:MaterialIcon Kind="Pause" IsVisible="{Binding !IndexerPaused}" />
                         <mi:MaterialIcon Kind="Play" IsVisible="{Binding IndexerPaused}" />
@@ -334,6 +334,18 @@
                 </StackPanel>
             </Grid>
 
+            <!-- The library of another computer being copied here, or just put in place: in sight wherever the user is -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.Active}">
+                <views:LibraryCopyCard DataContext="{Binding LibraryCopy}" />
+            </Border>
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.RestoredShown}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="{Binding LibraryCopy.RestoredTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding LibraryCopy.RestoredText}" TextWrapping="Wrap" />
+                    <Button Command="{Binding LibraryCopy.DismissRestoredCommand}" HorizontalAlignment="Left" Padding="16,6">Got it</Button>
+                </StackPanel>
+            </Border>
+
             <!-- The folder shown is being read (how far), or is empty (why): right where its photos would be -->
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding ScopeBanner}">
                 <StackPanel Spacing="8">
@@ -543,12 +555,12 @@
                         <TextBlock Text="Add folder..." />
                     </StackPanel>
                 </Button>
-                <TextBlock Text="or" Classes="muted" HorizontalAlignment="Center" />
-                <Button HorizontalAlignment="Center" Click="OnOpenSettings"
-                        ToolTip.Tip="A library backed up from another computer comes back with its names, people and folders">
+                <TextBlock Text="or" Classes="muted" HorizontalAlignment="Center" IsVisible="{Binding !LibraryCopy.Active}" />
+                <Button HorizontalAlignment="Center" Click="OnCopyLibraryHere" IsVisible="{Binding !LibraryCopy.Active}"
+                        ToolTip.Tip="With the recovery string of the computer that has it: its names, people, buckets and folders come here">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <mi:MaterialIcon Kind="CloudDownloadOutline" />
-                        <TextBlock Text="I have a recovery string: bring my library back..." />
+                        <TextBlock Text="My library is on another computer: use it here too..." />
                     </StackPanel>
                 </Button>
             </StackPanel>

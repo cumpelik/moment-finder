@@ -19,13 +19,16 @@ public partial class SettingsPanel : UserControl, IOverlayPanel
         // The cloud part first: set after the window's own, it would for a moment inherit the main view model,
         // and its bindings (compiled for the cloud one) would fail on it.
         var cloud = main.CreateLibraryCloudViewModel();
-        cloud.RestartRequested += Restart;
         LibraryForm.DataContext = cloud.Form;
         CloudPanel.DataContext = cloud;
         StatusBar.DataContext = cloud;
         DataContext = main;
         _cloud = cloud;
     }
+
+    /// <summary>Opened to copy the library of another computer here: that part in sight, not the top.</summary>
+    public void ShowCopySection() =>
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => CopySection.BringIntoView(), Avalonia.Threading.DispatcherPriority.Loaded);
 
     public void Close()
     {
@@ -41,13 +44,6 @@ public partial class SettingsPanel : UserControl, IOverlayPanel
     private LibraryCloudViewModel? Cloud => CloudPanel.DataContext as LibraryCloudViewModel;
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
-
-    /// <summary>The restored library takes its place at the start: this one ends and a new one opens.</summary>
-    private static void Restart()
-    {
-        if (Environment.ProcessPath is { } exe) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false });
-        (Avalonia.Application.Current?.ApplicationLifetime as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown();
-    }
 
     private async void OnCopyRecovery(object? sender, RoutedEventArgs e)
     {

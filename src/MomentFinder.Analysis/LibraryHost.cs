@@ -28,6 +28,8 @@ public sealed class LibraryHost : IDisposable
     public EventBuilder Events { get; }
     public CloudService Cloud { get; }
     public MirrorScheduler Mirrors { get; }
+    /// <summary>Copying the library of another computer here (put in place at the next start).</summary>
+    public LibraryRestore Restore { get; }
     public PeopleModel? PeopleModel { get; private set; }
 
     public SiglipModel? SceneModel { get; private set; }
@@ -51,6 +53,7 @@ public sealed class LibraryHost : IDisposable
         LibraryRestore.ApplyPending(Paths);
         Db = new Database(Paths.DbPath);
         LibraryRestore.AdaptToThisComputer(Paths, Db);
+        Restore = new LibraryRestore(Paths);
         Repo = new MediaRepository(Db);
         Buckets = new BucketService(Db, Repo);
         Search = new SearchService(Repo);

@@ -7,7 +7,7 @@ namespace MomentFinder.App.ViewModels;
 
 /// <summary>
 /// Settings, the library in a cloud: where the library itself (settings, names, search data, thumbnails) is kept,
-/// the recovery string, and bringing a library back on a new or second computer.
+/// the recovery string, and copying the library of another computer here (a second computer, or a new one).
 /// </summary>
 public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
 {
@@ -23,19 +23,32 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
     [ObservableProperty] private string _backupSummary = "";
     [ObservableProperty] private string _recoveryText = "";
 
+    /// <summary>Storages this library knows already (a library copied from another computer brings them): no keys again.</summary>
+    public List<CloudInfo> KnownClouds { get; private set; } = [];
+    public bool HasKnownClouds => KnownClouds.Count > 0;
+    [ObservableProperty] private CloudInfo? _knownCloud;
+
     [ObservableProperty] private string _restoreText = "";
-    public ObservableCollection<LibraryRestore.Found> FoundBackups { get; } = [];
+    public ObservableCollection<BackupChoice> FoundBackups { get; } = [];
     public bool HasFoundBackups => FoundBackups.Count > 0;
-    [ObservableProperty] private LibraryRestore.Found? _selectedBackup;
+    [ObservableProperty] private BackupChoice? _selectedBackup;
     [ObservableProperty] private bool _restoreThumbnails = true;
-    /// <summary>A library is downloaded and waits for the next start.</summary>
-    [ObservableProperty] private bool _restartNeeded;
 
-    public event Action? RestartRequested;
+    /// <summary>The copy being made or made: shown in place of the choice.</summary>
+    public LibraryCopyViewModel Copy { get; }
 
-    public LibraryCloudViewModel(LibraryHost host)
+    /// <summary>What happens to the library on this computer, when it has one worth a word.</summary>
+    public string ReplacesText { get; }
+    public bool Replaces => ReplacesText.Length > 0;
+
+    public LibraryCloudViewModel(LibraryHost host, LibraryCopyViewModel copy)
     {
         _host = host;
+        Copy = copy;
+        var sources = host.Repo.ListSources();
+        ReplacesText = sources.Count == 0 ? "" :
+            $"The library on this computer ({(sources.Count == 1 ? "1 folder" : $"{sources.Count} folders")}, its names and buckets) gives way to the copy. " +
+            "It is kept beside it as library.before-restore.db, but MomentFinder does not use it any more.";
         Form = new StorageFormViewModel("momentfinder-" + host.Cloud.LibraryId);
         Reload();
         host.Mirrors.MirrorsChanged += OnMirrorsChanged;
@@ -50,7 +63,14 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
     {
         var cloud = _host.Cloud.BackupCloud;
         Connected = cloud != null;
-        if (cloud == null) return;
+        if (cloud == null)
+        {
+            KnownClouds = _host.Cloud.Clouds();
+            OnPropertyChanged(nameof(KnownClouds));
+            OnPropertyChanged(nameof(HasKnownClouds));
+            KnownCloud ??= KnownClouds.FirstOrDefault();
+            return;
+        }
         var backup = _host.Cloud.Backup;
         ConnectedText = $"The library is kept in {cloud.Name}.";
         BackupSummary = backup.LastAt is { } at
@@ -79,6 +99,17 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
         });
     }
 
+    /// <summary>Keeps the library in a storage it knows already.</summary>
+    [RelayCommand]
+    private Task ConnectKnown() => KnownCloud is not { } cloud ? Task.CompletedTask :
+        RunAsync("Connecting...", async ct =>
+        {
+            _host.Cloud.BackupCloud = cloud;
+            RecoveryText = await _host.Cloud.RecoveryStringAsync(cloud, ct);
+            _host.Mirrors.BackupNow();
+            Status = "Connected, and the library is being backed up. Save the recovery string now.";
+        });
+
     /// <summary>The library is not kept in the cloud any more; what is there stays.</summary>
     [RelayCommand]
     private Task Disconnect() => _host.Cloud.BackupCloud is not { } cloud ? Task.CompletedTask :
@@ -106,7 +137,7 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             Status = "Copy the recovery string or save it to a file, and keep it somewhere safe.";
         });
 
-    // ---- bringing a library back ----
+    // ---- the library of another computer ----
 
     private Recovery? _recovery;
 
@@ -123,31 +154,32 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
         _recovery = recovery;
         return RunAsync($"Looking into {recovery.Name}...", async ct =>
         {
-            foreach (var found in await new LibraryRestore(_host.Paths).FindAsync(recovery, ct)) FoundBackups.Add(found);
+            var here = _host.Cloud.Device.Folder;
+            foreach (var found in await new LibraryRestore(_host.Paths).FindAsync(recovery, ct))
+                FoundBackups.Add(new BackupChoice(found, found.Folder == here ? found.Title + " (this computer)" : found.Title));
             OnPropertyChanged(nameof(HasFoundBackups));
-            SelectedBackup = FoundBackups.FirstOrDefault();
+            // Another computer's library first: this one's own is here already.
+            SelectedBackup = FoundBackups.FirstOrDefault(b => b.Found.Folder != here) ?? FoundBackups.FirstOrDefault();
             Status = FoundBackups.Count switch
             {
-                0 => "The storage answers, but there is no library in it yet.",
-                1 => "Found your library. Bring it back with the button above.",
-                _ => $"Found the libraries of {FoundBackups.Count} computers, the newest first. Choose one and bring it back.",
+                0 => "The storage answers, but no computer has kept its library there yet.",
+                1 => "Found it. Copy it here with the button above.",
+                _ => $"Found the libraries of {FoundBackups.Count} computers, the newest first. Choose one and copy it here.",
             };
         });
     }
 
     [RelayCommand]
-    private Task RestoreLibrary() => _recovery is not { } recovery || SelectedBackup is not { } backup ? Task.CompletedTask :
-        RunAsync("Downloading the library...", async ct =>
-        {
-            // Progress arrives a moment late: none of it may write over the final message.
-            var done = false;
-            await new LibraryRestore(_host.Paths).DownloadAsync(recovery, backup, RestoreThumbnails,
-                new Progress<string>(what => { if (!done) Status = $"Downloading the library: {what}"; }), ct);
-            done = true;
-            RestartNeeded = true;
-            Status = "The library is downloaded. Restart MomentFinder to open it.";
-        });
-
-    [RelayCommand]
-    private void Restart() => RestartRequested?.Invoke();
+    private void RestoreLibrary()
+    {
+        if (_recovery is not { } recovery || SelectedBackup is not { } choice) return;
+        Copy.Start(recovery, choice.Found, RestoreThumbnails);
+        FoundBackups.Clear();
+        OnPropertyChanged(nameof(HasFoundBackups));
+        RestoreText = "";
+        Status = "";
+    }
 }
+
+/// <summary>A library found in the cloud, as offered: this computer's own is marked.</summary>
+public sealed record BackupChoice(LibraryRestore.Found Found, string Title);

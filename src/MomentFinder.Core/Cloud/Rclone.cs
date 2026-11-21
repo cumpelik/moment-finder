@@ -201,11 +201,19 @@ public sealed partial class Rclone
         return files;
     }
 
-    public async Task DownloadAsync(string remoteFile, string localPath, CancellationToken ct)
+    public Task DownloadAsync(string remoteFile, string localPath, CancellationToken ct) => DownloadAsync(remoteFile, localPath, null, ct);
+
+    /// <summary>One file; with progress, from rclone's statistics (a large file says how far it is).</summary>
+    public async Task DownloadAsync(string remoteFile, string localPath, IProgress<CopyProgress>? progress, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
         var tmp = localPath + ".part";
-        await RunAsync(["copyto", remoteFile, tmp], ct);
+        if (progress == null) await RunAsync(["copyto", remoteFile, tmp], ct);
+        else
+            await RunAsync(["copyto", remoteFile, tmp, "--stats", "1s", "--stats-one-line", "--stats-log-level", "NOTICE"], ct, line =>
+            {
+                if (ParseStats(line) is { } p) progress.Report(p);
+            });
         File.Move(tmp, localPath, true);
     }
 

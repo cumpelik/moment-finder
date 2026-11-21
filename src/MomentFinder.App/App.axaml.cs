@@ -29,7 +29,15 @@ public sealed class App : Application
         {
             // MomentFinder is open already with this library (another window, or the command line indexing it).
             var paths = new AppPaths();
-            if (LibraryLock.TryAcquire(paths.DataDir) is not { } libraryLock)
+            var libraryLock = LibraryLock.TryAcquire(paths.DataDir);
+            // Started by the one before it (a library copied from another computer opens): that one is still ending.
+            if (desktop.Args?.Contains(Restart.Argument) == true)
+                for (var waited = 0; libraryLock == null && waited < 30_000; waited += 250)
+                {
+                    Thread.Sleep(250);
+                    libraryLock = LibraryLock.TryAcquire(paths.DataDir);
+                }
+            if (libraryLock == null)
             {
                 var window = new Avalonia.Controls.Window { Title = "MomentFinder", Width = 1, Height = 1, ShowInTaskbar = false, Opacity = 0 };
                 desktop.MainWindow = window;

@@ -122,6 +122,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _sidebarVisible = host.Db.GetSetting("sidebar_hidden") != "1";
         LoadBrowseSettings();
 
+        LibraryCopy = new LibraryCopyViewModel(host.Restore, host.Db);
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
         host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
         host.Mirrors.MirrorsChanged += () => Dispatcher.UIThread.Post(OnCloudChanged);
@@ -490,7 +491,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _host.Indexer.RequestScan();
     }
 
-    public LibraryCloudViewModel CreateLibraryCloudViewModel() => new(_host);
+    /// <summary>The library of another computer being copied here, or just put in place.</summary>
+    public LibraryCopyViewModel LibraryCopy { get; }
+
+    public LibraryCloudViewModel CreateLibraryCloudViewModel() => new(_host, LibraryCopy);
 
     public AddCloudFolderViewModel CreateAddCloudFolderViewModel()
     {
@@ -1095,7 +1099,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void TogglePause() => _host.Indexer.Paused = !_host.Indexer.Paused;
+    /// <summary>All background work: the reading and analysis, and what goes to the cloud.</summary>
+    private void TogglePause() => _host.Indexer.Paused = _host.Mirrors.Paused = !_host.Indexer.Paused;
 
     private async Task LoadModelAsync()
     {

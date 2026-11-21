@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             x:Class="MomentFinder.App.Views.LibraryCopyCard"
+             x:DataType="vm:LibraryCopyViewModel">
+    <!-- The library of another computer being copied here: how far, and what next. In the main window and in Settings. -->
+    <StackPanel Spacing="8">
+        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Percent}" IsIndeterminate="{Binding !PercentKnown}"
+                     IsVisible="{Binding Copying}" />
+        <TextBlock Text="{Binding Detail}" Classes="muted" TextWrapping="Wrap" />
+        <WrapPanel>
+            <Button Command="{Binding StopCommand}" IsVisible="{Binding Copying}"
+                    ToolTip.Tip="What came so far is deleted; this computer keeps its library">Stop copying</Button>
+            <Button Classes="accent" Command="{Binding RestartCommand}" IsVisible="{Binding Ready}" Margin="0,0,8,0" Padding="16,6">Restart MomentFinder and open it</Button>
+            <Button Classes="accent" Command="{Binding RetryCommand}" IsVisible="{Binding Failed}" Margin="0,0,8,0" Padding="16,6">Try again</Button>
+            <Button Command="{Binding DiscardCommand}" IsVisible="{Binding !Copying}"
+                    ToolTip.Tip="The copy is deleted; this computer keeps its library">Don't use it</Button>
+        </WrapPanel>
+    </StackPanel>
+</UserControl>

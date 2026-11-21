@@ -4,7 +4,7 @@
              xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
              xmlns:v="clr-namespace:MomentFinder.App.Views"
              xmlns:c="clr-namespace:MomentFinder.Cloud;assembly=MomentFinder.Core"
-             x:Class="MomentFinder.App.Views.SettingsPanel"
+                          x:Class="MomentFinder.App.Views.SettingsPanel"
              x:DataType="vm:MainViewModel"
              MaxWidth="820" VerticalAlignment="Center">
     <UserControl.Styles>
@@ -59,6 +59,24 @@
                                    Text="The library is what MomentFinder knows about your photos and videos: these settings, the folders, names and people, buckets, search data and thumbnails. Kept in a cloud, it comes back on any computer from one recovery string. It is stored there as it is; only the access keys of your clouds are encrypted, with a key that is in the recovery string." />
                         <!-- Not connected: the storage -->
                         <StackPanel Spacing="10" IsVisible="{Binding NotConnected}">
+                            <!-- A storage the library knows (copied from another computer, or one its folders use): one click -->
+                            <StackPanel Spacing="8" IsVisible="{Binding HasKnownClouds}">
+                                <Grid ColumnDefinitions="300,*">
+                                    <TextBlock Classes="label" Text="A storage the library knows already" />
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding KnownClouds}" SelectedItem="{Binding KnownCloud}" HorizontalAlignment="Stretch">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate DataType="c:CloudInfo">
+                                                <TextBlock Text="{Binding Name}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </Grid>
+                                <Grid ColumnDefinitions="300,*">
+                                    <Button Grid.Column="1" Classes="accent" Command="{Binding ConnectKnownCommand}" IsEnabled="{Binding NotBusy}"
+                                            HorizontalAlignment="Left" Padding="16,6">Keep the library there</Button>
+                                </Grid>
+                                <TextBlock Classes="muted" Text="Or another storage:" Margin="0,8,0,0" />
+                            </StackPanel>
                             <v:StorageForm x:Name="LibraryForm" />
                             <Grid ColumnDefinitions="300,*">
                                 <Button Grid.Column="1" Classes="accent" Command="{Binding ConnectCommand}" IsEnabled="{Binding NotBusy}"
@@ -94,28 +112,36 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Bringing a library back -->
-                <Border Classes="card" Padding="18">
+                <!-- The library of another computer, copied here -->
+                <Border x:Name="CopySection" Classes="card" Padding="18">
                     <StackPanel Spacing="12">
-                        <TextBlock Classes="section" Text="Bring a library back" />
-                        <TextBlock Classes="muted" TextWrapping="Wrap"
-                                   Text="On a new or second computer: paste the recovery string of your library. It replaces the library on this computer (the old one is kept beside it as library.before-restore.db). Folders that are not on this computer are browsed from the cloud where they were backed up." />
-                        <TextBox Text="{Binding RestoreText}" PlaceholderText="Paste your recovery string here" TextWrapping="Wrap" MaxHeight="100"
-                                 FontFamily="monospace" FontSize="12" />
-                        <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Find my library</Button>
-                        <StackPanel Spacing="10" IsVisible="{Binding HasFoundBackups}">
-                            <ListBox ItemsSource="{Binding FoundBackups}" SelectedItem="{Binding SelectedBackup}" MaxHeight="110">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="c:LibraryRestore+Found">
-                                        <TextBlock Text="{Binding Title}" />
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <CheckBox IsChecked="{Binding RestoreThumbnails}"
-                                      ToolTip.Tip="Without them the library is here sooner, and the thumbnails are made again from the originals">With thumbnails</CheckBox>
-                            <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Bring this library back</Button>
+                        <TextBlock Classes="section" Text="Your library on this computer too" />
+                        <!-- Being copied, copied or failed: that, in place of the choice -->
+                        <Panel IsVisible="{Binding Copy.Active}">
+                            <v:LibraryCopyCard DataContext="{Binding Copy}" />
+                        </Panel>
+                        <StackPanel Spacing="12" IsVisible="{Binding !Copy.Active}">
+                            <TextBlock Classes="muted" TextWrapping="Wrap"
+                                       Text="On a second computer, or a new one: copy here the library of a computer that keeps it in a cloud. On that computer, open Settings and Show my recovery string, and paste it below. The copy brings the names and people, buckets, search data and thumbnails. Its folders that are backed up to a cloud are shown here from there." />
+                            <TextBox Text="{Binding RestoreText}" PlaceholderText="Paste the recovery string here" TextWrapping="Wrap" MaxHeight="100"
+                                     FontFamily="monospace" FontSize="12" />
+                            <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Find the library</Button>
+                            <StackPanel Spacing="10" IsVisible="{Binding HasFoundBackups}">
+                                <ListBox ItemsSource="{Binding FoundBackups}" SelectedItem="{Binding SelectedBackup}" MaxHeight="110">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="vm:BackupChoice">
+                                            <TextBlock Text="{Binding Title}" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <CheckBox IsChecked="{Binding RestoreThumbnails}"
+                                          ToolTip.Tip="Without them the copy is here sooner, and the thumbnails are made again from the photos">With thumbnails</CheckBox>
+                                <TextBlock Foreground="#F59E0B" TextWrapping="Wrap" IsVisible="{Binding Replaces}" Text="{Binding ReplacesText}" />
+                                <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Copy this library here</Button>
+                                <TextBlock Classes="muted" TextWrapping="Wrap"
+                                           Text="It downloads in the background: you can close Settings and go on working. The main window shows how far it is, and when it is here, a restart opens it." />
+                            </StackPanel>
                         </StackPanel>
-                        <Button Classes="accent" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}" HorizontalAlignment="Left" Padding="16,6">Restart MomentFinder to open it</Button>
                     </StackPanel>
                 </Border>
             </StackPanel>

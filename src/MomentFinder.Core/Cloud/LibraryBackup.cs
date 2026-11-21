@@ -44,7 +44,7 @@ public sealed class LibraryBackup
         var tmp = Path.Combine(_paths.CacheDir, "backup");
         if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
         Directory.CreateDirectory(tmp);
-        var result = "OK";
+        string? result = null;
         try
         {
             // The index first as it is now; what is uploaded after it can only hold more than it knows of.
@@ -77,6 +77,7 @@ public sealed class LibraryBackup
             // Last: a backup with its index in place is whole.
             progress?.Report("names, people and buckets");
             await _cloud.Rclone.UploadAsync(db, CloudService.Join(root, DbName), ct);
+            result = "OK";
         }
         catch (Exception e) when (e is RcloneException or IOException)
         {
@@ -86,7 +87,8 @@ public sealed class LibraryBackup
         finally
         {
             try { Directory.Delete(tmp, true); } catch (IOException) { }
-            if (full)
+            // Stopped (paused, the application ended): nothing to record, it runs again.
+            if (full && result != null)
             {
                 _db.SetSetting("backup_last_result", result);
                 if (result == "OK") _db.SetSetting("backup_last_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());

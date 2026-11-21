@@ -51,12 +51,14 @@ public partial class MainWindow : Window
             _vm.PlayerRequested -= OpenPlayer;
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.ResultsReset -= OnResultsReset;
+            _vm.LibraryCopy.RestartRequested -= Restart;
         }
         _vm = DataContext as MainViewModel;
         if (_vm == null) return;
         _vm.PlayerRequested += OpenPlayer;
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.ResultsReset += OnResultsReset;
+        _vm.LibraryCopy.RestartRequested += Restart;
         ShowGridItems();
         ApplyTileSize();
         ApplySidebar();
@@ -64,6 +66,9 @@ public partial class MainWindow : Window
         // After the first layout, so one row of thumbnails can be measured.
         Avalonia.Threading.Dispatcher.UIThread.Post(ApplyPreviewPanel, DispatcherPriority.Loaded);
     }
+
+    /// <summary>A library copied from another computer takes its place at the start: this one ends and a new one opens.</summary>
+    private static void Restart() => MomentFinder.App.Restart.Now();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -302,6 +307,14 @@ public partial class MainWindow : Window
     private void OnOpenSettings(object? sender, RoutedEventArgs e)
     {
         if (_vm != null) ShowOverlay(new SettingsPanel(_vm));
+    }
+
+    private void OnCopyLibraryHere(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        var panel = new SettingsPanel(_vm);
+        ShowOverlay(panel);
+        panel.ShowCopySection();
     }
 
     // ---- player ----

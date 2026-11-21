@@ -91,6 +91,25 @@ public sealed class MirrorScheduler : IDisposable
         if (_cloud.Merges().Any(j => j.SourceId == sourceId)) _wake.Release();
     }
 
+    private volatile bool _paused;
+
+    /// <summary>
+    /// Nothing goes to the cloud while paused (the pause button of the status bar pauses all background work): what
+    /// runs stops at once and starts again after the pause.
+    /// </summary>
+    public bool Paused
+    {
+        get => _paused;
+        set
+        {
+            _paused = value;
+            if (value)
+                lock (_requested)
+                    _running?.Cancel();
+            else _wake.Release();
+        }
+    }
+
     /// <summary>Backs the library up now.</summary>
     public void BackupNow()
     {
@@ -105,17 +124,36 @@ public sealed class MirrorScheduler : IDisposable
         var last = Math.Max(tried, _cloud.Backup.LastAt?.ToUnixTimeMilliseconds() ?? 0);
         var due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - last > IntervalHours * 3600_000;
         if (!due && !_backupRequested) return;
-        _backupRequested = false;
         StatusChanged?.Invoke($"Backing up the library to {cloud.Name}...");
+        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (_requested)
+        {
+            _runningKey = "backup";
+            _running = run;
+        }
         try
         {
             await _cloud.Backup.RunAsync(cloud, full: true,
-                new Progress<string>(what => StatusChanged?.Invoke($"Backing up the library to {cloud.Name}: {what}")), ct);
+                new Progress<string>(what => StatusChanged?.Invoke($"Backing up the library to {cloud.Name}: {what}")), run.Token);
+            _backupRequested = false;
         }
         catch (RcloneException)
         {
             // Recorded as the backup's last result; tried again at the next interval, not every ten minutes.
+            _backupRequested = false;
             _db.SetSetting("backup_tried_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Paused: it runs again after the pause.
+        }
+        finally
+        {
+            lock (_requested)
+            {
+                _runningKey = null;
+                _running = null;
+            }
         }
         MirrorsChanged?.Invoke();
     }
@@ -125,6 +163,7 @@ public sealed class MirrorScheduler : IDisposable
     {
         foreach (var job in _cloud.Merges())
         {
+            if (_paused) return;
             var key = MergeKey(job.SourceId);
             StatusChanged?.Invoke($"Adding {job.SourceName} to {job.TargetName}...");
             using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -168,6 +207,12 @@ public sealed class MirrorScheduler : IDisposable
         {
             try
             {
+                if (_paused)
+                {
+                    StatusChanged?.Invoke("");
+                    await _wake.WaitAsync(TimeSpan.FromMinutes(10), ct);
+                    continue;
+                }
                 var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var due = _cloud.Mirrors().Where(m => m.Enabled &&
                     (m.LastRunAt == null || now - m.LastRunAt > FolderHours * 3600_000)).Select(m => m.Id).ToHashSet();
@@ -178,6 +223,12 @@ public sealed class MirrorScheduler : IDisposable
                 }
                 foreach (var id in due)
                 {
+                    if (_paused)
+                    {
+                        // Asked for: it runs after the pause.
+                        lock (_requested) _requested.Add(id);
+                        continue;
+                    }
                     var mirror = _cloud.Mirrors().FirstOrDefault(m => m.Id == id);
                     if (mirror == null) continue;
                     var doing = _cloud.MoveRequested(id) ? "Cloning" : "Backing up";
@@ -224,7 +275,7 @@ public sealed class MirrorScheduler : IDisposable
                     MirrorsChanged?.Invoke();
                 }
                 await MergesAsync(ct);
-                await BackupAsync(ct);
+                if (!_paused) await BackupAsync(ct);
                 StatusChanged?.Invoke("");
                 await _wake.WaitAsync(TimeSpan.FromMinutes(10), ct);
             }

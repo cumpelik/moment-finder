@@ -55,9 +55,11 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   chosen the first time); it is read-only again when turned on or at the next start. A guard against mistakes in
   MomentFinder, not against whoever has the storage's keys.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
-  On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
-  back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
-  size-limited cache when opened. Whoever has the string gets into the storage.
+  On a second or new computer, paste it (Settings, Your library on this computer too, also offered by an empty
+  library): the library is copied there in the background (the main window shows how far, it goes on after a
+  restart) and opens at the next start, as it was. Folders that are not on that computer are browsed from the cloud,
+  files fetched into a size-limited cache when opened. From then on each computer has its own library; the copy does
+  not upload the library again until it is turned on there. Whoever has the string gets into the storage.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
 - **Moved files**: a photo or video moved or renamed (also to another source) is recognized by its content
   and keeps its thumbnail, people, buckets and analysis.

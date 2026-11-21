@@ -306,7 +306,7 @@ switch (args[0])
             var found = await restore.FindAsync(recovery, ct);
             if (found.Count == 0) return Fail("The storage answers, but there is no library backup in it");
             Console.WriteLine(found[0].Title);
-            await restore.DownloadAsync(recovery, found[0], thumbnails: true, new Progress<string>(what => Console.Write($"\r  {what,-50}")), ct);
+            await restore.DownloadAsync(recovery, found[0], thumbnails: true, new Progress<MomentFinder.Cloud.LibraryRestore.Step>(s => Console.Write($"\r  {s.What} {s.Detail,-60}")), ct);
         }
         catch (MomentFinder.Cloud.RcloneException e)
         {

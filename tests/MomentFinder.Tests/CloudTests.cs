@@ -160,6 +160,10 @@ public class CloudTests
                 Assert.DoesNotContain(stored, f => f.Contains("rclone", StringComparison.Ordinal));
                 Assert.DoesNotContain(stored, f => new FileInfo(f).Length < 100_000 && File.ReadAllText(f).Contains("type = crypt", StringComparison.Ordinal));
                 recoveryText = await service.RecoveryStringAsync(cloud, ct);
+                // A backup stopped (paused, the application ended) is not taken for one that was made.
+                var lastAt = service.Backup.LastAt;
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.Backup.RunAsync(cloud, full: true, null, new CancellationToken(true)));
+                Assert.Equal((lastAt, "OK"), (service.Backup.LastAt, service.Backup.LastResult));
             }
             // The old computer is gone, with the folder of photos.
 
@@ -168,14 +172,36 @@ public class CloudTests
             var recovery = RecoveryString.Parse(recoveryText)!;
             var found = Assert.Single(await restore.FindAsync(recovery, ct));
             Assert.Equal(DeviceInfo.Safe(Environment.MachineName), found.Computer);
-            await restore.DownloadAsync(recovery, found, thumbnails: true, null, ct);
+            // The copy runs on its own (the window that started it may close) and says how far it is.
+            var steps = new List<LibraryRestore.Step>();
+            await CopyAsync(restore, () => restore.Start(recovery, found, thumbnails: true), steps);
+            Assert.True(restore.State == LibraryRestore.CopyState.Ready, restore.Error);
+            Assert.Contains(steps, s => s is { Number: 3, Of: 3, What: "the thumbnails" });
+
+            // MomentFinder ended in the middle of the thumbnails: the next start keeps what came and goes on.
+            var pending = Path.Combine(other.Paths.DataDir, "restore-pending");
+            File.Delete(Path.Combine(pending, "ready"));
+            Directory.Delete(Path.Combine(pending, "thumbs"), true);
+            Assert.False(LibraryRestore.ApplyPending(other.Paths));
+            var again = new LibraryRestore(other.Paths);
+            steps.Clear();
+            await CopyAsync(again, () => Assert.True(again.Resume()), steps);
+            Assert.True(again.State == LibraryRestore.CopyState.Ready, again.Error);
+            // The index came whole before: not downloaded again.
+            Assert.DoesNotContain(steps, s => s.Number == 1);
 
             // The next start.
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Assert.Equal(LibraryRestore.CopyState.Ready, new LibraryRestore(other.Paths).State);
             Assert.True(LibraryRestore.ApplyPending(other.Paths));
             var db = new Data.Database(other.Paths.DbPath);
             LibraryRestore.AdaptToThisComputer(other.Paths, db);
             var repo = new MediaRepository(db);
+            // Said once: from where, and what became of the folders.
+            var restored = LibraryRestore.LastRestored(db)!;
+            Assert.Equal((found.Computer, 1, 0, false), (restored.Computer, restored.FromCloud, restored.Away, restored.ReplacedOwn));
+            LibraryRestore.ForgetRestored(db);
+            Assert.Null(LibraryRestore.LastRestored(db));
 
             Assert.Equal("222", db.GetSetting("tile_size"));
             Assert.Equal("Eva", new PeopleRepository(db).ListPersons().Single().Name);
@@ -186,15 +212,17 @@ public class CloudTests
             Assert.Equal(SourceKinds.Cloud, cloudSource.Kind);
             var service2 = new CloudService(other.Paths, db, repo);
             Assert.Empty(service2.Mirrors());
+            // The library's backup is the other computer's: this one does not upload its copy again by itself.
+            Assert.Null(service2.BackupCloud);
             // Both clouds are known again, with their keys.
             Assert.Equal(["Library", "Photos"], service2.Clouds().Select(c => c.Name));
             await service2.Rclone.TestAsync(service2.Clouds().Single(c => c.Name == "Photos").Remote, ct);
             var scan = await new LibraryScanner(repo, service2.Rclone).ScanAsync(cloudSource, null, ct);
             Assert.Equal((0, 0, 0, 2), (scan.Added, scan.Changed, scan.Missing, scan.Total));
-            var restored = repo.Query(new MediaFilter()).Single(i => i.Id == itemId);
-            Assert.Equal("2024/IMG_0001.jpg", restored.RelPath);
+            var copied = repo.Query(new MediaFilter()).Single(i => i.Id == itemId);
+            Assert.Equal("2024/IMG_0001.jpg", copied.RelPath);
             // Opened: the original comes from the cloud into the cache.
-            Assert.Equal(original, File.ReadAllBytes(await MediaFiles.LocalPathAsync(restored, ct)));
+            Assert.Equal(original, File.ReadAllBytes(await MediaFiles.LocalPathAsync(copied, ct)));
         }
         finally
         {
@@ -202,5 +230,19 @@ public class CloudTests
             foreach (var dir in new[] { cloudDir, cloudDir + "-photos" })
                 try { Directory.Delete(dir, true); } catch (IOException) { }
         }
+    }
+
+    /// <summary>Starts a copy and waits until it is no longer copying, collecting its steps.</summary>
+    private static async Task CopyAsync(LibraryRestore restore, Action start, List<LibraryRestore.Step> steps)
+    {
+        var done = new TaskCompletionSource();
+        restore.Changed += () =>
+        {
+            lock (steps)
+                if (restore.Now is { } step) steps.Add(step);
+            if (restore.State != LibraryRestore.CopyState.Copying) done.TrySetResult();
+        };
+        start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken);
     }
 }
