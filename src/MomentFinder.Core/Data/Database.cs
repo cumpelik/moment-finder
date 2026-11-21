@@ -273,6 +273,8 @@ public sealed class Database
         """,
         // 16: the last file of each other computer's changes taken in (they are named by time, so later ones sort after).
         "ALTER TABLE sync_seen ADD COLUMN last_file TEXT;",
+        // 17: facts found by what they say (the photos moved to a key, the files of a folder), not only by their object.
+        "CREATE INDEX fact_field_value ON fact(field, value);",
     ];
 
     /// <summary>

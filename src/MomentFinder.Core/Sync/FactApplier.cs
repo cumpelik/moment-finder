@@ -329,19 +329,24 @@ public sealed class FactApplier
     /// <summary>The photos whose facts wait for them (just added to the library: by a scan, from another computer).</summary>
     public static void Arrived(SqliteConnection c, IDbTransaction? tx, IEnumerable<long> mediaIds)
     {
-        foreach (var id in mediaIds)
+        var ids = mediaIds.ToList();
+        if (ids.Count == 0) return;
+        // The bucket items of all of them at once (thousands of photos come together; buckets are few).
+        var items = c.Query<(string Obj, string? Value, string? Pos)>("""
+            SELECT i.obj, i.value, (SELECT value FROM fact p WHERE p.obj=i.obj AND p.field='pos')
+            FROM fact i WHERE i.field='in' AND i.obj >= 'bi:' AND i.obj < 'bi;'
+            """, transaction: tx).GroupBy(i => i.Obj.Split(':')[2]).ToDictionary(g => g.Key, g => g.ToList());
+        var buckets = c.Query<(string Uid, long Id)>("SELECT uid, id FROM bucket WHERE uid IS NOT NULL", transaction: tx).ToDictionary(b => b.Uid, b => b.Id);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var id in ids)
         {
             if (c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@id", new { id }, tx) is not { } uid) continue;
-            foreach (var item in c.Query<(string Obj, string? Value, string? Pos)>("""
-                         SELECT i.obj, i.value, (SELECT value FROM fact p WHERE p.obj=i.obj AND p.field='pos')
-                         FROM fact i WHERE i.field='in' AND i.obj LIKE @pattern
-                         """, new { pattern = $"bi:%:{uid}" }, tx).ToList())
+            foreach (var item in items.GetValueOrDefault(uid) ?? [])
             {
-                var bucket = c.ExecuteScalar<long?>("SELECT id FROM bucket WHERE uid=@b", new { b = item.Obj.Split(':')[1] }, tx);
-                if (bucket == null || item.Value != "1") continue;
+                if (item.Value != "1" || !buckets.TryGetValue(item.Obj.Split(':')[1], out var bucket)) continue;
                 var position = double.TryParse(item.Pos, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) ? p : 0;
                 c.Execute("INSERT OR IGNORE INTO bucket_item(bucket_id, media_id, position, added_at) VALUES(@bucket, @id, @position, @now)",
-                    new { bucket, id, position, now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, tx);
+                    new { bucket, id, position, now }, tx);
             }
             PeopleOf(c, tx, id);
         }
