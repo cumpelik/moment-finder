@@ -162,7 +162,8 @@ public sealed class LibraryScanner
         var movedIds = new HashSet<long>();
 
         var done = 0;
-        foreach (var chunk in todo.Chunk(100))
+        // Small batches: every file is fetched before it is read, and each batch shows in the library at once.
+        foreach (var chunk in todo.Chunk(20))
         {
             var list = Path.Combine(source.Root, ".files-" + Guid.NewGuid().ToString("N") + ".txt");
             Directory.CreateDirectory(source.Root);

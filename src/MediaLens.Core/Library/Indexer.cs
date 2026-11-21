@@ -249,7 +249,12 @@ public sealed class Indexer : IDisposable
         foreach (var source in _repo.ListSources().Where(s => s.Enabled && (only == null || only.Contains(s.Id))))
         {
             Report(new IndexerStatus(IndexerPhase.Scanning, $"Scanning {source.Name}", 0, 0, false));
-            var progress = new Progress<string>(m => Report(new IndexerStatus(IndexerPhase.Scanning, m, 0, 0, false)));
+            // What a long scan found so far shows while it runs (a cloud folder of thousands of photos takes a while).
+            var progress = new Progress<string>(m =>
+            {
+                Report(new IndexerStatus(IndexerPhase.Scanning, m, 0, 0, false));
+                LibraryChanged?.Invoke();
+            });
             try
             {
                 await _scanner.ScanAsync(source, progress, ct);

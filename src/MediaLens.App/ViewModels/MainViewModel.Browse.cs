@@ -8,7 +8,7 @@ using MediaLens.Media;
 
 namespace MediaLens.App.ViewModels;
 
-public enum GroupMode { None, Day, Month, Year, Person }
+public enum GroupMode { None, Day, Month, Year, Person, Folder }
 
 public enum PreviewMode { Window, Below, Right }
 
@@ -46,6 +46,7 @@ public sealed partial class MainViewModel
         new(GroupMode.Month, "By month"),
         new(GroupMode.Year, "By year"),
         new(GroupMode.Person, "By person"),
+        new(GroupMode.Folder, "By folder"),
     ];
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsGrouped), nameof(FlatTiles))] private GroupOption _groupBy = null!;
@@ -87,7 +88,25 @@ public sealed partial class MainViewModel
         var culture = CultureInfo.CurrentCulture;
         string Items(int n) => Format.Count(n, "item", "items");
         List<TileGroup> groups;
-        if (GroupBy.Mode == GroupMode.Person)
+        if (GroupBy.Mode == GroupMode.Folder)
+        {
+            // The folders as they are on the disk or in the cloud; the source's name too when several are shown.
+            var sources = _host.Repo.ListSources().ToDictionary(s => s.Id, s => s.Name);
+            var several = Tiles.Select(t => t.Item.SourceId).Distinct().Count() > 1;
+            groups = Tiles
+                .GroupBy(t => (t.Item.SourceId, Folder: t.Item.RelPath.Contains('/') ? t.Item.RelPath[..t.Item.RelPath.LastIndexOf('/')] : ""))
+                .Select(g =>
+                {
+                    var source = sources.GetValueOrDefault(g.Key.SourceId, "");
+                    var title = g.Key.Folder.Length == 0 ? source
+                        : several ? $"{source}  \u00b7  {g.Key.Folder.Replace("/", " / ")}" : g.Key.Folder.Replace("/", " / ");
+                    return (Title: title, Group: g);
+                })
+                .OrderBy(x => x.Title, StringComparer.Create(culture, CompareOptions.IgnoreCase))
+                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList()))
+                .ToList();
+        }
+        else if (GroupBy.Mode == GroupMode.Person)
         {
             var byMedia = _host.People.PersonsByMedia();
             var names = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
