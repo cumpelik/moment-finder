@@ -41,6 +41,33 @@ public class FolderBackupTests
     }
 
     [Fact]
+    public async Task TheFolderNameIsTheUsersAndNeverMixedWithAnother()
+    {
+        Assert.SkipUnless(Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        using var lib = new TestLibrary();
+        lib.AddPhoto("a.jpg");
+        var source = lib.AddSource();
+        var cloudDir = Path.Combine(lib.Root, "cloud");
+        var service = new CloudService(lib.Paths, lib.Db, lib.Repo);
+        var cloud = await service.AddFolderAsync("Backup", cloudDir, null, ct, encrypt: false);
+        // Something else lives in "Family" already: the proposal is "Family 2", the name itself is refused.
+        Directory.CreateDirectory(Path.Combine(cloudDir, "Family"));
+        File.WriteAllText(Path.Combine(cloudDir, "Family", "other.jpg"), "x");
+        Assert.Equal("Family 2", await service.FreeFolderAsync(cloud.Id, "Family", reuse: true, ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.AddMirrorAsync(source.Id, cloud.Id, false, ct, target: "Family"));
+
+        var mirror = await service.AddMirrorAsync(source.Id, cloud.Id, false, ct, target: @"Photos\Mine/");
+        Assert.Equal("Photos/Mine", mirror.Target);
+        await service.MirrorAsync(mirror.Id, null, ct);
+        Assert.True(File.Exists(Path.Combine(cloudDir, "Photos", "Mine", "a.jpg")));
+        // This computer's own backup may be connected again (nothing uploaded twice); a clone never goes into it.
+        service.RemoveMirror(mirror.Id);
+        Assert.Equal("Photos/Mine", await service.FreeFolderAsync(cloud.Id, "Photos/Mine", reuse: true, ct));
+        Assert.Equal("Photos/Mine 2", await service.FreeFolderAsync(cloud.Id, "Photos/Mine", reuse: false, ct));
+    }
+
+    [Fact]
     public async Task BackupFollowsTheFolderAndAsksAboutDeleted()
     {
         Assert.SkipUnless(Rclone.IsAvailable, "rclone is not installed");

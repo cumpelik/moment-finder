@@ -56,6 +56,7 @@
         </DataTemplate>
     </Window.Resources>
 
+    <Panel>
     <DockPanel>
         <!-- Status bar: background work and the AI model -->
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource ToolbarBackgroundBrush}"
@@ -519,4 +520,10 @@
         </Grid>
         </Grid>
     </DockPanel>
+
+    <!-- A window over the library (a folder and the cloud): as tall as its content, never taller than this window -->
+    <Border x:Name="Overlay" IsVisible="False" Background="#99000000" Padding="40,32">
+        <ContentControl x:Name="OverlayHost" />
+    </Border>
+    </Panel>
 </Window>

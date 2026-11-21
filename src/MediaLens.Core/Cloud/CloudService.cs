@@ -365,21 +365,24 @@ public sealed class CloudService
         : Clouds().FirstOrDefault(c => c.Id == source.CloudId) ?? Clouds().FirstOrDefault(c => source.Remote.StartsWith(Prefix(c), StringComparison.Ordinal));
 
     /// <summary>
-    /// Connects a local folder with a cloud as its backup: under this computer's name (two computers on one cloud keep
-    /// their folders apart). Encrypted: the folder gets a crypt remote of its own with a key made here (it travels
+    /// Connects a local folder with a cloud as its backup: in the folder the user chose, or by default under this
+    /// computer's name (two computers on one cloud keep their folders apart). Encrypted: the folder gets a crypt remote of its own with a key made here (it travels
     /// with the library's backup); the folder's name stays readable, the names and contents inside do not.
     /// </summary>
-    public async Task<MirrorInfo> AddMirrorAsync(long sourceId, long cloudId, bool encrypt, CancellationToken ct, bool clone = false)
+    public async Task<MirrorInfo> AddMirrorAsync(long sourceId, long cloudId, bool encrypt, CancellationToken ct, bool clone = false, string? target = null)
     {
         var source = _repo.ListSources().First(s => s.Id == sourceId);
         var cloud = Clouds().First(x => x.Id == cloudId);
-        var taken = Mirrors().Where(m => m.CloudId == cloudId).Select(m => m.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        // A folder of that name from before is used again only when it is this computer's plain backup (or empty).
-        var there = (await Rclone.DirsAsync(Join(cloud.Remote, Device.MirrorFolder), ct)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var folder = $"{Device.MirrorFolder}/{Sanitize(source.Name)}";
-        var target = folder;
-        for (var n = 2; taken.Contains(target) || there.Contains(target[(Device.MirrorFolder.Length + 1)..]) && !await ReusableAsync(Join(cloud.Remote, target)); n++)
-            target = $"{folder} {n}";
+        var reuse = !encrypt && !clone;
+        if (target == null) target = await FreeFolderAsync(cloudId, $"{Device.MirrorFolder}/{Sanitize(source.Name)}", reuse, ct);
+        else
+        {
+            // The user's own name: a folder of another backup or clone is never mixed in.
+            target = CleanFolder(target);
+            if (target.Length == 0) throw new InvalidOperationException("Fill in the folder name.");
+            if (await FreeFolderAsync(cloudId, target, reuse, ct) != target)
+                throw new InvalidOperationException($"The storage has a folder {target} already, with other files in it. Choose another name.");
+        }
         string? remote = null;
         var encrypted = cloud.Encrypted;
         if (encrypt && !cloud.Encrypted)
@@ -394,14 +397,36 @@ public sealed class CloudService
             INSERT INTO mirror(source_id, cloud_id, target, remote, encrypted) VALUES(@sourceId, @cloudId, @target, @remote, @encrypted) RETURNING id
             """, new { sourceId, cloudId, target, remote, encrypted });
         return Mirrors().First(m => m.Id == id);
+    }
+
+    /// <summary>A folder name as typed: slashes either way, no empty parts, nothing a storage refuses.</summary>
+    public static string CleanFolder(string folder) =>
+        string.Join('/', folder.Replace('\\', '/').Split('/').Select(Sanitize).Where(p => p.Length > 0));
+
+    /// <summary>
+    /// The folder, or the first "folder 2", "folder 3"... that is free in the storage. A folder of that name from
+    /// before is used again only with <paramref name="reuse"/> and when it is this computer's plain backup. A clone or an encrypted folder always starts in a folder of its own.
+    /// </summary>
+    public async Task<string> FreeFolderAsync(long cloudId, string folder, bool reuse, CancellationToken ct)
+    {
+        var cloud = Clouds().First(x => x.Id == cloudId);
+        folder = CleanFolder(folder);
+        var taken = Mirrors().Where(m => m.CloudId == cloudId).Select(m => m.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        taken.UnionWith(_repo.ListSources().Where(s => s.CloudId == cloudId && s.Remote != null).Select(s => s.Remote!));
+        var slash = folder.LastIndexOf('/');
+        var parent = slash < 0 ? "" : folder[..slash];
+        var there = (await Rclone.DirsAsync(Join(cloud.Remote, parent), ct)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var target = folder;
+        for (var n = 2; taken.Contains(target) || taken.Contains(Join(cloud.Remote, target)) ||
+                        there.Contains(target[(slash + 1)..]) && !(reuse && await ReusableAsync(Join(cloud.Remote, target))); n++)
+            target = $"{folder} {n}";
+        return target;
 
         async Task<bool> ReusableAsync(string place)
         {
-            // Under this computer's name without a marker: an older copy made here. A clone starts in a folder of its
-            // own: files of an older copy would wait there as deleted from the folder.
-            if (encrypt || clone) return false;
+            // Only a backup this computer made itself: a folder without the marker may hold anything (an encrypted one).
             var marker = await FolderMarker.ReadAsync(Rclone, place, ct);
-            return marker == null || marker.IsBackup && marker.Home == Device.Id;
+            return marker is { IsBackup: true } && marker.Home == Device.Id;
         }
     }
 
@@ -527,13 +552,15 @@ public sealed class CloudService
     public bool MoveRequested(long mirrorId) => _db.GetSetting($"move_to_cloud_{mirrorId}") == "1";
 
     /// <summary>
-    /// The name of a folder's clone: the folder and the cloud, or its folder in the cloud ("Photos 2") when a source of
-    /// that name is there already (a clone made before).
+    /// The name of a folder's clone: the folder and the cloud; when a source of that name is there already (a clone
+    /// made before), its folder in the cloud ("Photos 2", "Family/Photos"), or a number.
     /// </summary>
     public string CloneName(string sourceName, MirrorInfo mirror)
     {
-        var name = $"{sourceName} ({mirror.CloudName})";
-        return _repo.ListSources().Any(s => s.Name == name) ? $"{mirror.Target[(mirror.Target.LastIndexOf('/') + 1)..]} ({mirror.CloudName})" : name;
+        var names = _repo.ListSources().Select(s => s.Name).ToHashSet();
+        var leaf = mirror.Target[(mirror.Target.LastIndexOf('/') + 1)..];
+        return new[] { sourceName, leaf, mirror.Target }.Select(n => $"{n} ({mirror.CloudName})").FirstOrDefault(n => !names.Contains(n))
+            ?? Enumerable.Range(2, 1000).Select(n => $"{sourceName} {n} ({mirror.CloudName})").First(n => !names.Contains(n));
     }
 
     /// <summary>

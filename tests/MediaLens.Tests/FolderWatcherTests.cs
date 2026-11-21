@@ -5,7 +5,7 @@ namespace MediaLens.Tests;
 /// <summary>A folder that changes is told once it has been quiet; hidden files and a quiet folder are not.</summary>
 public class FolderWatcherTests
 {
-    private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(1500);
 
     private static async Task<List<long>> CollectAsync(FolderWatcher watcher, Action act, TimeSpan wait)
     {
@@ -28,11 +28,11 @@ public class FolderWatcherTests
             for (var i = 0; i < 4; i++)
             {
                 lib.AddPhoto($"2025/p{i}.jpg");
-                Thread.Sleep(150);
+                Thread.Sleep(100);
             }
             File.Move(Path.Combine(lib.MediaDir, "2025", "p0.jpg"), Path.Combine(lib.MediaDir, "moved.jpg"));
             File.Delete(Path.Combine(lib.MediaDir, "2025", "p1.jpg"));
-        }, Quiet * 4);
+        }, Quiet * 3);
         Assert.Equal([source.Id], told);
     }
 

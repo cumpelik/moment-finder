@@ -168,6 +168,16 @@ public partial class MainWindow : Window
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
         if (_vm == null) return;
+        // A window over the library has the keyboard: the photos behind it do not move; Escape closes it.
+        if (Overlay.IsVisible)
+        {
+            if (e.Key == Key.Escape && OverlayHost.Content is IOverlayPanel panel)
+            {
+                panel.Close();
+                e.Handled = true;
+            }
+            return;
+        }
         // Typing in the search box (or another text field) is not a shortcut.
         if (e.Source is TextBox || e.Source is NumericUpDown || e.Source is AutoCompleteBox) return;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
@@ -307,7 +317,7 @@ public partial class MainWindow : Window
 
     private void OnOpenSettings(object? sender, RoutedEventArgs e)
     {
-        if (_vm != null) new SettingsWindow(_vm).ShowDialog(this);
+        if (_vm != null) ShowOverlay(new SettingsPanel(_vm));
     }
 
     // ---- player ----
@@ -611,10 +621,22 @@ public partial class MainWindow : Window
     private void OnRescanEntry(object? sender, RoutedEventArgs e) => _vm?.RescanCommand.Execute(null);
 
     /// <summary>A source and the cloud: back it up, clone it there, or give a folder in the cloud a home here.</summary>
-    private async void OnSourceCloud(object? sender, RoutedEventArgs e)
+    private void OnSourceCloud(object? sender, RoutedEventArgs e)
     {
         if (_vm == null || EntryOf(sender) is not { Kind: SidebarKind.Source or SidebarKind.Clone } entry) return;
-        await new SourceCloudWindow(_vm.CreateSourceCloudViewModel(entry.Id)).ShowDialog(this);
+        ShowOverlay(new SourceCloudPanel(_vm.CreateSourceCloudViewModel(entry.Id)));
+    }
+
+    /// <summary>A window over the library: the photos behind it wait until it is closed.</summary>
+    private void ShowOverlay(IOverlayPanel panel)
+    {
+        panel.Closed += () =>
+        {
+            Overlay.IsVisible = false;
+            OverlayHost.Content = null;
+        };
+        OverlayHost.Content = panel;
+        Overlay.IsVisible = true;
     }
 
     private async void OnLocateEntry(object? sender, RoutedEventArgs e)

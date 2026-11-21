@@ -41,12 +41,24 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
 
     // ---- connecting ----
     public ObservableCollection<CloudChoice> Destinations { get; } = [];
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsNewStorage))] private CloudChoice? _destination;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsNewStorage), nameof(WhereText))] private CloudChoice? _destination;
     public bool IsNewStorage => Destination?.Cloud == null;
     /// <summary>Storage connected already (for the library or another folder): offered first.</summary>
     public bool HasClouds { get; }
     public StorageFormViewModel Form { get; }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(KeyAtRisk))] private bool _encrypt;
+
+    // ---- the folder in the storage: a proposal the user may change ----
+    /// <summary>Inside a folder named after this computer (two computers on one storage keep their folders apart).</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(Target), nameof(WhereText))] private bool _underComputer = true;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(Target), nameof(WhereText))] private string _folderName = "";
+    public string UnderComputerText => $"Inside a folder named after this computer ({_host.Cloud.Device.MirrorFolder})";
+    /// <summary>The folder in the storage, as it will be.</summary>
+    public string Target => CloudService.CleanFolder((UnderComputer ? _host.Cloud.Device.MirrorFolder + "/" : "") + FolderName);
+    /// <summary>The proposal is kept up to date (a free name) until the user types their own.</summary>
+    private bool _nameTyped;
+    private string _proposed = "";
+    private int _proposal;
     /// <summary>The key of an encrypted folder is kept in the library: a library on this computer only can lose it.</summary>
     public bool KeyAtRisk => Encrypt && _host.Cloud.BackupCloud == null;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMoveMode), nameof(ConnectText))] private bool _isBackupMode = true;
@@ -57,7 +69,43 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     }
     // A clone is no lasting connection: the words say what happens.
     public string ConnectText => IsBackupMode ? "Back it up" : "Clone it to the cloud";
-    public string WhereText => $"In the storage it goes into the folder {_host.Cloud.Device.MirrorFolder}/{DeviceInfo.Safe(SourceName)} (named after this computer; with a number when that one is taken).";
+    public string WhereText => Target.Length == 0 ? "Fill in the name of the folder."
+        : Destination?.Cloud is { } cloud ? $"It goes into {cloud.Remote[(cloud.Remote.IndexOf(':') + 1)..].TrimEnd('/')}/{Target}."
+        : $"It goes into the folder {Target} of the storage.";
+
+    partial void OnFolderNameChanged(string value)
+    {
+        if (value != _proposed) _nameTyped = true;
+    }
+
+    partial void OnDestinationChanged(CloudChoice? value) => _ = ProposeAsync();
+    partial void OnUnderComputerChanged(bool value) => _ = ProposeAsync();
+    partial void OnEncryptChanged(bool value) => _ = ProposeAsync();
+    partial void OnIsBackupModeChanged(bool value) => _ = ProposeAsync();
+
+    /// <summary>The folder's name, with a number when the storage has that folder for something else.</summary>
+    private async Task ProposeAsync()
+    {
+        if (_nameTyped || !IsLocal) return;
+        var mine = ++_proposal;
+        var name = DeviceInfo.Safe(SourceName);
+        var parent = UnderComputer ? _host.Cloud.Device.MirrorFolder + "/" : "";
+        if (Destination?.Cloud is { } cloud)
+        {
+            try
+            {
+                var free = await _host.Cloud.FreeFolderAsync(cloud.Id, parent + name, IsBackupMode && !Encrypt, CancellationToken.None);
+                name = free[parent.Length..];
+            }
+            catch (Exception e) when (e is RcloneException or IOException or InvalidOperationException)
+            {
+                // The storage does not answer now: the name is checked again when connecting.
+            }
+        }
+        if (mine != _proposal || _nameTyped) return;
+        _proposed = name;
+        FolderName = name;
+    }
 
     // ---- backed up ----
     [ObservableProperty] private string _placeText = "";
@@ -90,10 +138,10 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         }
         HasClouds = Destinations.Count > 0;
         Destinations.Add(new CloudChoice("Another storage (fill it in below)", null));
+        Reload();
         // The library's own storage first, otherwise the first one connected.
         var library = host.Cloud.BackupCloud;
         Destination = Destinations.FirstOrDefault(d => library != null && d.Cloud?.Id == library.Id) ?? Destinations[0];
-        Reload();
         host.Mirrors.MirrorsChanged += OnMirrorsChanged;
         host.Mirrors.Copying += OnCopying;
     }
@@ -184,11 +232,17 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
             Status = missing;
             return Task.CompletedTask;
         }
+        if (Target.Length == 0)
+        {
+            Status = "Fill in the name of the folder in the storage.";
+            return Task.CompletedTask;
+        }
+        var target = Target;
         var move = IsMoveMode;
         return RunAsync(IsNewStorage ? Form.ConnectingText : "Connecting...", async ct =>
         {
             var cloud = Destination?.Cloud ?? await Form.ConnectAsync(_host.Cloud, ct);
-            var mirror = await _host.Cloud.AddMirrorAsync(_sourceId, cloud.Id, Encrypt, ct, clone: move);
+            var mirror = await _host.Cloud.AddMirrorAsync(_sourceId, cloud.Id, Encrypt, ct, clone: move, target: target);
             if (move) _host.Cloud.RequestMoveToCloud(mirror.Id, true);
             _host.Mirrors.RunNow(mirror.Id);
             Status = move
