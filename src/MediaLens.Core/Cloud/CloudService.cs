@@ -112,7 +112,7 @@ public sealed class CloudService
         Device = DeviceInfo.Load(paths.DataDir);
         Backup = new LibraryBackup(paths, db, this);
         Rclone = new Rclone(Path.Combine(paths.DataDir, "rclone.conf"));
-        MediaFiles.Configure(Rclone, Path.Combine(paths.CacheDir, "cloud"));
+        MediaFiles.Configure(Rclone, Path.Combine(paths.CacheDir, "cloud"), repo.LocalTwinPath);
     }
 
     public static string Join(string remote, string path)

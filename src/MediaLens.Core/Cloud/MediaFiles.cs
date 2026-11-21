@@ -5,6 +5,8 @@ namespace MediaLens.Cloud;
 /// <summary>
 /// The way to the bytes of an item. A local file is just its path; a cloud item is fetched into the local
 /// cache the first time it is needed (thumbnail, analysis, viewing, export) and kept while the cache has room.
+/// A cloud item whose twin (the same file) is in a folder on this computer is read from there: a folder and its
+/// clone in the cloud, or a folder added to a cloud folder, are not downloaded again.
 /// </summary>
 public static class MediaFiles
 {
@@ -12,10 +14,13 @@ public static class MediaFiles
     private static string? _cacheDir;
     private static readonly SemaphoreSlim Gate = new(3);
 
-    public static void Configure(Rclone rclone, string cacheDir)
+    private static Func<MediaItem, string?>? _localTwin;
+
+    public static void Configure(Rclone rclone, string cacheDir, Func<MediaItem, string?>? localTwin = null)
     {
         _rclone = rclone;
         _cacheDir = cacheDir;
+        _localTwin = localTwin;
     }
 
     /// <summary>Gigabytes the cloud cache may use; the least recently used files go first.</summary>
@@ -35,6 +40,7 @@ public static class MediaFiles
             try { File.SetLastWriteTimeUtc(item.FullPath, DateTime.UtcNow); } catch (IOException) { }
             return item.FullPath;
         }
+        if (_localTwin?.Invoke(item) is { } twin) return twin;
         if (_rclone == null) throw new InvalidOperationException("Cloud access is not configured");
         await Gate.WaitAsync(ct);
         try

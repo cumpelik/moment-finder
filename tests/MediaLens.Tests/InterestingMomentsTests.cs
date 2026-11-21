@@ -70,4 +70,26 @@ public class InterestingMomentsTests
         var found = Assert.Single(InterestingMoments.Find(lib.Db));
         Assert.Equal("named.mp4", lib.Repo.Query(new MediaFilter { Ids = [found.MediaId] }).Single().RelPath);
     }
+
+    [Fact]
+    public void AVideoInTheLibraryTwiceIsThereOnceFromThisComputer()
+    {
+        using var lib = new TestLibrary();
+        var cloud = lib.Repo.AddSource(SourceKinds.Cloud, Path.Combine(lib.Root, "cache"), "Store", "nowhere:bucket");
+        var local = lib.AddSource();
+        var eva = new PeopleRepository(lib.Db).CreatePerson("Eva");
+        using (var c = lib.Db.Open())
+            foreach (var (source, track) in new[] { (cloud.Id, 100L), (local.Id, 200L) })
+            {
+                var media = c.ExecuteScalar<long>("""
+                    INSERT INTO media(source_id, rel_path, kind, size, mtime, quick_hash, taken_at, duration_ms) VALUES(@source, 'ski.mp4', 2, 5, 1, 'abc', 1, 20000) RETURNING id
+                    """, new { source });
+                c.Execute("INSERT INTO detection(media_id, time_ms, kind, x, y, w, h, score, quality, track, embedding, person_id) VALUES(@media, 0, 1, 0, 0, 0.2, 0.5, 1, 1, @track, x'00', @person)",
+                    new { media, track, person = eva.Id });
+                for (var t = 0; t <= 5000; t += 1000)
+                    c.Execute("INSERT INTO track_box(media_id, track, time_ms, x, y, w, h) VALUES(@media, @track, @t, 0, 0, 0.2, 0.5)", new { media, track, t });
+            }
+        var found = Assert.Single(InterestingMoments.Find(lib.Db));
+        Assert.Equal(local.Id, lib.Repo.Query(new MediaFilter { Ids = [found.MediaId] }).Single().SourceId);
+    }
 }

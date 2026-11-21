@@ -181,6 +181,19 @@ public sealed class MediaRepository
 
     // ---- queries ----
 
+    /// <summary>The same file (quick hash and size) in a folder on this computer, if it is there now.</summary>
+    public string? LocalTwinPath(MediaItem item)
+    {
+        if (item.QuickHash == null) return null;
+        using var c = _db.Open();
+        var twins = c.Query<(string Root, string RelPath)>("""
+            SELECT s.root, m.rel_path FROM media m JOIN source s ON s.id=m.source_id
+            WHERE m.quick_hash=@QuickHash AND m.size=@Size AND m.missing=0 AND s.kind='local' AND s.enabled=1
+            """, new { item.QuickHash, item.Size });
+        return twins.Select(t => Path.Combine(t.Root, t.RelPath.Replace('/', Path.DirectorySeparatorChar)))
+            .FirstOrDefault(path => new FileInfo(path) is { Exists: true } f && f.Length == item.Size);
+    }
+
     public List<MediaItem> Query(MediaFilter filter, int limit = int.MaxValue)
     {
         var sql = new StringBuilder($"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id");

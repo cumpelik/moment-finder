@@ -184,6 +184,26 @@ public class FolderBackupTests
     }
 
     [Fact]
+    public async Task ACloudFileWithATwinHereIsNotDownloaded()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var lib = new TestLibrary();
+        var photo = lib.AddPhoto("a.jpg");
+        var source = lib.AddSource();
+        await lib.ScanAsync(source);
+        _ = new CloudService(lib.Paths, lib.Db, lib.Repo);
+        var cloud = lib.Repo.AddSource(SourceKinds.Cloud, Path.Combine(lib.Root, "cache"), "Store", "nowhere:bucket/photos");
+        using (var c = lib.Db.Open())
+            c.Execute("""
+                INSERT INTO media(source_id, rel_path, kind, size, mtime, quick_hash, taken_at)
+                SELECT @cloud, rel_path, kind, size, mtime, quick_hash, taken_at FROM media WHERE source_id=@local
+                """, new { cloud = cloud.Id, local = source.Id });
+        var inCloud = lib.Repo.Query(new MediaFilter { SourceId = cloud.Id }).Single();
+        // The remote does not exist: a download would fail. The file here is used.
+        Assert.Equal(photo, await MediaFiles.LocalPathAsync(inCloud, ct));
+    }
+
+    [Fact]
     public async Task MovedToTheCloudKeepsEverything()
     {
         Assert.SkipUnless(Rclone.IsAvailable, "rclone is not installed");
