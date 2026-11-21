@@ -47,6 +47,9 @@ public sealed class Indexer : IDisposable
     private IdentityService? _identity;
     private EventBuilder? _events;
     private bool _identityDirty;
+    /// <summary>The user named or corrected someone (or the app started): matched again soon, not after all the analysis.</summary>
+    private bool _identityWanted;
+    private DateTime _lastIdentity = DateTime.MinValue;
     private int _sinceIdentity;
 
     public event Action<IndexerStatus>? StatusChanged;
@@ -81,6 +84,7 @@ public sealed class Indexer : IDisposable
         _events = events;
         events.Rebuild();
         _identityDirty = true;
+        _identityWanted = true;
         _wake.Release();
     }
 
@@ -88,6 +92,7 @@ public sealed class Indexer : IDisposable
     public void RequestIdentity()
     {
         _identityDirty = true;
+        _identityWanted = true;
         _wake.Release();
     }
 
@@ -186,14 +191,19 @@ public sealed class Indexer : IDisposable
             await ScanAllAsync(only, ct);
             return true;
         }
-        if (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct))
+        // Named or corrected by the user: matched again between the batches of a long analysis (at most twice a
+        // minute, a review gives many answers in a row), so the names show while the library is still being analyzed.
+        var wanted = _identityWanted && DateTime.UtcNow - _lastIdentity > TimeSpan.FromSeconds(30);
+        if (!wanted && (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct)))
             return true;
         if (_identityDirty && _identity != null)
         {
             _identityDirty = false;
+            _identityWanted = false;
             _sinceIdentity = 0;
             Report(new IndexerStatus(IndexerPhase.People, "Working out who is who", 0, 0, false));
             await Task.Run(() => _identity.Recompute(), ct);
+            _lastIdentity = DateTime.UtcNow;
             return true;
         }
         if (Proxies360 && await Proxy360BatchAsync(ct)) return true;
@@ -402,7 +412,9 @@ public sealed class Indexer : IDisposable
         {
             _sinceIdentity = 0;
             _identityDirty = false;
+            _identityWanted = false;
             await Task.Run(() => _identity.Recompute(), ct);
+            _lastIdentity = DateTime.UtcNow;
         }
         return true;
     }

@@ -26,7 +26,7 @@ public sealed record MediaFilter
 /// <summary>What the scanner found on disk for one file.</summary>
 public sealed record ScannedFile(
     string RelPath, MediaKind Kind, long Size, long Mtime, string? QuickHash, long TakenAt,
-    int? Width, int? Height, long? DurationMs, double? Lat, double? Lon, string? Camera);
+    int? Width, int? Height, long? DurationMs, double? Lat, double? Lon, string? Camera, bool? TakenFromFile = null);
 
 public sealed record KnownFile(long Id, string RelPath, long Size, long Mtime, long Missing)
 {
@@ -125,19 +125,19 @@ public sealed class MediaRepository
         {
             c.Execute("""
                 INSERT INTO media(source_id, rel_path, kind, size, mtime, quick_hash, taken_at, width, height,
-                                  duration_ms, lat, lon, camera)
+                                  duration_ms, lat, lon, camera, taken_from_file)
                 VALUES(@sourceId, @RelPath, @Kind, @Size, @Mtime, @QuickHash, @TakenAt, @Width, @Height,
-                       @DurationMs, @Lat, @Lon, @Camera)
+                       @DurationMs, @Lat, @Lon, @Camera, @TakenFromFile)
                 ON CONFLICT(source_id, rel_path) DO UPDATE SET
                     kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, quick_hash=excluded.quick_hash,
                     taken_at=excluded.taken_at, width=excluded.width, height=excluded.height,
                     duration_ms=excluded.duration_ms, lat=excluded.lat, lon=excluded.lon, camera=excluded.camera,
-                    thumb_state=0, analysis_version=0, missing=0
+                    taken_from_file=excluded.taken_from_file, thumb_state=0, analysis_version=0, missing=0
                 """,
                 new
                 {
                     sourceId, f.RelPath, Kind = (int)f.Kind, f.Size, f.Mtime, f.QuickHash, f.TakenAt, f.Width, f.Height,
-                    f.DurationMs, f.Lat, f.Lon, f.Camera,
+                    f.DurationMs, f.Lat, f.Lon, f.Camera, f.TakenFromFile,
                 }, tx);
         }
         tx.Commit();

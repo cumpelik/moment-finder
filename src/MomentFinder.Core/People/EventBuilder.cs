@@ -21,9 +21,13 @@ public sealed class EventBuilder
     public int Rebuild()
     {
         using var c = _db.Open();
-        var all = c.Query<(long Id, long TakenAt, double? Lat, double? Lon, int Kind, bool HasCamera, long Mtime)>(
-            "SELECT id, taken_at, lat, lon, kind, camera IS NOT NULL, mtime FROM media WHERE missing=0 ORDER BY taken_at, id").ToList();
-        var copied = CopiedInBulk(all.Where(i => i.Kind == (int)MediaKind.Photo && !i.HasCamera && i.Lat == null && IsFileTime(i.TakenAt, i.Mtime))
+        var all = c.Query<(long Id, long TakenAt, double? Lat, double? Lon, int Kind, bool HasCamera, long Mtime, bool? FromFile, bool InCloud)>("""
+            SELECT m.id, m.taken_at, m.lat, m.lon, m.kind, m.camera IS NOT NULL, m.mtime, m.taken_from_file, s.kind='cloud'
+            FROM media m JOIN source s ON s.id=m.source_id WHERE m.missing=0 ORDER BY m.taken_at, m.id
+            """).ToList();
+        // Without a date of its own (known since it is kept; before that: the file's time, of a file in the cloud,
+        // which is when it was uploaded, or of a photo without a camera).
+        var copied = CopiedInBulk(all.Where(i => i.Lat == null && (i.FromFile ?? (IsFileTime(i.TakenAt, i.Mtime) && (i.InCloud || i.Kind == (int)MediaKind.Photo && !i.HasCamera))))
             .Select(i => (i.Id, i.TakenAt)).ToList());
         var items = all.Where(i => !copied.Contains(i.Id)).ToList();
         var events = new List<(long Start, long End, List<long> Ids)>();

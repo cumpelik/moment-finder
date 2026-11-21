@@ -21,9 +21,10 @@ public static class MediaProbe
         if (kind == MediaKind.Video)
         {
             var probe = await FFmpeg.ProbeAsync(fullPath, ct);
+            var dated = probe?.CreationTime is { } ct2 && ct2.Year > 1971 ? ct2 : (DateTime?)null;
             return new ScannedFile(relPath, kind, info.Length, mtime, hash,
-                probe?.CreationTime is { } ct2 && ct2.Year > 1971 ? ToTakenAt(ct2) : fallbackTaken,
-                probe?.Width, probe?.Height, probe?.DurationMs, probe?.Lat, probe?.Lon, probe?.Camera);
+                dated is { } d ? ToTakenAt(d) : fallbackTaken,
+                probe?.Width, probe?.Height, probe?.DurationMs, probe?.Lat, probe?.Lon, probe?.Camera, TakenFromFile: dated == null);
         }
 
         DateTime? taken = null;
@@ -76,7 +77,8 @@ public static class MediaProbe
         }
 
         return new ScannedFile(relPath, kind, info.Length, mtime, hash,
-            taken is { Year: > 1971 } t ? ToTakenAt(t) : fallbackTaken, width, height, null, lat, lon, camera);
+            taken is { Year: > 1971 } t ? ToTakenAt(t) : fallbackTaken, width, height, null, lat, lon, camera,
+            TakenFromFile: taken is not { Year: > 1971 });
     }
 
     public static long ToTakenAt(DateTime wallClock) =>

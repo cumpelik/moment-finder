@@ -220,6 +220,9 @@ public sealed class Database
         CREATE INDEX IF NOT EXISTS media_source_state ON media(source_id, missing, kind, thumb_state, analysis_version, people_version);
         ANALYZE;
         """,
+        // 14: whether the capture time is only the file's time (no date of its own in the photo or video): 1 yes, 0 no,
+        // NULL read before this was kept.
+        "ALTER TABLE media ADD COLUMN taken_from_file INTEGER;",
     ];
 
     /// <summary>
