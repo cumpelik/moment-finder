@@ -223,4 +223,63 @@ public class SyncTests
             try { Directory.Delete(cloudDir, true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public async Task EveryComputerSeesTheSameFilesOfAFolderInTheCloud()
+    {
+        Assert.SkipUnless(Cloud.Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        var cloudDir = Path.Combine(Path.GetTempPath(), "momentfinder-shared-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cloudDir);
+        try
+        {
+            using var a = new TestLibrary();
+            using var b = new TestLibrary();
+            a.AddPhoto("2024/a.jpg", color: "red");
+            a.AddPhoto("2024/b.jpg", color: "blue");
+            var folder = a.AddSource();
+            await a.ScanAsync(folder);
+            var syncA = await SharedAsync(a, cloudDir, ct);
+            var syncB = await SharedAsync(b, cloudDir, ct);
+            var cloudA = new Cloud.CloudService(a.Paths, a.Db, a.Repo);
+            var mirror = await cloudA.AddMirrorAsync(folder.Id, cloudA.BackupCloud!.Id, false, ct);
+            // A photo read here but not backed up yet: the other computer must not see it (it could not open it).
+            a.AddPhoto("2024/c.jpg", color: "green");
+            await a.ScanAsync(folder);
+            File.Move(Path.Combine(a.MediaDir, "2024/c.jpg"), Path.Combine(a.Root, "c.jpg"));
+            await cloudA.MirrorAsync(mirror.Id, null, ct);
+            File.Move(Path.Combine(a.Root, "c.jpg"), Path.Combine(a.MediaDir, "2024/c.jpg"));
+
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            // The folder is there, from the cloud, only for looking; with its files as the first computer said them.
+            var seen = b.Repo.ListSources().Single();
+            Assert.Equal((SourceKinds.Cloud, true), (seen.Kind, seen.ReadOnly));
+            Assert.True(Catalog.KnownFromOthers(b.Db, seen));
+            Assert.Equal(["2024/a.jpg", "2024/b.jpg"], b.Repo.Query(new MediaFilter()).Select(i => i.RelPath).Order());
+            var taken = b.Repo.Query(new MediaFilter()).Single(i => i.RelPath == "2024/a.jpg");
+            var original = a.Repo.Query(new MediaFilter()).Single(i => i.RelPath == "2024/a.jpg");
+            Assert.Equal((original.Size, original.TakenAt), (taken.Size, taken.TakenAt));
+
+            // Backed up now, and one deleted: the other computer follows the cloud.
+            File.Delete(Path.Combine(a.MediaDir, "2024/a.jpg"));
+            await a.ScanAsync(folder);
+            await cloudA.MirrorAsync(mirror.Id, null, ct);
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            Assert.Equal(["2024/b.jpg", "2024/c.jpg"], b.Repo.Query(new MediaFilter()).Select(i => i.RelPath).Order());
+
+            // Removed from the library on one computer: removed on every one (the files stay where they are).
+            b.Repo.RemoveSource(seen.Id);
+            await syncB.RunAsync(ct);
+            await syncA.RunAsync(ct);
+            Assert.Empty(a.Repo.ListSources());
+            Assert.True(File.Exists(Path.Combine(a.MediaDir, "2024/b.jpg")));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+        }
+    }
 }

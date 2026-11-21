@@ -261,6 +261,9 @@ public sealed class Indexer : IDisposable
     {
         foreach (var source in _repo.ListSources().Where(s => s.Enabled && (only == null || only.Contains(s.Id))))
         {
+            // Another computer's backup: which files it has comes from that computer (the catalog), the same as on
+            // every computer, without downloading each of them to find out.
+            if (MomentFinder.Sync.Catalog.KnownFromOthers(_repo.Db, source)) continue;
             ScanningSourceId = source.Id;
             Report(new IndexerStatus(IndexerPhase.Scanning, $"Looking for new photos and videos in {source.Name}", 0, 0, false));
             // What a long scan found so far shows while it runs (a cloud folder of thousands of photos takes a while).
@@ -275,10 +278,17 @@ public sealed class Indexer : IDisposable
             try
             {
                 await _scanner.ScanAsync(source, progress, ct);
+                // A folder that lives in the cloud: the other computers learn what was found in it.
+                if (source.Kind == SourceKinds.Cloud) MomentFinder.Sync.Catalog.Publish(_repo.Db, source.Id);
             }
             catch (DirectoryNotFoundException)
             {
                 // Disconnected disk: its items stay, just are not updated.
+            }
+            catch (Exception e) when (e is Cloud.RcloneException or IOException)
+            {
+                // One folder the cloud did not answer for: the others are read anyway, this one at the next scan.
+                Report(new IndexerStatus(IndexerPhase.Scanning, $"{source.Name} could not be read now ({e.Message}); it is tried again later", 0, 0, false));
             }
             finally
             {

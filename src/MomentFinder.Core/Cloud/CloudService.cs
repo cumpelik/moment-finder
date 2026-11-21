@@ -527,6 +527,8 @@ public sealed class CloudService
             done = new SyncResult(plan.Upload.Count, plan.Moves.Count, plan.Gone.Count);
             // Recorded before the library is backed up, so the backup knows this folder is in the cloud.
             Done("OK");
+            // The other computers of the library learn which files are in the cloud now (only those: they could not open the rest).
+            Catalog.Publish(_db, mirror.SourceId, local.Keys.ToHashSet());
             // The library follows, into the cloud chosen for it (which may be another one, or none).
             if (BackupCloud is { } home) await Backup.RunAsync(home, full: true, null, ct);
             result = "OK";

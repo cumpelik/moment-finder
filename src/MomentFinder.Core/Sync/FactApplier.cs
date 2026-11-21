@@ -37,6 +37,7 @@ public sealed class FactApplier
         var all = objects.Distinct().ToList();
         static int Order(string o) => o.Split(':')[0] switch { "lib" => 0, "f" => 1, "p" => 2, "b" => 3, "m" => 4, "bi" => 5, _ => 6 };
         var media = new HashSet<string>();
+        var arrived = new List<long>();
         foreach (var obj in all.OrderBy(Order))
         {
             var kind = obj.Split(':')[0];
@@ -46,14 +47,25 @@ public sealed class FactApplier
                 case "f": Folder(obj[2..]); break;
                 case "p": Person(obj[2..]); break;
                 case "b": Bucket(obj[2..]); break;
-                case "m": Moved(obj[2..]); break;
+                case "m":
+                    if (Catalog.Place(_c, _tx, obj[2..]) is { } added) arrived.Add(added);
+                    Moved(obj[2..]);
+                    break;
                 case "bi": BucketItem(obj); break;
                 case "d" when Keys.ParseDetection(obj) is { } d: media.Add(d.MediaUid); break;
             }
         }
         foreach (var uid in media)
             if (MediaId(uid) is { } id) PeopleOf(_c, _tx, id);
+        if (arrived.Count > 0)
+        {
+            Arrived(_c, _tx, arrived);
+            FilesArrived += arrived.Count;
+        }
     }
+
+    /// <summary>Files another computer said are in a folder seen from here: new rows (thumbnails follow).</summary>
+    public int FilesArrived { get; private set; }
 
     private Dictionary<string, string?> Fields(string obj) =>
         _c.Query<(string Field, string? Value)>("SELECT field, value FROM fact WHERE obj=@obj", new { obj }, _tx).ToDictionary(r => r.Field, r => r.Value);
@@ -110,6 +122,10 @@ public sealed class FactApplier
         var root = Path.Combine(_cacheDir, "cloud", id.ToString(CultureInfo.InvariantCulture));
         Directory.CreateDirectory(root);
         _c.Execute("UPDATE source SET root=@root WHERE id=@id", new { root, id }, _tx);
+        // Its files as the others said them, without reading the folder.
+        var placed = Catalog.PlaceFolder(_c, _tx, uid);
+        Arrived(_c, _tx, placed);
+        FilesArrived += placed.Count;
         FoldersChanged = true;
     }
 
