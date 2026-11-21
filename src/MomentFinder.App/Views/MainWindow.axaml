@@ -18,12 +18,13 @@
     </Window.Styles>
 
     <Window.Resources>
-        <!-- The code sets them by the mode: a grid sized by the slider, or a strip filling the space beside the viewer -->
-        <UniformGridLayout x:Key="TileLayout" MinItemWidth="180" MinItemHeight="180"
-                           MinRowSpacing="6" MinColumnSpacing="6" ItemsStretch="Fill" />
-        <UniformGridLayout x:Key="GroupTileLayout" MinItemWidth="180" MinItemHeight="180"
-                           MinRowSpacing="6" MinColumnSpacing="6" ItemsStretch="Fill" />
-        <StackLayout x:Key="GroupLayout" Orientation="Vertical" Spacing="0" />
+        <!-- A group's title in the grid; a long one is cut, the whole is in its tooltip -->
+        <DataTemplate x:Key="GroupTitleTemplate" DataType="vm:TileGroup">
+            <TextBlock VerticalAlignment="Bottom" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" Margin="2,0,0,0">
+                <Run Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
+                <Run Text="{Binding Count, StringFormat='   {0}'}" Foreground="{DynamicResource MutedForegroundBrush}" />
+            </TextBlock>
+        </DataTemplate>
         <DataTemplate x:Key="TileTemplate" DataType="vm:TileViewModel">
             <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
                 <Grid>
@@ -341,26 +342,8 @@
             <Grid x:Name="BrowseArea" Grid.Row="2" RowDefinitions="*,Auto,0" ColumnDefinitions="*,Auto,0" IsVisible="{Binding IsGridMode}">
             <ScrollViewer x:Name="GridScroll" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10">
-                <Panel>
-                    <ItemsRepeater x:Name="Repeater" ItemsSource="{Binding FlatTiles}" Layout="{DynamicResource TileLayout}"
-                                   ItemTemplate="{StaticResource TileTemplate}" IsVisible="{Binding !IsGrouped}" />
-                    <ItemsRepeater x:Name="GroupRepeater" ItemsSource="{Binding Groups}" IsVisible="{Binding IsGrouped}"
-                                   Layout="{DynamicResource GroupLayout}">
-                        <ItemsRepeater.ItemTemplate>
-                            <DataTemplate DataType="vm:TileGroup">
-                                <!-- A DockPanel: in the strip the tiles get the height left under the title and grow into it -->
-                                <DockPanel Classes="group">
-                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="2,0,0,8">
-                                        <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Count}" Classes="muted" VerticalAlignment="Bottom" Margin="0,0,0,1" />
-                                    </StackPanel>
-                                    <ItemsRepeater ItemsSource="{Binding Tiles}" Layout="{DynamicResource GroupTileLayout}" ItemTemplate="{StaticResource TileTemplate}"
-                                                   ElementPrepared="OnTilePrepared" ElementClearing="OnTileClearing" />
-                                </DockPanel>
-                            </DataTemplate>
-                        </ItemsRepeater.ItemTemplate>
-                    </ItemsRepeater>
-                </Panel>
+                <!-- The code gives it the list, the layout (TileGridLayout) and the templates of a tile and a group's title -->
+                <ItemsRepeater x:Name="Repeater" />
             </ScrollViewer>
             <!-- The panel under the thumbnails: the clicked photo or video -->
             <GridSplitter x:Name="PreviewSplitter" Grid.Row="1" Height="6" ResizeDirection="Rows" Background="{DynamicResource AppBorderBrush}"

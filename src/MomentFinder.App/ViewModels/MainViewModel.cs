@@ -659,7 +659,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         _host.Buckets.Reorder(scope.Id, list.Select(t => t.Item.Id).ToList());
         Tiles = new ObservableCollection<TileViewModel>(list);
-        _anchorIndex = list.IndexOf(selected[0]);
+        _anchorIndex = Shown.IndexOf(selected[0]);
     }
 
     public async Task<ExportResult?> ExportBucketAsync(string targetDir, IProgress<(int Done, int Total)> progress)
@@ -779,14 +779,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Click: select one; Ctrl: toggle; Shift: range from the last click.</summary>
     public void Select(TileViewModel tile, bool toggle, bool range)
     {
-        var index = Tiles.IndexOf(tile);
+        var index = Shown.IndexOf(tile);
         if (index < 0) return;
         if (range && _anchorIndex >= 0)
         {
             var (a, b) = (Math.Min(_anchorIndex, index), Math.Max(_anchorIndex, index));
             if (!toggle)
                 foreach (var t in Tiles) t.IsSelected = false;
-            for (var i = a; i <= b; i++) Tiles[i].IsSelected = true;
+            for (var i = a; i <= b; i++) Shown[i].IsSelected = true;
             return;
         }
         if (toggle)
@@ -805,19 +805,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Keyboard navigation; returns the newly selected tile so the view can scroll to it.</summary>
-    public TileViewModel? MoveSelection(int delta, bool extend)
+    public TileViewModel? MoveSelection(int delta, bool extend) =>
+        MoveSelectionTo(_anchorIndex >= 0 ? _anchorIndex + delta : 0, extend);
+
+    /// <summary>Selects the tile at this place of the shown order (Up and Down: the view knows the rows).</summary>
+    public TileViewModel? MoveSelectionTo(int index, bool extend)
     {
-        if (Tiles.Count == 0) return null;
-        var from = _anchorIndex >= 0 ? _anchorIndex : -1;
-        var to = Math.Clamp(from < 0 ? 0 : from + delta, 0, Tiles.Count - 1);
+        if (Shown.Count == 0) return null;
+        var to = Math.Clamp(index, 0, Shown.Count - 1);
         if (!extend)
             foreach (var t in Tiles) t.IsSelected = false;
-        Tiles[to].IsSelected = true;
+        Shown[to].IsSelected = true;
         _anchorIndex = to;
-        return Tiles[to];
+        return Shown[to];
     }
 
-    public TileViewModel? AnchorTile => _anchorIndex >= 0 && _anchorIndex < Tiles.Count ? Tiles[_anchorIndex] : null;
+    /// <summary>The last clicked or reached tile's place in the shown order; -1 when none.</summary>
+    public int AnchorIndex => AnchorTile == null ? -1 : _anchorIndex;
+
+    public TileViewModel? AnchorTile => _anchorIndex >= 0 && _anchorIndex < Shown.Count ? Shown[_anchorIndex] : null;
 
     // ---- playback ----
 
@@ -825,9 +831,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Full screen from the panel: the same moment, paused if the panel was paused.</summary>
     public void OpenAt(TileViewModel tile, int positionMs, bool paused)
     {
-        var index = Tiles.IndexOf(tile);
+        var index = Shown.IndexOf(tile);
         if (index < 0) return;
-        var player = CreatePlayer(Tiles.ToList(), index, autoPlay: false);
+        var player = CreatePlayer(Shown, index, autoPlay: false);
         if (positionMs > 0) player.ResumeAtMs = positionMs;
         player.PauseOnOpen = paused;
         PlayerRequested?.Invoke(player, true);
@@ -835,9 +841,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void Open(TileViewModel tile)
     {
-        var index = Tiles.IndexOf(tile);
+        var index = Shown.IndexOf(tile);
         if (index < 0) return;
-        PlayerRequested?.Invoke(CreatePlayer(Tiles.ToList(), index, autoPlay: false), true);
+        PlayerRequested?.Invoke(CreatePlayer(Shown, index, autoPlay: false), true);
     }
 
     /// <summary>Opens one item by id (from a face crop); a video at the moment of the crop, with the people boxes on.</summary>
@@ -874,22 +880,22 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void StartSlideshow(bool shuffle)
     {
         var selected = SelectedTiles().ToList();
-        var list = selected.Count > 1 ? selected : Tiles.ToList();
+        var list = selected.Count > 1 ? Shown.Where(t => t.IsSelected).Distinct().ToList() : Shown.ToList();
         if (list.Count == 0) return;
         if (shuffle) list = list.OrderBy(_ => Random.Shared.Next()).ToList();
         PlayerRequested?.Invoke(CreatePlayer(list, 0, autoPlay: true), !OpenInPanel);
     }
 
-    private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
+    private PlayerViewModel CreatePlayer(IReadOnlyList<TileViewModel> tiles, int index, bool autoPlay)
     {
         var (personIds, names, hasText) = CurrentQuery();
         // Best moments: each video plays its moments worth watching (unless words were searched for).
         var best = CurrentScope?.Kind == SidebarKind.Best && !hasText
             ? InterestingMoments.Find(_host.Db).ToDictionary(v => v.MediaId, v => v.Moments.Select(m => (m.StartMs, m.EndMs)).ToList())
             : null;
-        var entries = tiles.Select(t => new PlaylistEntry(t.Item, t.StartMs,
+        var entries = new Playlist(tiles, t => new PlaylistEntry(t.Item, t.StartMs,
             t.Item.IsVideo && hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)]
-            : best?.GetValueOrDefault(t.Item.Id))).ToList();
+            : best?.GetValueOrDefault(t.Item.Id)));
 
         // What the videos can play: whole, the matching part, the best moments, the searched people, anybody else in them.
         var whole = new MomentChoice("Whole videos", MomentKind.Whole, []);
@@ -898,9 +904,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (best != null) choices.Add(new MomentChoice("Only the best moments", MomentKind.Match, []));
         if (personIds.Count > 1) choices.Add(new MomentChoice($"Only {string.Join(" + ", names)}", MomentKind.Person, personIds));
         var personNames = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
-        var videoIds = entries.Where(e => e.Item.IsVideo).Select(e => e.Item.Id).ToList();
+        var videoIds = tiles.Where(t => t.Item.IsVideo).Select(t => t.Item.Id).ToList();
+        // Who is in the videos only orders the choices (the viewer offers whoever is in the video it shows):
+        // over a whole large library it is not worth the wait.
         if (videoIds.Count > 0)
-            foreach (var id in personIds.Concat(_host.People.PersonsIn(videoIds)).Distinct())
+            foreach (var id in personIds.Concat(videoIds.Count <= 5000 ? _host.People.PersonsIn(videoIds) : []).Distinct())
                 if (personNames.TryGetValue(id, out var name))
                     choices.Add(new MomentChoice($"Only {name}", MomentKind.Person, [id]));
         // The best moments are what that list is for: they play first even after whole videos were chosen elsewhere.
@@ -990,7 +998,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void SaveSize(string key, double value) => _host.Db.SetSetting(key, value.ToString("0", CultureInfo.InvariantCulture));
 
     /// <summary>The panel shows this item of the results; arrows and clicks in the grid move it.</summary>
-    public PlayerViewModel CreatePreview(int index) => CreatePlayer(Tiles.ToList(), index, autoPlay: false);
+    public PlayerViewModel CreatePreview(int index) => CreatePlayer(Shown, index, autoPlay: false);
 
     // ---- background work ----
 

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -16,20 +17,18 @@ public partial class MainWindow : Window
 {
     private MainViewModel? _vm;
 
-    private UniformGridLayout TileLayout => (UniformGridLayout)Resources["TileLayout"]!;
-    private UniformGridLayout GroupTileLayout => (UniformGridLayout)Resources["GroupTileLayout"]!;
-    private const double TileGap = 6;
+    private readonly TileGridLayout _tileLayout = new();
     private PreviewMode _layoutMode = PreviewMode.Window;
 
     public MainWindow()
     {
         InitializeComponent();
+        Repeater.Layout = _tileLayout;
+        Repeater.ItemTemplate = new TileTemplates((IDataTemplate)Resources["TileTemplate"]!, (IDataTemplate)Resources["GroupTitleTemplate"]!);
         Repeater.ElementPrepared += OnTilePrepared;
         Repeater.ElementClearing += OnTileClearing;
         Repeater.Tapped += OnTileTapped;
         Repeater.DoubleTapped += OnTileDoubleTapped;
-        GroupRepeater.Tapped += OnTileTapped;
-        GroupRepeater.DoubleTapped += OnTileDoubleTapped;
         Preview.FullScreenRequested += OnPanelFullScreen;
         Preview.KeyboardWanted += () => GridScroll.Focus();
         PreviewSplitter.DragCompleted += OnPreviewSplitterDragged;
@@ -54,6 +53,7 @@ public partial class MainWindow : Window
         _vm.PlayerRequested += OpenPlayer;
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.ResultsReset += OnResultsReset;
+        ShowGridItems();
         ApplyTileSize();
         ApplySidebar();
         // After the first layout, so one row of thumbnails can be measured.
@@ -63,6 +63,7 @@ public partial class MainWindow : Window
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.TileSize)) ApplyTileSize();
+        if (e.PropertyName == nameof(MainViewModel.GridItems)) ShowGridItems();
         if (e.PropertyName is nameof(MainViewModel.ShowPreviewPanel) or nameof(MainViewModel.PreviewMode)) ApplyPreviewPanel();
         if (e.PropertyName == nameof(MainViewModel.SidebarVisible)) ApplySidebar();
     }
@@ -76,6 +77,13 @@ public partial class MainWindow : Window
 
     private void ApplyTileSize() => ApplyLayouts();
 
+    /// <summary>The layout and the repeater get the same list at once: the layout knows where its groups are.</summary>
+    private void ShowGridItems()
+    {
+        _tileLayout.Items = _vm!.GridItems;
+        Repeater.ItemsSource = _vm.GridItems;
+    }
+
     private PreviewMode LayoutMode => _vm is { ShowPreviewPanel: true } vm ? vm.PreviewMode : PreviewMode.Window;
 
     /// <summary>
@@ -87,48 +95,21 @@ public partial class MainWindow : Window
     {
         if (_vm == null) return;
         var mode = LayoutMode;
-        // Another arrangement: new layouts (one changed in place keeps the old arrangement's state and fails).
         if (mode != _layoutMode)
         {
             _layoutMode = mode;
-            Resources["TileLayout"] = NewTileLayout(mode);
-            Resources["GroupTileLayout"] = NewTileLayout(mode);
-            Resources["GroupLayout"] = mode == PreviewMode.Below
-                ? new StackLayout { Orientation = Orientation.Horizontal, Spacing = 20 }
-                : new StackLayout { Orientation = Orientation.Vertical };
             var below = mode == PreviewMode.Below;
-            BrowseArea.Classes.Set("strip", below);
             GridScroll.HorizontalScrollBarVisibility = below ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
             GridScroll.VerticalScrollBarVisibility = below ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         }
-        if (mode == PreviewMode.Window)
-            foreach (var layout in new[] { TileLayout, GroupTileLayout })
-            {
-                layout.MinItemWidth = _vm.TileSize;
-                layout.MinItemHeight = _vm.TileSize;
-            }
+        _tileLayout.Mode = mode switch
+        {
+            PreviewMode.Below => TileGridLayout.Arrangement.Row,
+            PreviewMode.Right => TileGridLayout.Arrangement.Column,
+            _ => TileGridLayout.Arrangement.Grid,
+        };
+        _tileLayout.TileSize = _vm.TileSize;
     }
-
-    /// <summary>A grid; or one row / column whose tiles grow with it, keeping 4:3.</summary>
-    private static UniformGridLayout NewTileLayout(PreviewMode mode) => mode switch
-    {
-        PreviewMode.Below => new UniformGridLayout
-        {
-            // Placed top to bottom with one per column: the columns go sideways.
-            Orientation = Orientation.Vertical, MaximumRowsOrColumns = 1, ItemsStretch = UniformGridLayoutItemsStretch.Uniform,
-            MinItemWidth = 40, MinItemHeight = 30, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
-        },
-        PreviewMode.Right => new UniformGridLayout
-        {
-            Orientation = Orientation.Horizontal, MaximumRowsOrColumns = 1, ItemsStretch = UniformGridLayoutItemsStretch.Uniform,
-            MinItemWidth = 40, MinItemHeight = 30, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
-        },
-        _ => new UniformGridLayout
-        {
-            MinItemWidth = 180, MinItemHeight = 180, MinRowSpacing = TileGap, MinColumnSpacing = TileGap,
-            ItemsStretch = UniformGridLayoutItemsStretch.Fill,
-        },
-    };
 
     // ---- grid ----
 
@@ -156,13 +137,12 @@ public partial class MainWindow : Window
         if (_vm != null && TileOf(e) is { } tile) _vm.Open(tile);
     }
 
-    /// <summary>Tiles per row, for Up / Down.</summary>
-    private int Columns()
+    /// <summary>Up / Down: the tile above or under it, also across the groups' titles.</summary>
+    private TileViewModel? MoveRow(int direction, bool extend)
     {
-        if (LayoutMode != PreviewMode.Window) return 1;
-        var width = GridScroll.Viewport.Width;
-        var tile = TileLayout.MinItemWidth + TileLayout.MinColumnSpacing;
-        return Math.Max(1, (int)((width + TileLayout.MinColumnSpacing) / tile));
+        var grid = _vm!.GridItems;
+        if (_vm.AnchorIndex < 0 || grid.Count == 0) return _vm.MoveSelection(0, extend);
+        return _vm.MoveSelectionTo(grid.ShownIndexOf(_tileLayout.RowStep(grid.IndexOfShown(_vm.AnchorIndex), direction)), extend);
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
@@ -213,10 +193,10 @@ public partial class MainWindow : Window
                 break;
             case Key.Left: moved = _vm.MoveSelection(-1, shift); break;
             case Key.Right: moved = _vm.MoveSelection(1, shift); break;
-            case Key.Up: moved = _vm.MoveSelection(-Columns(), shift); break;
-            case Key.Down: moved = _vm.MoveSelection(Columns(), shift); break;
-            case Key.Home: moved = _vm.MoveSelection(-_vm.Tiles.Count, shift); break;
-            case Key.End: moved = _vm.MoveSelection(_vm.Tiles.Count, shift); break;
+            case Key.Up: moved = MoveRow(-1, shift); break;
+            case Key.Down: moved = MoveRow(1, shift); break;
+            case Key.Home: moved = _vm.MoveSelectionTo(0, shift); break;
+            case Key.End: moved = _vm.MoveSelectionTo(_vm.Shown.Count - 1, shift); break;
             case Key.Enter when _vm.AnchorTile is { } tile:
                 _vm.Open(tile);
                 break;
@@ -269,21 +249,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Scrolls to the tile: the layout knows its place without creating it.</summary>
     private void BringIntoView(TileViewModel tile)
     {
-        if (!_vm!.IsGrouped)
-        {
-            var index = _vm.Tiles.IndexOf(tile);
-            if (index >= 0) Repeater.GetOrCreateElement(index).BringIntoView();
-            return;
-        }
-        var group = _vm.Groups.Select((g, i) => (g, i)).FirstOrDefault(x => x.g.Tiles.Contains(tile));
-        if (group.g == null) return;
-        var container = GroupRepeater.GetOrCreateElement(group.i);
-        container.UpdateLayout();
-        if (container.GetVisualDescendants().OfType<ItemsRepeater>().FirstOrDefault() is { } inner)
-            inner.GetOrCreateElement(group.g.Tiles.ToList().IndexOf(tile)).BringIntoView();
-        else container.BringIntoView();
+        if (_tileLayout.Place(_vm!.GridItems.IndexOf(tile)) is { } place) Repeater.BringIntoView(place);
     }
 
     /// <summary>A tile came on screen (plain grid or a group): load its thumbnail.</summary>
@@ -372,9 +341,9 @@ public partial class MainWindow : Window
     private void ShowInPanel(TileViewModel tile)
     {
         if (_vm is not { ShowPreviewPanel: true }) return;
-        var index = _vm.Tiles.IndexOf(tile);
+        var index = _vm.Shown.IndexOf(tile);
         if (index < 0) return;
-        if (_panelPlayer != null && _panelPlayer.Plays(_vm.Tiles)) _panelPlayer.GoTo(index);
+        if (_panelPlayer != null && _panelPlayer.Plays(_vm.Shown)) _panelPlayer.GoTo(index);
         else
         {
             // Other results: a paused panel stays paused.
@@ -480,10 +449,9 @@ public partial class MainWindow : Window
     /// <summary>The height of one row of thumbnails as laid out now (with a group title when grouped).</summary>
     private double OneRowHeight()
     {
-        var tile = Repeater.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("tile"))?.Bounds.Height
-                   ?? GroupRepeater.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("tile"))?.Bounds.Height;
+        var tile = Repeater.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("tile"))?.Bounds.Height;
         var height = (tile is > 0 ? tile.Value : _vm!.TileSize) + GridScroll.Padding.Top + GridScroll.Padding.Bottom + 4;
-        return _vm!.IsGrouped ? height + 44 : height;
+        return _vm!.IsGrouped ? height + 30 : height;
     }
 
     private double OneColumnWidth() => _vm!.TileSize + GridScroll.Padding.Left + GridScroll.Padding.Right + 16;

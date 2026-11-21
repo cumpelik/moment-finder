@@ -1,3 +1,4 @@
+using Dapper;
 using MomentFinder.Analysis;
 using MomentFinder.Library;
 using MomentFinder.People;
@@ -206,6 +207,39 @@ public class PeopleTests
         Assert.Empty(new Cloud.CloudService(lib.Paths, lib.Db, lib.Repo).Mirrors());
         Assert.Equal(0, new EventBuilder(lib.Db).Rebuild());
         new IdentityService(repo).Recompute();
+    }
+
+    /// <summary>The viewer over a whole large library asks who is in thousands of videos at once.</summary>
+    [Fact]
+    public void PeopleInThousandsOfVideos()
+    {
+        using var lib = new TestLibrary();
+        var source = lib.AddSource();
+        var repo = new PeopleRepository(lib.Db);
+        var eva = repo.CreatePerson("Eva");
+        var tom = repo.CreatePerson("Tom");
+        var hidden = repo.CreatePerson("Nobody");
+        List<long> ids;
+        using (var c = lib.Db.Open())
+        using (var tx = c.BeginTransaction())
+        {
+            ids = Enumerable.Range(0, 3000).Select(i => c.ExecuteScalar<long>(
+                "INSERT INTO media(source_id, rel_path, kind, size, mtime, taken_at, duration_ms) VALUES(@id, @name, 2, 1, 1, 1, 20000) RETURNING id",
+                new { id = source.Id, name = $"v{i}.mp4" }, tx)).ToList();
+            void Seen(long media, long? person, long? suggested) => c.Execute(
+                "INSERT INTO detection(media_id, time_ms, kind, x, y, w, h, score, quality, embedding, person_id, suggest_person_id) VALUES(@media, 0, 1, 0, 0, 0.2, 0.5, 1, 1, x'00', @person, @suggested)",
+                new { media, person, suggested }, tx);
+            // Tom in three videos (one of them only suggested), Eva in one, the hidden one and one outside the list too.
+            Seen(ids[10], tom.Id, null);
+            Seen(ids[2000], tom.Id, null);
+            Seen(ids[2999], null, tom.Id);
+            Seen(ids[5], eva.Id, null);
+            Seen(ids[6], hidden.Id, null);
+            c.Execute("UPDATE person SET hidden=1 WHERE id=@id", new { id = hidden.Id }, tx);
+            tx.Commit();
+        }
+        Assert.Equal([tom.Id, eva.Id], repo.PersonsIn(ids));
+        Assert.Equal([eva.Id], repo.PersonsIn(ids.Take(8)));
     }
 
     [Fact]

@@ -14,6 +14,24 @@ namespace MomentFinder.App.ViewModels;
 /// <summary>An item to show; for a video found by a description, the part that matches.</summary>
 public sealed record PlaylistEntry(MediaItem Item, int StartMs, IReadOnlyList<(int StartMs, int EndMs)>? MatchMoments = null);
 
+/// <summary>The viewer's items, each made when it is reached: the panel over a whole library is millions of them.</summary>
+public sealed class Playlist(IReadOnlyList<TileViewModel> tiles, Func<TileViewModel, PlaylistEntry> make) : IReadOnlyList<PlaylistEntry>
+{
+    private readonly PlaylistEntry?[] _made = new PlaylistEntry?[tiles.Count];
+
+    /// <summary>The tiles it was made from: the same list means the same items.</summary>
+    public IReadOnlyList<TileViewModel> Tiles => tiles;
+    public int Count => _made.Length;
+    public PlaylistEntry this[int index] => _made[index] ??= make(tiles[index]);
+
+    public IEnumerator<PlaylistEntry> GetEnumerator()
+    {
+        for (var i = 0; i < Count; i++) yield return this[i];
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 /// <summary>Rate and Loop: what the previous viewer had, so an analysis session keeps them.</summary>
 public sealed record PlayerSettings(int SlideSeconds, int Volume, double Rate = 1, bool Loop = false, bool ShowPeople = false);
 
@@ -31,7 +49,7 @@ public sealed record MomentChoice(string Label, MomentKind Kind, IReadOnlyList<l
 /// </summary>
 public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 {
-    private readonly List<PlaylistEntry> _entries;
+    private readonly Playlist _entries;
     private readonly PlayerSettings _settings;
     private readonly MainViewModel _main;
     private readonly DispatcherTimer _slideTimer;
@@ -153,7 +171,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>For the view: the video image must be invalidated / replaced.</summary>
     public event Action? VideoFrameChanged;
 
-    public PlayerViewModel(List<PlaylistEntry> entries, int index, bool autoPlay, PlayerSettings settings, MainViewModel main,
+    public PlayerViewModel(Playlist entries, int index, bool autoPlay, PlayerSettings settings, MainViewModel main,
         IReadOnlyList<MomentChoice> momentChoices, MomentChoice momentChoice)
     {
         _entries = entries;
@@ -617,8 +635,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>The next photo is decoded while the current one is shown, so moving on is instant.</summary>
     private void Prefetch()
     {
+        // Only the photos around the current one stay decoded.
+        var near = Enumerable.Range(Index - 2, 5).Where(i => i >= 0 && i < Count).Select(i => _entries[i].Item.Id).ToHashSet();
         foreach (var stale in _prefetch.Keys.ToList())
-            if (Math.Abs(_entries.FindIndex(e => e.Item.Id == stale) - Index) > 2) _prefetch.Remove(stale);
+            if (!near.Contains(stale)) _prefetch.Remove(stale);
         if (Index + 1 < Count && _entries[Index + 1].Item is { IsVideo: false } next && !_prefetch.ContainsKey(next.Id)
             && !Media.Fisheye360.IsDualFisheye(next.FullPath))
             _prefetch[next.Id] = DecodeAsync(next);
@@ -967,7 +987,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     /// <summary>Whether this viewer shows exactly these results (then the panel only moves, it is not rebuilt).</summary>
     public bool Plays(IReadOnlyList<TileViewModel> tiles) =>
-        tiles.Count == Count && tiles.Select(t => t.Item.Id).SequenceEqual(_entries.Select(e => e.Item.Id));
+        ReferenceEquals(tiles, _entries.Tiles)
+        || tiles.Count == Count && tiles.Select(t => t.Item.Id).SequenceEqual(_entries.Tiles.Select(t => t.Item.Id));
 
     /// <summary>The panel's video stops while the same item plays full screen.</summary>
     public void Pause()

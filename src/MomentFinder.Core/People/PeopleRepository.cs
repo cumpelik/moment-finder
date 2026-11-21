@@ -306,6 +306,22 @@ public sealed class PeopleRepository
         var ids = mediaIds.ToList();
         if (ids.Count == 0) return [];
         using var c = _db.Open();
+        if (ids.Count > 500)
+        {
+            // Thousands of media (a whole large library): SQLite allows no IN list that long, so who is where
+            // is read once from the indexes and counted here.
+            var wanted = ids.ToHashSet();
+            return c.Query<(long PersonId, long MediaId)>("""
+                    SELECT person_id, media_id FROM detection WHERE person_id IS NOT NULL
+                    UNION SELECT suggest_person_id, media_id FROM detection WHERE person_id IS NULL AND suggest_person_id IS NOT NULL
+                    """)
+                .Where(r => wanted.Contains(r.MediaId))
+                .GroupBy(r => r.PersonId)
+                .OrderByDescending(g => g.Count())
+                .Select(g => g.Key)
+                .Intersect(c.Query<long>("SELECT id FROM person WHERE hidden=0"))
+                .ToList();
+        }
         return c.Query<long>("""
             SELECT p.id FROM detection d JOIN person p ON p.id=COALESCE(d.person_id, d.suggest_person_id) AND p.hidden=0
             WHERE d.media_id IN @ids GROUP BY p.id ORDER BY COUNT(DISTINCT d.media_id) DESC

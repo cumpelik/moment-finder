@@ -49,21 +49,26 @@ public sealed partial class MainViewModel
         new(GroupMode.Folder, "By folder"),
     ];
 
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsGrouped), nameof(FlatTiles))] private GroupOption _groupBy = null!;
-    [ObservableProperty] private ObservableCollection<TileGroup> _groups = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsGrouped))] private GroupOption _groupBy = null!;
+    /// <summary>What the grid shows: the results, plain or each group's title followed by its tiles.</summary>
+    [ObservableProperty] private TileGrid _gridItems = TileGrid.Empty;
+
+    /// <summary>The tiles in the order the grid shows them (group after group): arrows, Shift ranges and the viewer go this way.</summary>
+    public List<TileViewModel> Shown { get; private set; } = [];
+
+    private void ShowGrid(TileGrid grid, List<TileViewModel> shown)
+    {
+        var anchor = AnchorTile;
+        Shown = shown;
+        _anchorIndex = anchor == null ? -1 : shown.IndexOf(anchor);
+        GridItems = grid;
+    }
 
     public bool IsGrouped => GroupBy.Mode != GroupMode.None;
 
     /// <summary>The panel under the thumbnails is open (the choice is on and the grid is shown).</summary>
     public bool ShowPreviewPanel => OpenInPanel && IsGridMode;
-    /// <summary>The plain grid gets the tiles only when the results are not grouped (two grids would load every thumbnail twice).</summary>
-    public ObservableCollection<TileViewModel>? FlatTiles => IsGrouped ? null : Tiles;
-
-    partial void OnTilesChanged(ObservableCollection<TileViewModel> value)
-    {
-        OnPropertyChanged(nameof(FlatTiles));
-        RebuildGroups();
-    }
+    partial void OnTilesChanged(ObservableCollection<TileViewModel> value) => RebuildGroups();
 
     partial void OnGroupByChanged(GroupOption value)
     {
@@ -85,14 +90,18 @@ public sealed partial class MainViewModel
         var version = ++_groupsVersion;
         if (!IsGrouped)
         {
-            if (Groups.Count > 0) Groups = [];
+            ShowGrid(TileGrid.Plain(Tiles), Tiles.ToList());
             return;
         }
         // Grouped off the UI thread: a library of millions takes a moment.
         var tiles = Tiles.ToList();
         var mode = GroupBy.Mode;
-        var groups = await Task.Run(() => BuildGroups(tiles, mode));
-        if (version == _groupsVersion) Groups = new ObservableCollection<TileGroup>(groups);
+        var (groups, shown) = await Task.Run(() =>
+        {
+            var groups = BuildGroups(tiles, mode);
+            return (groups, groups.SelectMany(g => g.Tiles).ToList());
+        });
+        if (version == _groupsVersion) ShowGrid(TileGrid.Grouped(groups), shown);
     }
 
     private List<TileGroup> BuildGroups(List<TileViewModel> tiles, GroupMode mode)
