@@ -285,6 +285,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             else
             {
+                // The video before must not go on playing (and sounding) under "Downloading".
+                _video.Stop();
+                _positionTimer.Stop();
                 _ = PlayFromCloudAsync(entry, version);
             }
         }
@@ -569,10 +572,17 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private async Task PlayFromCloudAsync(PlaylistEntry entry, int version)
     {
-        LoadingText = "Downloading from the cloud...";
+        LoadingText = "Downloading the video from the cloud...";
         try
         {
-            var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None, waited: true);
+            // A video is large: how far, so the wait is not a mystery.
+            var downloaded = false;
+            var progress = new Progress<Cloud.Rclone.CopyProgress>(p =>
+            {
+                if (version == _loadVersion && !downloaded) LoadingText = $"Downloading the video from the cloud: {p.Text}";
+            });
+            var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None, waited: true, progress);
+            downloaded = true;
             if (version != _loadVersion || _video == null) return;
             LoadingText = "Loading...";
             _playingPath = Is360 ? Path360(entry.Item, path, version) : path;

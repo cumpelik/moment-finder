@@ -39,7 +39,8 @@ public static class MediaFiles
     /// The local path of the item's bytes, downloaded first when needed. Waited: somebody is looking at the screen
     /// for it (the viewer), so it does not wait for the downloads of the background analysis.
     /// </summary>
-    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct, bool waited = false)
+    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct, bool waited = false,
+        IProgress<Rclone.CopyProgress>? progress = null)
     {
         if (item.Remote == null) return item.FullPath;
         if (IsCached(item))
@@ -68,7 +69,11 @@ public static class MediaFiles
             }
             try
             {
-                if (!IsCached(item)) await _rclone.DownloadAsync(item.Remote, item.FullPath, ct);
+                if (!IsCached(item))
+                {
+                    await _rclone.DownloadAsync(item.Remote, item.FullPath, progress, ct);
+                    Fetched?.Invoke(item.Id);
+                }
             }
             finally
             {
@@ -82,6 +87,9 @@ public static class MediaFiles
         }
         return item.FullPath;
     }
+
+    /// <summary>An item of a cloud source is on this computer now (its thumbnail says so); raised on a background thread.</summary>
+    public static event Action<long>? Fetched;
 
     /// <summary>Deletes the least recently used cached cloud files above the limit.</summary>
     public static void TrimCache()

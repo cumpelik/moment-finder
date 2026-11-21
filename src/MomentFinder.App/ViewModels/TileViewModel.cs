@@ -55,6 +55,26 @@ public sealed partial class TileViewModel : ObservableObject
         });
     }
 
+    /// <summary>An item of a cloud source that is on this computer already: it opens at once.</summary>
+    [ObservableProperty] private bool _downloaded;
+
+    public bool InCloud => Item.Remote != null;
+
+    private void RefreshDownloaded()
+    {
+        if (!InCloud) return;
+        _ = Task.Run(() =>
+        {
+            var local = Cloud.MediaFiles.IsLocal(Item);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => Downloaded = local);
+        });
+    }
+
+    private void OnFetched(long id)
+    {
+        if (id == Item.Id) Avalonia.Threading.Dispatcher.UIThread.Post(() => Downloaded = true);
+    }
+
     public string? DurationText => Item.DurationMs is { } ms ? Format.Duration(ms) : null;
 
     public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "") + (Note is { } n ? $"\n\n{n}" : "");
@@ -67,10 +87,18 @@ public sealed partial class TileViewModel : ObservableObject
 
     public void Realize(ThumbnailLoader loader)
     {
-        if (_shown++ == 0 && Is360)
+        if (_shown++ == 0)
         {
-            Media.Proxy360.Changed += Refresh360;
-            Refresh360();
+            if (Is360)
+            {
+                Media.Proxy360.Changed += Refresh360;
+                Refresh360();
+            }
+            if (InCloud)
+            {
+                Cloud.MediaFiles.Fetched += OnFetched;
+                RefreshDownloaded();
+            }
         }
         if (Thumb != null || _loading != null) return;
         var cts = _loading = new CancellationTokenSource();
@@ -100,6 +128,7 @@ public sealed partial class TileViewModel : ObservableObject
         if (--_shown > 0) return;
         _shown = 0;
         Media.Proxy360.Changed -= Refresh360;
+        Cloud.MediaFiles.Fetched -= OnFetched;
         _loading?.Cancel();
         _loading = null;
         Thumb = null;
