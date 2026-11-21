@@ -146,6 +146,9 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             : $"Changes from {others.Count} other {(others.Count == 1 ? "computer" : "computers")} came in. " + sync;
     }
 
+    /// <summary>Other computers keep their own libraries in this cloud: share from the right one.</summary>
+    [ObservableProperty] private string _shareHint = "";
+
     private async Task CheckSharedAsync()
     {
         try
@@ -153,6 +156,14 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             var exists = await _host.Sync.SharedLibraryExistsAsync(CancellationToken.None);
             CanShare = !exists;
             CanJoin = exists;
+            if (!exists && _host.Cloud.BackupCloud is { } cloud)
+            {
+                var others = (await _host.Cloud.Rclone.ListAsync(_host.Cloud.BackupRoot(cloud), 2, CancellationToken.None))
+                    .Where(f => f.Path.EndsWith("/" + LibraryBackup.DbName, StringComparison.Ordinal) && !f.Path.StartsWith(_host.Cloud.Device.Folder + "/", StringComparison.Ordinal))
+                    .Select(f => f.Path.Split('/')[0]).Select(f => f.LastIndexOf('-') is > 0 and var dash ? f[..dash] : f).Distinct().ToList();
+                ShareHint = others.Count == 0 ? ""
+                    : $"Other computers keep their library in this cloud too ({string.Join(", ", others)}). Share from the computer whose library you use the most: the others join it and keep what was named on them.";
+            }
         }
         catch (RcloneException)
         {

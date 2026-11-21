@@ -101,6 +101,8 @@
                                     <TextBlock FontWeight="SemiBold" Text="Use this library on more computers, at the same time" />
                                     <TextBlock Classes="muted" TextWrapping="Wrap"
                                                Text="Share it, and every computer that joins it has the same library: the folders in the cloud, the names, who is who and the buckets. What anybody changes shows on the others within a minute. Thumbnails and search data are made once for all. Folders only on one computer's disk stay that computer's." />
+                                    <TextBlock Foreground="#F59E0B" TextWrapping="Wrap" Text="{Binding ShareHint}"
+                                               IsVisible="{Binding ShareHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                                     <Button Classes="accent" Command="{Binding ShareCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Share this library</Button>
                                 </StackPanel>
                             </Border>

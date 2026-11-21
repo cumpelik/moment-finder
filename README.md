@@ -58,8 +58,17 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   On a second or new computer, paste it (Settings, Your library on this computer too, also offered by an empty
   library): the library is copied there in the background (the main window shows how far, it goes on after a
   restart) and opens at the next start, as it was. Folders that are not on that computer are browsed from the cloud,
-  files fetched into a size-limited cache when opened. From then on each computer has its own library; the copy does
-  not upload the library again until it is turned on there. Whoever has the string gets into the storage.
+  files fetched into a size-limited cache when opened. Whoever has the string gets into the storage.
+- **One library for the family** (Settings, Share this library): several computers use one library at the same
+  time. Every folder in the cloud (backed up, cloned or added from the cloud) shows on all of them; removed on one, it
+  is removed on all (the files stay). Names, who is (not) on a face, buckets and their order are the same everywhere:
+  each computer sends its changes as files of its own into `.medialens/shared/journal/<computer>/` and takes in the
+  others' every minute; of two changes of one thing the later counts. Which files a folder has is said by the
+  computer that puts them into the cloud, so every computer shows the same photos, only those really there, without
+  downloading them. Thumbnails and search data are made once and stored once (`.medialens/shared/content/`). A
+  computer joins with the recovery string (or "Join the shared library" when it has the cloud already): it takes the
+  newest summary of the library (`.medialens/shared/snapshot/`) and the changes since, and keeps its own folders
+  with everything found in them and what was named on it. Folders only on one computer's disk stay its own.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
 - **Moved files**: a photo or video moved or renamed (also to another source) is recognized by its content
   and keeps its thumbnail, people, buckets and analysis.
