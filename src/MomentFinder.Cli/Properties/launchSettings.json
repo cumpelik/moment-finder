@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "momentfinder stats": {
+      "commandName": "Project",
+      "commandLineArgs": "stats"
+    }
+  }
+}

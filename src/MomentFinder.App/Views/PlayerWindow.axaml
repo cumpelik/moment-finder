@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+        xmlns:views="clr-namespace:MomentFinder.App.Views"
+        x:Class="MomentFinder.App.Views.PlayerWindow"
+        x:DataType="vm:PlayerViewModel"
+        Title="{Binding Title}"
+        Background="Black"
+        WindowState="FullScreen"
+        Width="1280" Height="800">
+    <views:PlayerView x:Name="View" />
+</Window>

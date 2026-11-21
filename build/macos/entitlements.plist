@@ -4,7 +4,7 @@
      library validation is off so that libVLC can load its plugins and ONNX Runtime its providers whatever signed them.
      photos-library: the hardened runtime blocks access to the Photos library without it (the prompt text is
      NSPhotoLibraryUsageDescription in Info.plist). network.client: model downloads and cloud sources (only enforced
-     inside the App Sandbox, which MediaLens does not use, but declared for clarity). -->
+     inside the App Sandbox, which MomentFinder does not use, but declared for clarity). -->
 <plist version="1.0">
 <dict>
     <key>com.apple.security.cs.allow-jit</key>

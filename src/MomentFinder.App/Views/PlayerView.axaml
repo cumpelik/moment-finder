@@ -1,0 +1,187 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             x:Class="MomentFinder.App.Views.PlayerView"
+             x:DataType="vm:PlayerViewModel">
+    <UserControl.Styles>
+        <!-- A click on a control must not take the keyboard: Space stays play / pause, not that button -->
+        <Style Selector="Button, ToggleButton">
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <!-- Not the normal speed: visible at a glance -->
+        <Style Selector="Border.loophandle">
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Background" Value="#F59E0B" />
+            <Setter Property="BorderBrush" Value="#B0000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="SizeWestEast" />
+        </Style>
+        <Style Selector="Button.active">
+            <Setter Property="Foreground" Value="#F59E0B" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid x:Name="Root" Background="Black">
+        <!-- The picture and the people boxes share one coordinate space (pixels of the picture); the Viewbox fits it to the screen. -->
+        <Viewbox Stretch="Uniform">
+            <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
+                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !IsVideo}" />
+                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding VideoReady}" />
+                <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
+            </Panel>
+        </Viewbox>
+        <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,16,0,0" Padding="14,8" CornerRadius="6"
+                Background="#CC000000" IsVisible="{Binding ShowPeople}" IsHitTestVisible="False">
+            <TextBlock Text="{Binding PeopleHint}" Foreground="White" FontSize="15" />
+        </Border>
+        <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="18,12" CornerRadius="8" MaxWidth="560"
+                Background="#CC000000" IsHitTestVisible="False"
+                IsVisible="{Binding Notice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding Notice}" Foreground="White" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" />
+        </Border>
+        <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="22,14" CornerRadius="8" Background="#CC000000"
+                IsHitTestVisible="False" IsVisible="{Binding IsLoading}">
+            <StackPanel Spacing="10" MinWidth="160">
+                <TextBlock Text="{Binding LoadingText}" Foreground="White" FontSize="16" HorizontalAlignment="Center" />
+                <ProgressBar IsIndeterminate="True" />
+            </StackPanel>
+        </Border>
+        <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,110" Padding="14,8" CornerRadius="6"
+                Background="#CC000000" IsHitTestVisible="False"
+                IsVisible="{Binding Lens360Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding Lens360Text}" Foreground="White" FontSize="14" />
+        </Border>
+        <!-- A 360 video being prepared for smooth playing: what happens, how far, and a way out -->
+        <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="20,16" CornerRadius="8" Background="#E0000000"
+                MaxWidth="460" IsVisible="{Binding Preparing360}">
+            <StackPanel Spacing="10">
+                <TextBlock Text="{Binding PrepareText}" Foreground="White" FontSize="15" TextWrapping="Wrap" />
+                <ProgressBar Value="{Binding PrepareProgress}" Minimum="0" Maximum="100" />
+                <TextBlock Foreground="#B0FFFFFF" FontSize="12" TextWrapping="Wrap" Text="{Binding PrepareHint}" />
+                <Button Command="{Binding StopPreparingCommand}" HorizontalAlignment="Right">Stop</Button>
+            </StackPanel>
+        </Border>
+        <TextBlock Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   Foreground="#DDDDDD" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
+
+        <Border x:Name="Overlay" Classes="overlay" VerticalAlignment="Bottom">
+            <Border.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.25" />
+                </Transitions>
+            </Border.Transitions>
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsVideo}">
+                    <Slider x:Name="SeekBar" Minimum="0" Maximum="{Binding VideoLength}" Value="{Binding VideoPosition, Mode=OneWay}"
+                            VerticalAlignment="Center" />
+                    <!-- The part that loops, on the time line: its two ends can be dragged -->
+                    <Canvas x:Name="LoopLayer" IsVisible="{Binding HasLoopPart}">
+                        <Border x:Name="LoopBar" Height="8" CornerRadius="4" Background="#A0F59E0B" IsHitTestVisible="False" />
+                        <Border x:Name="LoopStartHandle" Classes="loophandle" CornerRadius="4,4,0,4"
+                                ToolTip.Tip="The loop starts here: drag to move it" />
+                        <Border x:Name="LoopEndHandle" Classes="loophandle" CornerRadius="4,4,4,0"
+                                ToolTip.Tip="The loop ends here: drag to move it" />
+                    </Canvas>
+                    <TextBlock Grid.Column="1" Text="{Binding VideoTimeText}" VerticalAlignment="Center" Margin="12,0,0,0"
+                               FontFeatures="tnum" />
+                </Grid>
+                <!-- Playing on the left (large), the title in the middle, tools on the right in groups -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" Margin="0,0,20,0">
+                        <Button Classes="transport" Command="{Binding PreviousCommand}" ToolTip.Tip="Previous (Left)">
+                            <mi:MaterialIcon Kind="SkipPrevious" />
+                        </Button>
+                        <Button Classes="transport play" Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / pause; with photos a slideshow (Space)">
+                            <Panel>
+                                <mi:MaterialIcon Kind="Play" IsVisible="{Binding !IsRunning}" />
+                                <mi:MaterialIcon Kind="Pause" IsVisible="{Binding IsRunning}" />
+                            </Panel>
+                        </Button>
+                        <Button Classes="transport" Command="{Binding NextCommand}" ToolTip.Tip="Next (Right)">
+                            <mi:MaterialIcon Kind="SkipNext" />
+                        </Button>
+                        <TextBlock Text="{Binding PositionText}" VerticalAlignment="Center" Opacity="0.75" Margin="4,0,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2" Margin="0,0,16,0">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Detail}" Opacity="0.75" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding MomentText}" FontSize="12" Foreground="#F59E0B" TextTrimming="CharacterEllipsis"
+                                   IsVisible="{Binding MomentText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        <TextBlock Text="{Binding LoopText}" FontSize="12" Foreground="#F59E0B" TextTrimming="CharacterEllipsis"
+                                   IsVisible="{Binding LoopText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                        <ComboBox ItemsSource="{Binding MomentChoices}" SelectedItem="{Binding MomentChoice}" IsVisible="{Binding ShowMomentChoices}"
+                                  VerticalAlignment="Center" MinWidth="150" Focusable="False"
+                                  ToolTip.Tip="What the videos play: whole, or only the moments of someone" />
+                        <!-- Looking at a technique: frame by frame, slow motion, loop (of a part chosen with Start / End) -->
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}">
+                            <Button Command="{Binding NextFrameCommand}" IsEnabled="{Binding !IsRunning}" ToolTip.Tip="One frame further (.), when paused">
+                                <mi:MaterialIcon Kind="StepForward" />
+                            </Button>
+                            <Button Classes.active="{Binding IsSlowOrFast}" MinWidth="46" ToolTip.Tip="Speed: slow motion ([ slower, ] faster)">
+                                <TextBlock Text="{Binding RateText}" />
+                                <Button.Flyout>
+                                    <MenuFlyout>
+                                        <MenuItem Header="0.1×" Command="{Binding SetRateCommand}" CommandParameter="0.1" />
+                                        <MenuItem Header="0.25×" Command="{Binding SetRateCommand}" CommandParameter="0.25" />
+                                        <MenuItem Header="0.5×" Command="{Binding SetRateCommand}" CommandParameter="0.5" />
+                                        <MenuItem Header="0.75×" Command="{Binding SetRateCommand}" CommandParameter="0.75" />
+                                        <MenuItem Header="1×  normal" Command="{Binding SetRateCommand}" CommandParameter="1" />
+                                        <MenuItem Header="1.5×" Command="{Binding SetRateCommand}" CommandParameter="1.5" />
+                                        <MenuItem Header="2×" Command="{Binding SetRateCommand}" CommandParameter="2" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
+                            <ToggleButton IsChecked="{Binding Loop}" ToolTip.Tip="Loop on / off: the video, or the part marked with Start and End, again and again (L)">
+                                <mi:MaterialIcon Kind="Repeat" />
+                            </ToggleButton>
+                            <Button Command="{Binding SetLoopStartCommand}" ToolTip.Tip="The loop starts where the video is now (works paused too)">
+                                <TextBlock Text="Start" FontSize="12" />
+                            </Button>
+                            <Button Command="{Binding SetLoopEndCommand}" ToolTip.Tip="The loop ends where the video is now, and starts playing">
+                                <TextBlock Text="End" FontSize="12" />
+                            </Button>
+                            <!-- Always there (faded without a part), so Start and End never move under the mouse -->
+                            <Button Command="{Binding ClearLoopPartCommand}" IsEnabled="{Binding HasLoopPart}" ToolTip.Tip="Forget the marked part">
+                                <TextBlock Text="Clear" FontSize="12" />
+                            </Button>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" IsVisible="{Binding IsVideo}">
+                            <Button Command="{Binding ToggleMuteCommand}" ToolTip.Tip="Sound on / off (Up / Down: volume)" Focusable="False">
+                                <Panel>
+                                    <mi:MaterialIcon Kind="VolumeHigh" IsVisible="{Binding !IsMuted}" />
+                                    <mi:MaterialIcon Kind="VolumeOff" IsVisible="{Binding IsMuted}" />
+                                </Panel>
+                            </Button>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding Volume}" Width="70" VerticalAlignment="Center" Focusable="False" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                            <ToggleButton IsChecked="{Binding ShowPeople}" ToolTip.Tip="Show the people (I) and say who is who"
+                                          Padding="8,4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <mi:MaterialIcon Kind="AccountBoxOutline" Width="20" Height="20" />
+                                    <TextBlock Text="Who is who" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
+                                <Panel>
+                                    <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />
+                                    <mi:MaterialIcon Kind="Basket" IsVisible="{Binding InBucket}" Foreground="{DynamicResource BucketBadgeBrush}" />
+                                </Panel>
+                            </Button>
+                            <Button x:Name="FullScreenButton" ToolTip.Tip="Full screen (F)">
+                                <mi:MaterialIcon Kind="Fullscreen" />
+                            </Button>
+                            <Button x:Name="CloseButton" Command="{Binding CloseCommand}" ToolTip.Tip="Close (Esc)">
+                                <mi:MaterialIcon Kind="Close" />
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

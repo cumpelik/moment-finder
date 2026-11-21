@@ -1,12 +1,12 @@
-# Release build of MediaLens
+# Release build of MomentFinder
 
 Each platform has one script that publishes the application **self-contained** (nobody has to install .NET), adds the external tools and builds the packages. The scripts run by hand or from the GitHub workflows ([`.github/workflows`](../.github/workflows)), which only call them.
 
 | Platform | Runs on | Script | Result in `build/out/` |
 |---|---|---|---|
-| Windows | Windows (`windows-latest`) | `build/windows/build.ps1` | `MediaLens-<version>-win-x64.exe` (Inno Setup, installs into `Program Files\MediaLens`, Start menu shortcut), `MediaLens-<version>-win-x64.zip` (the same files, unzip and run) |
-| Linux | Linux (`ubuntu-latest`) | `build/linux/build.sh` | `MediaLens-<version>-linux-x64.AppImage`, `MediaLens-<version>-linux-x64.deb` |
-| macOS | macOS (`macos-latest`) | `build/macos/build.sh` | `MediaLens-<version>-osx-arm64.dmg`, `MediaLens-<version>-osx-x64.dmg`, signed and notarized |
+| Windows | Windows (`windows-latest`) | `build/windows/build.ps1` | `MomentFinder-<version>-win-x64.exe` (Inno Setup, installs into `Program Files\MomentFinder`, Start menu shortcut), `MomentFinder-<version>-win-x64.zip` (the same files, unzip and run) |
+| Linux | Linux (`ubuntu-latest`) | `build/linux/build.sh` | `MomentFinder-<version>-linux-x64.AppImage`, `MomentFinder-<version>-linux-x64.deb` |
+| macOS | macOS (`macos-latest`) | `build/macos/build.sh` | `MomentFinder-<version>-osx-arm64.dmg`, `MomentFinder-<version>-osx-x64.dmg`, signed and notarized |
 
 Everything goes to `build/out/` (ignored by git): the packages right in it, the publish folders, the app bundles and the download cache of the tools in subfolders.
 
@@ -35,7 +35,7 @@ The version is `<Version>` of `Directory.Build.props` unless given; it is passed
 
 ## What goes into the packages
 
-- **The application**: `src/MediaLens.App`, published with `-c Release -r <rid> --self-contained true`. The runtime identifier selects ONNX Runtime (Windows: DirectML; macOS and Linux: CPU, on macOS with CoreML; Linux with `ORT_CUDA=true`: CUDA) and libVLC (Windows and macOS: from NuGet, inside the package).
+- **The application**: `src/MomentFinder.App`, published with `-c Release -r <rid> --self-contained true`. The runtime identifier selects ONNX Runtime (Windows: DirectML; macOS and Linux: CPU, on macOS with CoreML; Linux with `ORT_CUDA=true`: CUDA) and libVLC (Windows and macOS: from NuGet, inside the package).
 - **Linux libVLC**: from the distribution. The `.deb` depends on `libvlc5` and `vlc-plugin-base`; the AppImage needs `vlc` (or `libvlc5` and `vlc-plugin-base`) installed.
 - **Tools** in `tools/` next to the executable (the application looks there first): `ffmpeg`, `ffprobe` and `rclone`, plus `THIRD-PARTY.txt` with their licenses and sources. The versions, URLs and SHA-256 values are pinned at the top of each script; a download whose hash differs stops the build.
 
@@ -53,7 +53,7 @@ To update a tool, change the version, file name and SHA-256 at the top of the sc
 
 ### Windows: Azure Artifact Signing
 
-Unsigned, the installer works, but SmartScreen shows "Windows protected your PC" and Smart App Control may block the application. Signed, it shows **Letsnet s.r.o.** as the publisher. `build/windows/build.ps1` downloads SignTool and the Artifact Signing plugin from NuGet and signs `MediaLens.exe`, every DLL without a signature of its own (Avalonia, libVLC plugins, ...) and the bundled `ffmpeg.exe`, `ffprobe.exe` and `rclone.exe`; the installer, its uninstaller and the setup engine are signed by Inno Setup itself (`SignTool` in `MediaLens.iss`).
+Unsigned, the installer works, but SmartScreen shows "Windows protected your PC" and Smart App Control may block the application. Signed, it shows **Letsnet s.r.o.** as the publisher. `build/windows/build.ps1` downloads SignTool and the Artifact Signing plugin from NuGet and signs `MomentFinder.exe`, every DLL without a signature of its own (Avalonia, libVLC plugins, ...) and the bundled `ffmpeg.exe`, `ffprobe.exe` and `rclone.exe`; the installer, its uninstaller and the setup engine are signed by Inno Setup itself (`SignTool` in `MomentFinder.iss`).
 
 Signing starts when `ARTIFACT_SIGNING_ACCOUNT` is set; then all of these are needed:
 
@@ -81,13 +81,13 @@ macOS opens an application downloaded from the internet only when it is signed w
 
 The Developer ID certificate and the API key belong to the developer account, not to an application.
 
-Bundle identifier: `cz.letsnet.MediaLens` (`macos/Info.plist`). `Info.plist` also holds the texts of the permission prompts (Photos library, Desktop, Documents, Downloads, removable and network volumes).
+Bundle identifier: `cz.letsnet.MomentFinder` (`macos/Info.plist`). `Info.plist` also holds the texts of the permission prompts (Photos library, Desktop, Documents, Downloads, removable and network volumes).
 
 Without `MAC_SIGN_IDENTITY` the script builds unsigned `.dmg` files (the tools get an ad-hoc signature so that they run on Apple Silicon): only for testing, macOS blocks them on other computers.
 
 ## GitHub workflows
 
-- **Build** (`.github/workflows/build.yml`), on every push to `main` and every pull request: the tests on Linux and an unsigned Windows installer, kept as the artifact `MediaLens-dev-win-x64` of the run.
+- **Build** (`.github/workflows/build.yml`), on every push to `main` and every pull request: the tests on Linux and an unsigned Windows installer, kept as the artifact `MomentFinder-dev-win-x64` of the run.
 - **Release** (`.github/workflows/release.yml`), on a tag `v<major>.<minor>.<patch>`: the signed Windows installer and zip with their SHA-256, published as the GitHub Release of the tag. Raise `<Version>` in `Directory.Build.props` with it.
 
 ```

@@ -17,7 +17,7 @@ jobs:
       - name: rclone and ffmpeg (for the cloud and video tests)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rclone ffmpeg
       - name: Test
-        run: dotnet test tests/MediaLens.Tests
+        run: dotnet test tests/MomentFinder.Tests
 
   windows:
     runs-on: windows-latest
@@ -31,5 +31,5 @@ jobs:
         run: build/windows/build.ps1 -Version 0.0.0
       - uses: actions/upload-artifact@v4
         with:
-          name: MediaLens-dev-win-x64
-          path: build/out/MediaLens-0.0.0-win-x64.exe
+          name: MomentFinder-dev-win-x64
+          path: build/out/MomentFinder-0.0.0-win-x64.exe

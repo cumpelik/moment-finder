@@ -1,7 +1,7 @@
-# Windows packages of MediaLens: publishes the application (self-contained, win-x64), adds ffmpeg, ffprobe and rclone
-# (tools\ next to MediaLens.exe), optionally signs it and builds
-#   build\out\MediaLens-<version>-win-x64.exe   (installer, Inno Setup, into Program Files\MediaLens)
-#   build\out\MediaLens-<version>-win-x64.zip   (the same files; unzip and run)
+# Windows packages of MomentFinder: publishes the application (self-contained, win-x64), adds ffmpeg, ffprobe and rclone
+# (tools\ next to MomentFinder.exe), optionally signs it and builds
+#   build\out\MomentFinder-<version>-win-x64.exe   (installer, Inno Setup, into Program Files\MomentFinder)
+#   build\out\MomentFinder-<version>-win-x64.zip   (the same files; unzip and run)
 #
 #   pwsh build/windows/build.ps1                  # version from Directory.Build.props
 #   pwsh build/windows/build.ps1 -Version 0.2.0   # or given
@@ -11,8 +11,8 @@
 #   ARTIFACT_SIGNING_ACCOUNT    the signing account
 #   ARTIFACT_SIGNING_PROFILE    the certificate profile
 #   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET   the app registration with the role Artifact Signing Certificate Profile Signer
-# MediaLens.exe, the bundled tools and the unsigned DLLs are signed here; the installer, its uninstaller and its setup engine
-# by Inno Setup (SignTool in MediaLens.iss).
+# MomentFinder.exe, the bundled tools and the unsigned DLLs are signed here; the installer, its uninstaller and its setup engine
+# by Inno Setup (SignTool in MomentFinder.iss).
 # Without the variables nothing is signed.
 param(
     [string] $Version
@@ -38,9 +38,9 @@ $out = Join-Path $root 'build\out'
 $publish = Join-Path $out 'publish\win-x64'
 $downloads = Join-Path $out 'downloads'
 
-Write-Host "== Publishing MediaLens $Version for win-x64"
+Write-Host "== Publishing MomentFinder $Version for win-x64"
 if (Test-Path $publish) { Remove-Item -Recurse -Force $publish }
-dotnet publish "$root\src\MediaLens.App\MediaLens.App.csproj" -c Release -r win-x64 --self-contained true `
+dotnet publish "$root\src\MomentFinder.App\MomentFinder.App.csproj" -c Release -r win-x64 --self-contained true `
     -p:Version=$Version -p:DebugType=None -o $publish
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
 
@@ -85,7 +85,7 @@ New-Item -ItemType Directory -Force $toolsDir | Out-Null
 ExtractFiles $ffmpegZip @('ffmpeg.exe', 'ffprobe.exe') $toolsDir
 ExtractFiles $rcloneZip @('rclone.exe') $toolsDir
 @"
-Programs in this folder are not part of MediaLens; they are distributed unchanged under their own licenses.
+Programs in this folder are not part of MomentFinder; they are distributed unchanged under their own licenses.
 
 FFmpeg $FfmpegVersion (ffmpeg.exe, ffprobe.exe)
   License: GNU GPL version 3 ("ffmpeg -L" prints it)
@@ -102,8 +102,8 @@ Copy-Item "$root\LICENSE" (Join-Path $publish 'LICENSE.txt')
 & "$toolsDir\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
 & "$toolsDir\ffprobe.exe" -hide_banner -version | Select-Object -First 1
 & "$toolsDir\rclone.exe" version | Select-Object -First 1
-# The icon for the shortcuts and Apps & features (MediaLens.exe has no icon of its own yet).
-Copy-Item "$root\build\assets\app.ico" (Join-Path $publish 'MediaLens.ico')
+# The icon for the shortcuts and Apps & features (MomentFinder.exe has no icon of its own yet).
+Copy-Item "$root\build\assets\app.ico" (Join-Path $publish 'MomentFinder.ico')
 
 # The value of an environment variable; an undefined pipeline variable arrives as the literal text "$(Name)" - that is none too.
 function Setting([string] $name) {
@@ -164,7 +164,7 @@ function Sign([string[]] $files) {
     }
 }
 
-# MediaLens.exe and every .exe/.dll without a signature: ours (MediaLens.dll, ...), the unsigned libraries (Avalonia,
+# MomentFinder.exe and every .exe/.dll without a signature: ours (MomentFinder.dll, ...), the unsigned libraries (Avalonia,
 # libVLC plugins, ...) and the bundled tools (ffmpeg.exe, ffprobe.exe, rclone.exe). Smart App Control checks each DLL the
 # application loads and each program it starts, and one unsigned file blocks it ("Part of this app has been blocked").
 # The files signed by Microsoft, VideoLAN, ... keep their own signature.
@@ -174,15 +174,15 @@ if ($signing) {
         ForEach-Object { $_.FullName })
 }
 
-# The same files in a ZIP (folder MediaLens inside) for those who do not want to install.
+# The same files in a ZIP (folder MomentFinder inside) for those who do not want to install.
 Write-Host "== Building the ZIP"
 $zipStage = Join-Path $out 'zip\win-x64'
 if (Test-Path $zipStage) { Remove-Item -Recurse -Force $zipStage }
-New-Item -ItemType Directory -Force "$zipStage\MediaLens" | Out-Null
-Copy-Item -Recurse "$publish\*" "$zipStage\MediaLens"
-$zipFile = Join-Path $out "MediaLens-$Version-win-x64.zip"
+New-Item -ItemType Directory -Force "$zipStage\MomentFinder" | Out-Null
+Copy-Item -Recurse "$publish\*" "$zipStage\MomentFinder"
+$zipFile = Join-Path $out "MomentFinder-$Version-win-x64.zip"
 if (Test-Path $zipFile) { Remove-Item -Force $zipFile }
-Compress-Archive -Path "$zipStage\MediaLens" -DestinationPath $zipFile -CompressionLevel Optimal
+Compress-Archive -Path "$zipStage\MomentFinder" -DestinationPath $zipFile -CompressionLevel Optimal
 
 Write-Host "== Building the installer"
 $iscc = Get-Command iscc -ErrorAction SilentlyContinue
@@ -200,15 +200,15 @@ if (-not $iscc) {
 }
 $isccArgs = @("/DAppVersion=$Version", "/DSourceDir=$publish", "/DOutputDir=$out")
 if ($signing) {
-    # Inno Setup signs by itself (SignTool in MediaLens.iss): the installer, the uninstaller and the setup engine extracted
-    # into %TEMP% as MediaLens-<version>-win-x64.tmp. Signing only the finished installer leaves that .tmp unsigned and Smart
+    # Inno Setup signs by itself (SignTool in MomentFinder.iss): the installer, the uninstaller and the setup engine extracted
+    # into %TEMP% as MomentFinder-<version>-win-x64.tmp. Signing only the finished installer leaves that .tmp unsigned and Smart
     # App Control blocks it (error 4551). For Inno Setup $q is a quote and $f the quoted file to sign.
     $command = '$q' + $signing.SignTool + '$q sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib $q' +
         $signing.Dlib + '$q /dmdf $q' + $signing.Metadata + '$q $f'
     $isccArgs += "/Sartifact=$command", '/DSign'
 }
-& $iscc @isccArgs "$PSScriptRoot\MediaLens.iss"
+& $iscc @isccArgs "$PSScriptRoot\MomentFinder.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 
-$installer = Join-Path $out "MediaLens-$Version-win-x64.exe"
+$installer = Join-Path $out "MomentFinder-$Version-win-x64.exe"
 Write-Host "== Done: $installer, $zipFile"

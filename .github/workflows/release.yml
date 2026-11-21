@@ -1,6 +1,6 @@
 name: Release
 
-# Tag v1.2.3 -> the Windows installer and zip of MediaLens 1.2.3 as GitHub Release v1.2.3.
+# Tag v1.2.3 -> the Windows installer and zip of MomentFinder 1.2.3 as GitHub Release v1.2.3.
 # Signing settings live in the "release" environment (Settings -> Environments -> release), which only tags v* may use:
 #   variables: ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT, ARTIFACT_SIGNING_PROFILE, AZURE_TENANT_ID, AZURE_CLIENT_ID
 #   secret:    AZURE_CLIENT_SECRET
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          # 9 builds MediaLens; the Artifact Signing plugin of SignTool runs on 8.
+          # 9 builds MomentFinder; the Artifact Signing plugin of SignTool runs on 8.
           dotnet-version: |
             9.0.x
             8.0.x
@@ -44,14 +44,14 @@ jobs:
       - name: SHA-256 of the files
         shell: pwsh
         run: |
-          Get-ChildItem build/out -File -Filter "MediaLens-*-win-x64.*" | ForEach-Object {
+          Get-ChildItem build/out -File -Filter "MomentFinder-*-win-x64.*" | ForEach-Object {
             "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())  $($_.Name)" | Out-File -Encoding ascii "$($_.FullName).sha256"
           }
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.exe
-            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.exe.sha256
-            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.zip
-            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.zip.sha256
+            build/out/MomentFinder-${{ steps.v.outputs.version }}-win-x64.exe
+            build/out/MomentFinder-${{ steps.v.outputs.version }}-win-x64.exe.sha256
+            build/out/MomentFinder-${{ steps.v.outputs.version }}-win-x64.zip
+            build/out/MomentFinder-${{ steps.v.outputs.version }}-win-x64.zip.sha256
           generate_release_notes: true

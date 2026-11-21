@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# macOS packages of MediaLens - for each architecture (arm64 = Apple Silicon, x64 = Intel):
-# publishes the application (self-contained), adds ffmpeg, ffprobe and rclone (Contents/MacOS/tools), builds MediaLens.app,
+# macOS packages of MomentFinder - for each architecture (arm64 = Apple Silicon, x64 = Intel):
+# publishes the application (self-contained), adds ffmpeg, ffprobe and rclone (Contents/MacOS/tools), builds MomentFinder.app,
 # signs it with the Developer ID certificate, packs it into a .dmg, has Apple notarize the .dmg and staples the
 # notarization ticket to it.
-#   build/out/MediaLens-<version>-osx-arm64.dmg
-#   build/out/MediaLens-<version>-osx-x64.dmg
+#   build/out/MomentFinder-<version>-osx-arm64.dmg
+#   build/out/MomentFinder-<version>-osx-x64.dmg
 #
 #   bash build/macos/build.sh            # version from Directory.Build.props
 #   bash build/macos/build.sh 0.2.0      # or given
@@ -62,15 +62,15 @@ fetch() {
     fi
 }
 
-# ---------- icon (MediaLens.icns from the 1024 px logo) ----------
-ICONSET="$OUT/macos/MediaLens.iconset"
+# ---------- icon (MomentFinder.icns from the 1024 px logo) ----------
+ICONSET="$OUT/macos/MomentFinder.iconset"
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 for SIZE in 16 32 128 256 512; do
     sips -z $SIZE $SIZE "$ROOT/build/assets/icon-1024.png" --out "$ICONSET/icon_${SIZE}x${SIZE}.png" >/dev/null
     DOUBLE=$((SIZE * 2))
     sips -z $DOUBLE $DOUBLE "$ROOT/build/assets/icon-1024.png" --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$OUT/macos/MediaLens.icns"
+iconutil -c icns "$ICONSET" -o "$OUT/macos/MomentFinder.icns"
 
 # Every signature asks Apple's timestamp service, hundreds of times per build - it sometimes answers "The timestamp
 # service is not available" or "A timestamp was expected but was not found", or does not answer for minutes.
@@ -98,12 +98,12 @@ sign() { # sign <path> [extra codesign options]
 for ARCH in arm64 x64; do
     RID="osx-$ARCH"
     PUBLISH="$OUT/publish/$RID"
-    APP="$OUT/macos/$RID/MediaLens.app"
-    DMG="$OUT/MediaLens-$VERSION-$RID.dmg"
+    APP="$OUT/macos/$RID/MomentFinder.app"
+    DMG="$OUT/MomentFinder-$VERSION-$RID.dmg"
 
-    echo "== Publishing MediaLens $VERSION for $RID"
+    echo "== Publishing MomentFinder $VERSION for $RID"
     rm -rf "$PUBLISH"
-    dotnet publish "$ROOT/src/MediaLens.App/MediaLens.App.csproj" -c Release -r "$RID" --self-contained true \
+    dotnet publish "$ROOT/src/MomentFinder.App/MomentFinder.App.csproj" -c Release -r "$RID" --self-contained true \
         -p:Version="$VERSION" -p:DebugType=None -o "$PUBLISH"
 
     echo "== Adding ffmpeg $FFMPEG_VERSION, ffprobe and rclone $RCLONE_VERSION ($ARCH)"
@@ -125,7 +125,7 @@ for ARCH in arm64 x64; do
     unzip -q -o -j "$DOWNLOADS/$RCLONE_NAME.zip" "$RCLONE_NAME/rclone" -d "$TOOLS"
     chmod +x "$TOOLS/ffmpeg" "$TOOLS/ffprobe" "$TOOLS/rclone"
     cat > "$TOOLS/THIRD-PARTY.txt" <<EOF
-Programs in this folder are not part of MediaLens; they are distributed unchanged under their own licenses.
+Programs in this folder are not part of MomentFinder; they are distributed unchanged under their own licenses.
 
 FFmpeg $FFMPEG_VERSION (ffmpeg, ffprobe)
   License: GNU GPL ("ffmpeg -L" prints it)
@@ -138,22 +138,22 @@ rclone $RCLONE_VERSION
   Source code: https://github.com/rclone/rclone/tree/v$RCLONE_VERSION
 EOF
 
-    echo "== Building MediaLens.app ($ARCH)"
+    echo "== Building MomentFinder.app ($ARCH)"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
     cp -a "$PUBLISH/." "$APP/Contents/MacOS/"
-    chmod +x "$APP/Contents/MacOS/MediaLens"
+    chmod +x "$APP/Contents/MacOS/MomentFinder"
     sed "s/__VERSION__/$VERSION/g" "$HERE/Info.plist" > "$APP/Contents/Info.plist"
-    cp "$OUT/macos/MediaLens.icns" "$APP/Contents/Resources/MediaLens.icns"
+    cp "$OUT/macos/MomentFinder.icns" "$APP/Contents/Resources/MomentFinder.icns"
 
     if [ -n "${MAC_SIGN_IDENTITY:-}" ]; then
         echo "== Signing ($ARCH)"
         # Every file inside first (native libraries, the bundled tools, but also the .NET DLLs and JSON files - anything in
         # Contents/MacOS counts as code for the bundle signature), then the executable, then the bundle.
-        find "$APP/Contents/MacOS" -type f ! -name MediaLens -print0 | while IFS= read -r -d '' FILE; do
+        find "$APP/Contents/MacOS" -type f ! -name MomentFinder -print0 | while IFS= read -r -d '' FILE; do
             sign "$FILE"
         done
-        sign "$APP/Contents/MacOS/MediaLens"
+        sign "$APP/Contents/MacOS/MomentFinder"
         sign "$APP"
         codesign --verify --deep --strict "$APP"
     else
@@ -174,7 +174,7 @@ EOF
     rm -rf "$STAGE" "$DMG"; mkdir -p "$STAGE"
     cp -a "$APP" "$STAGE/"
     ln -s /Applications "$STAGE/Applications"
-    hdiutil create -volname "MediaLens" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+    hdiutil create -volname "MomentFinder" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
     # The stage has the link to /Applications - anything that walks build/out later would walk the whole /Applications.
     rm -rf "$STAGE"
 
@@ -188,4 +188,4 @@ EOF
 done
 
 echo "== Done:"
-ls -l "$OUT"/MediaLens-"$VERSION"-osx-*.dmg
+ls -l "$OUT"/MomentFinder-"$VERSION"-osx-*.dmg

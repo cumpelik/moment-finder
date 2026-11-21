@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>momentfinder</AssemblyName>
+    <RootNamespace>MomentFinder.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MomentFinder.Analysis\MomentFinder.Analysis.csproj" />
+  </ItemGroup>
+
+</Project>

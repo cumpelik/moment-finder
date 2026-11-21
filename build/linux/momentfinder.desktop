@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MomentFinder
+GenericName=Photo and video browser
+Comment=Photo and video browser with local AI search
+Exec=momentfinder
+Icon=momentfinder
+Terminal=false
+Categories=Graphics;Photography;AudioVideo;
+Keywords=photo;video;search;gallery;slideshow;
+StartupWMClass=MomentFinder

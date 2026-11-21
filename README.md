@@ -1,11 +1,11 @@
-# MediaLens
+# MomentFinder
 
 Photo and video browser with local AI. Everything runs on your computer: the models are downloaded once
 and then work offline. Windows, Linux and macOS.
 
 ## Download
 
-Windows: the installer is on the [Releases](../../releases/latest) page (`MediaLens-<version>-win-x64.exe`, or the
+Windows: the installer is on the [Releases](../../releases/latest) page (`MomentFinder-<version>-win-x64.exe`, or the
 `.zip` to unzip and run). Linux and macOS packages follow.
 
 ## What it does
@@ -31,7 +31,7 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`MediaL
   sources, settings), search vectors, thumbnails and the clouds' settings, is kept in a storage you give there:
   IDrive e2 (two keys; its address is found by them) or another S3 compatible storage (address, two keys), with
   a bucket that is made if it is not there,
-  Amazon S3, OneDrive, Google Drive or a folder. It is stored there as it is (it is of use to MediaLens only);
+  Amazon S3, OneDrive, Google Drive or a folder. It is stored there as it is (it is of use to MomentFinder only);
   the one thing that must not be readable, the access keys of your clouds, is encrypted on this computer before
   the upload (rclone crypt) with a key the application makes itself.
 - **A folder and the cloud** (the cloud button of a source in the sidebar): a folder is connected with a storage,
@@ -51,9 +51,9 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`MediaL
 - **A folder in the cloud as a source** (SOURCES +, Folder in the cloud): photos put into a storage by other means
   (its own app, another program) are added from there, browsing its folders; files are fetched when needed.
 - **Read-only sources** (right click a source, or its cloud window): nothing in it is deleted, moved or added from
-  MediaLens and it is not removed from the library, until read-only is turned off with the password (one for all,
+  MomentFinder and it is not removed from the library, until read-only is turned off with the password (one for all,
   chosen the first time); it is read-only again when turned on or at the next start. A guard against mistakes in
-  MediaLens, not against whoever has the storage's keys.
+  MomentFinder, not against whoever has the storage's keys.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
   On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes
   back as it was, and folders that are not on that computer are browsed from the cloud, files fetched into a
@@ -102,43 +102,43 @@ the installers bundle ffmpeg and rclone (and libVLC on Windows and macOS); for a
 them on the PATH, on Linux install `vlc` (or `libvlc5 vlc-plugin-base`).
 
 ```
-dotnet run --project src/MediaLens.App
+dotnet run --project src/MomentFinder.App
 dotnet test
 ```
 
 Installers: see [build/README.md](build/README.md).
 
 AI acceleration: DirectML on Windows (any GPU), CoreML on macOS, CPU elsewhere;
-on Linux with NVIDIA build with `-p:OrtCuda=true`. `MEDIALENS_DEVICE=cpu` forces the CPU.
+on Linux with NVIDIA build with `-p:OrtCuda=true`. `MOMENTFINDER_DEVICE=cpu` forces the CPU.
 
 ## Command line
 
 ```
-medialens add ~/Pictures
-medialens models download
-medialens index
-medialens search lyžař 2023
-medialens clusters / name <group> <name> / persons / match
-medialens bucket add "Fotokniha" Eva lyže 2023
-medialens bucket export "Fotokniha" ~/Desktop/fotokniha
-medialens cloud add-onedrive Backup --password ...
-medialens mirror add <source> <cloud> [--encrypt] / mirror run / mirror gone|delete-gone|bring-back|to-cloud <mirror>
-medialens source home <source> <folder>
-medialens cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>
-medialens backup cloud <cloud> / backup run / recovery show / recovery restore <string>
+momentfinder add ~/Pictures
+momentfinder models download
+momentfinder index
+momentfinder search lyžař 2023
+momentfinder clusters / name <group> <name> / persons / match
+momentfinder bucket add "Fotokniha" Eva lyže 2023
+momentfinder bucket export "Fotokniha" ~/Desktop/fotokniha
+momentfinder cloud add-onedrive Backup --password ...
+momentfinder mirror add <source> <cloud> [--encrypt] / mirror run / mirror gone|delete-gone|bring-back|to-cloud <mirror>
+momentfinder source home <source> <folder>
+momentfinder cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>
+momentfinder backup cloud <cloud> / backup run / recovery show / recovery restore <string>
 ```
 
-(`dotnet run --project src/MediaLens.Cli -- <command>` in a development build.)
-The library lives in the user's local application data (`MediaLens/`); `MEDIALENS_DATA` points it elsewhere.
+(`dotnet run --project src/MomentFinder.Cli -- <command>` in a development build.)
+The library lives in the user's local application data (`MomentFinder/`); `MOMENTFINDER_DATA` points it elsewhere.
 
 ## Layout
 
 | Project | |
 |---|---|
-| MediaLens.Core | SQLite index, scanner, thumbnails, vector index, search, buckets, people matching, cloud |
-| MediaLens.Analysis | ONNX Runtime models (SigLIP, faces, people), model download, `LibraryHost` |
-| MediaLens.App | Avalonia UI, libVLC player |
-| MediaLens.Cli | the same library without UI |
+| MomentFinder.Core | SQLite index, scanner, thumbnails, vector index, search, buckets, people matching, cloud |
+| MomentFinder.Analysis | ONNX Runtime models (SigLIP, faces, people), model download, `LibraryHost` |
+| MomentFinder.App | Avalonia UI, libVLC player |
+| MomentFinder.Cli | the same library without UI |
 
 Scene embeddings are float16 rows in `vectors/scene.vec`, scanned exactly with SIMD; SQLite maps rows to
 media and evaluates the filters first. Face and body embeddings are stored with their detections.
