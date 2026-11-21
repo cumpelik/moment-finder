@@ -15,6 +15,18 @@ public class CloudTests
     [InlineData("512 KiB", 524288)]
     public void RcloneSizes(string text, long bytes) => Assert.Equal(bytes, Rclone.ParseSize(text));
 
+    [Theory]
+    [InlineData("2026/11/21 10:00:49 NOTICE: 341.238 MiB / 1.367 GiB, 24%, 13.688 MiB/s, ETA 1m17s (xfr#0/11)",
+        24, "341 MB of 1.4 GB, 13 MB/s, 1 min 17 s left, 0 of 11 files done")]
+    [InlineData("2026/11/21 10:00:49 NOTICE: 0 B / 2.000 GiB, 0%, 0 B/s, ETA -", 0, "0 KB of 2 GB")]
+    [InlineData("Transferred: 12.5 KiB / 100 KiB, 12%, 1.2 KiB/s, ETA 1h2m3s", 12, "12 KB of 100 KB, 1 KB/s, 1 h 2 min left")]
+    public void CopyProgressIsSaidInWords(string line, int percent, string text)
+    {
+        var p = Rclone.ParseStats(line)!;
+        Assert.Equal(percent, p.Percent);
+        Assert.Equal(text, p.Text);
+    }
+
     [Fact]
     public void JoinRemotePaths()
     {

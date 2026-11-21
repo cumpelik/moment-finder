@@ -281,16 +281,45 @@ public sealed partial class Rclone
         return RunAsync(args, ct, line =>
         {
             if (progress == null) return;
-            var m = StatsLine().Match(line);
-            if (!m.Success) return;
-            progress.Report(new CopyProgress(ParseSize(m.Groups[1].Value), ParseSize(m.Groups[2].Value),
-                int.TryParse(m.Groups[3].Value, out var pct) ? pct : 0, line[(line.IndexOf(':') + 1)..].Trim()));
+            if (ParseStats(line) is { } p) progress.Report(p);
         });
     }
 
-    // "Transferred:   	   12.345 MiB / 100.000 MiB, 12%, 1.234 MiB/s, ETA 1m10s"
-    [GeneratedRegex(@"([\d.]+\s*\w*B)\s*/\s*([\d.]+\s*\w*B),\s*(\d+)%")]
+    // "2026/11/21 10:00:49 NOTICE: 341.238 MiB / 1.367 GiB, 24%, 13.688 MiB/s, ETA 1m17s (xfr#0/11)"
+    [GeneratedRegex(@"([\d.]+\s*\w*B)\s*/\s*([\d.]+\s*\w*B),\s*(\d+)%(?:,\s*([\d.]+\s*\w*B)/s)?(?:,\s*ETA\s*(\S+))?(?:\s*\(xfr#(\d+)/(\d+)\))?")]
     private static partial Regex StatsLine();
+
+    /// <summary>rclone's statistics in words: "341 MB of 1.4 GB, 13.7 MB/s, 1 min 17 s left, 0 of 11 files done".</summary>
+    internal static CopyProgress? ParseStats(string line)
+    {
+        var m = StatsLine().Match(line);
+        if (!m.Success) return null;
+        var done = ParseSize(m.Groups[1].Value);
+        var total = ParseSize(m.Groups[2].Value);
+        var parts = new List<string> { $"{Size(done)} of {Size(total)}" };
+        if (m.Groups[4].Success && ParseSize(m.Groups[4].Value) is > 0 and var speed) parts.Add($"{Size(speed)}/s");
+        if (m.Groups[5].Success && Left(m.Groups[5].Value) is { } left) parts.Add(left);
+        if (m.Groups[6].Success) parts.Add($"{m.Groups[6].Value} of {m.Groups[7].Value} files done");
+        return new CopyProgress(done, total, int.TryParse(m.Groups[3].Value, out var pct) ? pct : 0, string.Join(", ", parts));
+    }
+
+    private static string Size(long bytes) => bytes switch
+    {
+        >= 1L << 30 => (bytes / (double)(1L << 30)).ToString("0.#", CultureInfo.InvariantCulture) + " GB",
+        >= 1L << 20 => (bytes >> 20).ToString("N0", CultureInfo.InvariantCulture) + " MB",
+        0 => "0 KB",
+        _ => Math.Max(1, bytes >> 10).ToString("N0", CultureInfo.InvariantCulture) + " KB",
+    };
+
+    /// <summary>"1h2m17s" as "1 h 2 min left"; nothing while rclone does not know yet ("-").</summary>
+    private static string? Left(string eta)
+    {
+        var m = Regex.Match(eta, @"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$");
+        if (!m.Success || eta.Length == 0) return null;
+        int Part(int i) => m.Groups[i].Success ? int.Parse(m.Groups[i].Value, CultureInfo.InvariantCulture) : 0;
+        var (d, h, min, sec) = (Part(1), Part(2), Part(3), Part(4));
+        return d > 0 ? $"{d} d {h} h left" : h > 0 ? $"{h} h {min} min left" : min > 0 ? $"{min} min {sec} s left" : $"{sec} s left";
+    }
 
     internal static long ParseSize(string s)
     {
