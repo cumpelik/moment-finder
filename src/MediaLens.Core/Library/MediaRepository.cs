@@ -17,6 +17,10 @@ public sealed record MediaFilter
     public long? BucketId { get; init; }
     /// <summary>All of these people are on the item.</summary>
     public IReadOnlyList<long> PersonIds { get; init; } = [];
+    /// <summary>Only these items.</summary>
+    public IReadOnlyCollection<long>? Ids { get; init; }
+    /// <summary>Videos with moments worth watching (InterestingMoments), the best first, each from its best moment.</summary>
+    public bool BestMoments { get; init; }
 }
 
 /// <summary>What the scanner found on disk for one file.</summary>
@@ -188,6 +192,7 @@ public sealed class MediaRepository
         }
         sql.Append(" WHERE m.missing=0 AND s.enabled=1");
         if (filter.SourceId is { } sourceId) { sql.Append(" AND m.source_id=@sourceId"); p.Add("sourceId", sourceId); }
+        if (filter.Ids is { } ids) { sql.Append(" AND m.id IN @ids"); p.Add("ids", ids); }
         if (filter.Kind is { } kind) { sql.Append(" AND m.kind=@kind"); p.Add("kind", (int)kind); }
         if (filter.From is { } from) { sql.Append(" AND m.taken_at>=@from"); p.Add("from", from); }
         if (filter.To is { } to) { sql.Append(" AND m.taken_at<@to"); p.Add("to", to); }

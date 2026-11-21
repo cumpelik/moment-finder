@@ -9,6 +9,7 @@ using Material.Icons;
 using MediaLens.Buckets;
 using MediaLens.Cloud;
 using MediaLens.Library;
+using MediaLens.People;
 using MediaLens.Search;
 
 namespace MediaLens.App.ViewModels;
@@ -163,6 +164,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var stats = _host.Repo.Stats(Indexer.AnalysisVersion);
         SidebarItems.Add(new SidebarEntry(SidebarKind.All, 0, "All photos and videos", stats.Total.ToString("N0"),
             $"{stats.Photos:N0} photos, {stats.Videos:N0} videos"));
+        var best = InterestingMoments.Find(_host.Db).Count;
+        if (best > 0 || _host.PeopleModel != null)
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Best, 0, "Best video moments", best.ToString("N0"),
+                "Videos where somebody you named is big on the screen for a few seconds, the best first; they play just those moments. " +
+                "The more people you name (Who is this?), the more are found."));
         SidebarItems.Add(new SidebarHeader("SOURCES", "Add a folder", SidebarKind.Source));
         var sources = _host.Repo.ListSources();
         var counts = _host.Repo.CountBySource();
@@ -380,6 +386,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private MediaFilter ScopeFilter() => WithDates(CurrentScope switch
     {
         { Kind: SidebarKind.Source or SidebarKind.Clone } e => new MediaFilter { SourceId = e.Id },
+        { Kind: SidebarKind.Best } => new MediaFilter { BestMoments = true, Kind = MediaKind.Video },
         { Kind: SidebarKind.Bucket } e => new MediaFilter { BucketId = e.Id },
         { Kind: SidebarKind.Person } e => new MediaFilter { PersonIds = [e.Id] },
         _ => new MediaFilter(),
@@ -618,7 +625,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void UpdateSummary(int count, bool hasText)
     {
         var text = Format.Count(count, "item", "items");
-        if (hasText && !_host.Search.CanSearchText)
+        if (CurrentScope?.Kind == SidebarKind.Best && !hasText)
+            text = count == 0
+                ? "No video like that yet. Name the people in your videos (Who is this?): a video where somebody named is big on the screen for a few seconds shows here."
+                : Format.Count(count, "video", "videos") + " where somebody you named is big on the screen for a few seconds, the best first. They play just those moments.";
+        else if (hasText && !_host.Search.CanSearchText)
             text += " with these words in the file name. To search by what is in the picture, download the AI models (above).";
         else if (hasText)
         {
@@ -731,13 +742,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
     {
         var (personIds, names, hasText) = CurrentQuery();
+        // Best video moments: each video plays its moments worth watching (unless words were searched for).
+        var best = CurrentScope?.Kind == SidebarKind.Best && !hasText
+            ? InterestingMoments.Find(_host.Db).ToDictionary(v => v.MediaId, v => v.Moments.Select(m => (m.StartMs, m.EndMs)).ToList())
+            : null;
         var entries = tiles.Select(t => new PlaylistEntry(t.Item, t.StartMs,
-            t.Item.IsVideo && hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)] : null)).ToList();
+            t.Item.IsVideo && hasText ? [(Math.Max(0, t.StartMs - 1000), t.StartMs + MatchMomentMs)]
+            : best?.GetValueOrDefault(t.Item.Id))).ToList();
 
-        // What the videos can play: whole, the matching part, the searched people, anybody else in them.
+        // What the videos can play: whole, the matching part, the best moments, the searched people, anybody else in them.
         var whole = new MomentChoice("Whole videos", MomentKind.Whole, []);
         var choices = new List<MomentChoice> { whole };
         if (hasText) choices.Add(new MomentChoice("Only the matching part", MomentKind.Match, []));
+        if (best != null) choices.Add(new MomentChoice("Only the best moments", MomentKind.Match, []));
         if (personIds.Count > 1) choices.Add(new MomentChoice($"Only {string.Join(" + ", names)}", MomentKind.Person, personIds));
         var personNames = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
         var videoIds = entries.Where(e => e.Item.IsVideo).Select(e => e.Item.Id).ToList();
@@ -745,7 +762,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             foreach (var id in personIds.Concat(_host.People.PersonsIn(videoIds)).Distinct())
                 if (personNames.TryGetValue(id, out var name))
                     choices.Add(new MomentChoice($"Only {name}", MomentKind.Person, [id]));
-        var initial = !VideoHighlightsOnly ? whole
+        // The best moments are what that list is for: they play first even after whole videos were chosen elsewhere.
+        var initial = best != null ? choices.First(c => c.Kind == MomentKind.Match)
+            : !VideoHighlightsOnly ? whole
             : personIds.Count > 0 ? choices.FirstOrDefault(c => c.Kind == MomentKind.Person && c.PersonIds.SequenceEqual(personIds)) ?? whole
             : hasText ? choices.First(c => c.Kind == MomentKind.Match) : whole;
         return new PlayerViewModel(entries, index, autoPlay, new PlayerSettings(SlideSeconds, Volume, _playbackRate, _loopVideos, _host.Db.GetSetting("show_people") == "1"), this,

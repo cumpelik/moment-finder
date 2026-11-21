@@ -1,5 +1,6 @@
 using MediaLens.Analysis;
 using MediaLens.Library;
+using MediaLens.People;
 using MediaLens.Vectors;
 
 namespace MediaLens.Search;
@@ -46,6 +47,12 @@ public sealed class SearchService
     {
         var query = QueryParser.Parse(input, People);
         var filter = QueryParser.ToFilter(query, scope);
+        Dictionary<long, VideoInterest>? best = null;
+        if (filter.BestMoments)
+        {
+            best = InterestingMoments.Find(_repo.Db).ToDictionary(v => v.MediaId);
+            filter = filter with { Ids = best.Keys.ToList() };
+        }
         var items = _repo.Query(filter);
         if (!string.IsNullOrWhiteSpace(query.Text) && !CanSearchText)
         {
@@ -57,6 +64,8 @@ public sealed class SearchService
                 return words.All(w => path.Contains(w, StringComparison.Ordinal));
             }).ToList();
         }
+        if (best != null && (string.IsNullOrWhiteSpace(query.Text) || !CanSearchText))
+            return items.OrderByDescending(i => best[i.Id].Score).Select(i => new SearchHit(i, 0, best[i.Id].Best.StartMs)).ToList();
         if (string.IsNullOrWhiteSpace(query.Text) || _model is not { } model || _index is not { } index)
         {
             var starts = filter.PersonIds.Count > 0 && FirstAppearance != null ? FirstAppearance(filter.PersonIds) : [];

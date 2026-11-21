@@ -6,6 +6,8 @@ namespace MediaLens.App.ViewModels;
 public enum SidebarKind
 {
     All,
+    /// <summary>Videos with moments worth watching: somebody named, big, for a few seconds.</summary>
+    Best,
     Source,
     /// <summary>A folder being cloned to the cloud: there already, its files on their way (the id is the folder's source).</summary>
     Clone,
@@ -36,6 +38,7 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
     public MaterialIconKind Icon => IconOverride ?? Kind switch
     {
         SidebarKind.All => MaterialIconKind.ImageMultiple,
+        SidebarKind.Best => MaterialIconKind.StarOutline,
         SidebarKind.Source => MaterialIconKind.Folder,
         SidebarKind.Clone => MaterialIconKind.CloudUploadOutline,
         SidebarKind.Person => MaterialIconKind.AccountOutline,
