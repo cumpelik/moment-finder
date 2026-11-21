@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Dapper;
 using MomentFinder.Data;
+using MomentFinder.Sync;
 
 namespace MomentFinder.Library;
 
@@ -27,7 +28,14 @@ public sealed class ReadOnlyLock
         if (HasPassword) throw new InvalidOperationException("The password is chosen already.");
         if (string.IsNullOrEmpty(password)) throw new ArgumentException("The password is empty.", nameof(password));
         var salt = RandomNumberGenerator.GetBytes(16);
-        _db.SetSetting(PasswordKey, $"pbkdf2-sha256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(Hash(password, salt, Iterations))}");
+        var value = $"pbkdf2-sha256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(Hash(password, salt, Iterations))}";
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        c.Execute("INSERT INTO setting(key, value) VALUES(@PasswordKey, @value) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            new { PasswordKey, value }, tx);
+        // One password for the library: the same on every computer.
+        _db.Facts.Set(c, tx, Keys.Library, PasswordKey, value);
+        tx.Commit();
     }
 
     public bool Check(string password)
@@ -67,7 +75,7 @@ public sealed class ReadOnlyLock
     public void Protect(long sourceId)
     {
         if (!HasPassword) throw new InvalidOperationException("Choose the password first.");
-        using (var c = _db.Open()) c.Execute("UPDATE source SET protected=1 WHERE id=@sourceId", new { sourceId });
+        SetProtected(sourceId, true);
         lock (_open) _open.Remove(sourceId);
     }
 
@@ -89,7 +97,19 @@ public sealed class ReadOnlyLock
     public void Unprotect(long sourceId)
     {
         if (IsLocked(sourceId)) throw new InvalidOperationException("Turn read-only off with the password first.");
-        using (var c = _db.Open()) c.Execute("UPDATE source SET protected=0 WHERE id=@sourceId", new { sourceId });
+        SetProtected(sourceId, false);
         lock (_open) _open.Remove(sourceId);
+    }
+
+    /// <summary>A folder shared with the other computers is read-only on all of them.</summary>
+    private void SetProtected(long sourceId, bool on)
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        c.Execute("UPDATE source SET protected=@on WHERE id=@sourceId", new { sourceId, on }, tx);
+        if (c.ExecuteScalar<string?>("SELECT uid FROM source WHERE id=@sourceId", new { sourceId }, tx) is { } uid &&
+            FactStore.Get(c, tx, Keys.Folder(uid), "def") != null)
+            _db.Facts.Set(c, tx, Keys.Folder(uid), "protected", on ? "1" : "0");
+        tx.Commit();
     }
 }

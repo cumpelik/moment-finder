@@ -3,6 +3,7 @@ using System.Text.Json;
 using Dapper;
 using MomentFinder.Data;
 using MomentFinder.Library;
+using MomentFinder.Sync;
 
 namespace MomentFinder.Cloud;
 
@@ -419,6 +420,8 @@ public sealed class CloudService
         var id = c.ExecuteScalar<long>("""
             INSERT INTO mirror(source_id, cloud_id, target, remote, encrypted) VALUES(@sourceId, @cloudId, @target, @remote, @encrypted) RETURNING id
             """, new { sourceId, cloudId, target, remote, encrypted });
+        // In the cloud now: the other computers of the library see the folder (from its backup, only for looking).
+        SharedFolders.Publish(c, null, _db.Facts, Device, sourceId);
         return Mirrors().First(m => m.Id == id);
     }
 
@@ -462,7 +465,10 @@ public sealed class CloudService
     public void RemoveMirror(long id)
     {
         using var c = _db.Open();
+        var sourceId = c.ExecuteScalar<long?>("SELECT source_id FROM mirror WHERE id=@id", new { id });
         c.Execute("DELETE FROM mirror WHERE id=@id", new { id });
+        // Not in the cloud from here any more: gone for the other computers.
+        if (sourceId is { } s) SharedFolders.Publish(c, null, _db.Facts, Device, s);
     }
 
     /// <summary>
@@ -486,7 +492,11 @@ public sealed class CloudService
                 var why = marker.IsBackup
                     ? $"Stopped: {marker.HomeName} took this backup over, its folder decides what is in the cloud now."
                     : "Stopped: the folder in the cloud lives on its own now (moved to the cloud).";
-                using (var c = _db.Open()) c.Execute("UPDATE mirror SET enabled=0 WHERE id=@mirrorId", new { mirrorId });
+                using (var c = _db.Open())
+                {
+                    c.Execute("UPDATE mirror SET enabled=0 WHERE id=@mirrorId", new { mirrorId });
+                    SharedFolders.Publish(c, null, _db.Facts, Device, mirror.SourceId);
+                }
                 Done(why);
                 throw new RcloneException(why);
             }
@@ -623,6 +633,8 @@ public sealed class CloudService
                 UPDATE source SET kind=@kind, root=@cache, remote=@remote, cloud_id=@cloudId, name=@name, read_only=0, home_name=NULL WHERE id=@Id
                 """, new { kind = SourceKinds.Cloud, cache, remote = mirror.Place, cloudId = cloud.Id, name, source.Id }, tx);
             c.Execute("DELETE FROM mirror WHERE id=@mirrorId", new { mirrorId }, tx);
+            // Lives in the cloud now, for every computer alike.
+            SharedFolders.Publish(c, tx, _db.Facts, Device, source.Id);
             tx.Commit();
         }
         Directory.CreateDirectory(cache);
@@ -787,6 +799,8 @@ public sealed class CloudService
             c.Execute("""
                 INSERT INTO mirror(source_id, cloud_id, target, remote, encrypted) VALUES(@sourceId, @cloudId, @target, @mine, @encrypted)
                 """, new { sourceId, cloudId = cloud.Id, target, mine = remote == Join(cloud.Remote, target) ? null : remote, encrypted }, tx);
+            // This computer's folder decides now; the others see its backup.
+            SharedFolders.Publish(c, tx, _db.Facts, Device, sourceId);
             tx.Commit();
         }
         await new FolderMarker(FolderMarker.Backup, Device.Id, Device.Name, name).WriteAsync(Rclone, remote, ct);

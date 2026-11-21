@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Dapper;
 using MomentFinder.Analysis;
 using MomentFinder.Data;
+using MomentFinder.Sync;
 
 namespace MomentFinder.People;
 
@@ -107,9 +108,14 @@ public sealed class PeopleRepository
     public Person CreatePerson(string name, bool hidden = false)
     {
         using var c = _db.Open();
+        using var tx = c.BeginTransaction();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var id = c.ExecuteScalar<long>("INSERT INTO person(name, created_at, hidden) VALUES(@name, @now, @hidden) RETURNING id",
-            new { name = name.Trim(), now, hidden });
+        var uid = Keys.NewUid();
+        var id = c.ExecuteScalar<long>("INSERT INTO person(name, created_at, hidden, uid) VALUES(@name, @now, @hidden, @uid) RETURNING id",
+            new { name = name.Trim(), now, hidden, uid }, tx);
+        _db.Facts.Set(c, tx, Keys.Person(uid), "name", name.Trim());
+        if (hidden) _db.Facts.Set(c, tx, Keys.Person(uid), "hidden", "1");
+        tx.Commit();
         return new Person { Id = id, Name = name.Trim(), CreatedAt = now, Hidden = hidden };
     }
 
@@ -121,7 +127,10 @@ public sealed class PeopleRepository
     public void RenamePerson(long id, string name)
     {
         using var c = _db.Open();
-        c.Execute("UPDATE person SET name=@name WHERE id=@id", new { id, name = name.Trim() });
+        using var tx = c.BeginTransaction();
+        c.Execute("UPDATE person SET name=@name WHERE id=@id", new { id, name = name.Trim() }, tx);
+        if (PersonFacts.PersonUid(c, tx, id) is { } uid) _db.Facts.Set(c, tx, Keys.Person(uid), "name", name.Trim());
+        tx.Commit();
     }
 
     /// <summary>Everything of "from" goes to "into" (two names for one person); "from" is deleted.</summary>
@@ -133,6 +142,12 @@ public sealed class PeopleRepository
         c.Execute("UPDATE detection SET person_id=@into WHERE person_id=@from", new { from, into }, tx);
         c.Execute("UPDATE detection SET suggest_person_id=NULL, suggest_score=NULL WHERE suggest_person_id=@from", new { from }, tx);
         c.Execute("INSERT OR IGNORE INTO rejection(detection_id, person_id) SELECT detection_id, @into FROM rejection WHERE person_id=@from", new { from, into }, tx);
+        // Everywhere: what anybody says of the old person is said of the new one.
+        if (PersonFacts.PersonUid(c, tx, from) is { } fromUid && PersonFacts.PersonUid(c, tx, into) is { } intoUid)
+        {
+            c.Execute("INSERT OR REPLACE INTO person_alias(from_uid, into_uid) VALUES(@fromUid, @intoUid)", new { fromUid, intoUid }, tx);
+            _db.Facts.Set(c, tx, Keys.Person(fromUid), "into", intoUid);
+        }
         c.Execute("DELETE FROM person WHERE id=@from", new { from }, tx);
         tx.Commit();
     }
@@ -142,6 +157,7 @@ public sealed class PeopleRepository
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
         c.Execute("UPDATE detection SET person_id=NULL, assign_source=NULL, confidence=NULL, confirmed=0 WHERE person_id=@id", new { id }, tx);
+        if (PersonFacts.PersonUid(c, tx, id) is { } uid) _db.Facts.Set(c, tx, Keys.Person(uid), "deleted", "1");
         c.Execute("DELETE FROM person WHERE id=@id", new { id }, tx);
         tx.Commit();
     }
@@ -149,7 +165,11 @@ public sealed class PeopleRepository
     public void SetCover(long personId, long detectionId)
     {
         using var c = _db.Open();
-        c.Execute("UPDATE person SET cover_detection_id=@detectionId WHERE id=@personId", new { personId, detectionId });
+        using var tx = c.BeginTransaction();
+        c.Execute("UPDATE person SET cover_detection_id=@detectionId WHERE id=@personId", new { personId, detectionId }, tx);
+        if (PersonFacts.PersonUid(c, tx, personId) is { } uid && PersonFacts.DetectionKeys(c, tx, [detectionId]) is [var key])
+            _db.Facts.Set(c, tx, Keys.Person(uid), "cover", key.Key);
+        tx.Commit();
     }
 
     // ---- detections ----
@@ -401,9 +421,11 @@ public sealed class PeopleRepository
     /// <summary>The user says who it is: confirmed, never changed by the automatic matching.</summary>
     public void Confirm(IEnumerable<long> detectionIds, long personId)
     {
+        var ids = detectionIds.ToList();
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
-        foreach (var id in detectionIds)
+        PersonFacts.Say(c, tx, _db.Facts, ids, personId, PersonFacts.Yes);
+        foreach (var id in ids)
         {
             c.Execute("""
                 UPDATE detection SET person_id=@personId, assign_source=1, confidence=1, confirmed=1,
@@ -439,9 +461,11 @@ public sealed class PeopleRepository
 
     public void Reject(IEnumerable<long> detectionIds, long personId)
     {
+        var ids = detectionIds.ToList();
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
-        foreach (var id in detectionIds)
+        PersonFacts.Say(c, tx, _db.Facts, ids, personId, PersonFacts.No);
+        foreach (var id in ids)
         {
             c.Execute("INSERT OR IGNORE INTO rejection(detection_id, person_id) VALUES(@id, @personId)", new { id, personId }, tx);
             c.Execute("""

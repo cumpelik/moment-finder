@@ -1,6 +1,7 @@
 using System.Text;
 using Dapper;
 using MomentFinder.Data;
+using MomentFinder.Sync;
 
 namespace MomentFinder.Library;
 
@@ -59,10 +60,14 @@ public sealed class MediaRepository
     public Source AddSource(string kind, string root, string name, string? remote = null)
     {
         using var c = _db.Open();
+        using var tx = c.BeginTransaction();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var id = c.ExecuteScalar<long>(
-            "INSERT INTO source(kind,root,name,added_at,remote) VALUES(@kind,@root,@name,@now,@remote) RETURNING id",
-            new { kind, root, name, now, remote });
+            "INSERT INTO source(kind,root,name,added_at,remote,uid) VALUES(@kind,@root,@name,@now,@remote,@uid) RETURNING id",
+            new { kind, root, name, now, remote, uid = Keys.NewUid() }, tx);
+        // A folder in the cloud is everybody's: it shows on every computer of the library.
+        SharedFolders.Publish(c, tx, _db.Facts, _db.Device, id);
+        tx.Commit();
         return new Source { Id = id, Kind = kind, Root = root, Name = name, AddedAt = now, Remote = remote };
     }
 
@@ -89,7 +94,11 @@ public sealed class MediaRepository
     {
         ReadOnly.ThrowIfLocked(id);
         using var c = _db.Open();
-        c.Execute("DELETE FROM source WHERE id=@id", new { id });
+        using var tx = c.BeginTransaction();
+        // Removed from the library here: from every computer's (the files stay where they are).
+        SharedFolders.Removed(c, tx, _db.Facts, c.ExecuteScalar<string?>("SELECT uid FROM source WHERE id=@id", new { id }, tx));
+        c.Execute("DELETE FROM source WHERE id=@id", new { id }, tx);
+        tx.Commit();
     }
 
     /// <summary>What the folder's marker in the cloud says: the backup of another computer's folder is only for looking.</summary>
@@ -168,8 +177,14 @@ public sealed class MediaRepository
     public void Move(long id, long sourceId, string relPath, long mtime)
     {
         using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        var before = c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@id", new { id }, tx);
         c.Execute("UPDATE media SET source_id=@sourceId, rel_path=@relPath, mtime=@mtime, missing=0 WHERE id=@id",
-            new { id, sourceId, relPath, mtime });
+            new { id, sourceId, relPath, mtime }, tx);
+        // Its key is made of its place: what anybody said of it under the old key follows it.
+        var after = c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@id", new { id }, tx);
+        if (before != null && after != null && before != after) _db.Facts.Set(c, tx, Keys.Media(before), "moved", after);
+        tx.Commit();
     }
 
     public void SetMtime(long id, long mtime)

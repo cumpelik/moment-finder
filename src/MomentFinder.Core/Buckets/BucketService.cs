@@ -1,5 +1,7 @@
 using Dapper;
+using System.Globalization;
 using MomentFinder.Data;
+using MomentFinder.Sync;
 using MomentFinder.Library;
 
 namespace MomentFinder.Buckets;
@@ -41,8 +43,13 @@ public sealed class BucketService
     public Bucket Create(string name)
     {
         using var c = _db.Open();
+        using var tx = c.BeginTransaction();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var id = c.ExecuteScalar<long>("INSERT INTO bucket(name, created_at) VALUES(@name, @now) RETURNING id", new { name = name.Trim(), now });
+        var uid = Keys.NewUid();
+        var id = c.ExecuteScalar<long>("INSERT INTO bucket(name, created_at, uid) VALUES(@name, @now, @uid) RETURNING id",
+            new { name = name.Trim(), now, uid }, tx);
+        _db.Facts.Set(c, tx, Keys.Bucket(uid), "name", name.Trim());
+        tx.Commit();
         return new Bucket { Id = id, Name = name.Trim(), CreatedAt = now };
     }
 
@@ -56,13 +63,19 @@ public sealed class BucketService
     public void Rename(long id, string name)
     {
         using var c = _db.Open();
-        c.Execute("UPDATE bucket SET name=@name WHERE id=@id", new { id, name = name.Trim() });
+        using var tx = c.BeginTransaction();
+        c.Execute("UPDATE bucket SET name=@name WHERE id=@id", new { id, name = name.Trim() }, tx);
+        if (Uid(c, tx, id) is { } uid) _db.Facts.Set(c, tx, Keys.Bucket(uid), "name", name.Trim());
+        tx.Commit();
     }
 
     public void Delete(long id)
     {
         using var c = _db.Open();
-        c.Execute("DELETE FROM bucket WHERE id=@id", new { id });
+        using var tx = c.BeginTransaction();
+        if (Uid(c, tx, id) is { } uid) _db.Facts.Set(c, tx, Keys.Bucket(uid), "deleted", "1");
+        c.Execute("DELETE FROM bucket WHERE id=@id", new { id }, tx);
+        tx.Commit();
     }
 
     /// <summary>Appends at the end, in the given order; items already in the bucket keep their place.</summary>
@@ -73,10 +86,18 @@ public sealed class BucketService
         var position = c.ExecuteScalar<double?>("SELECT MAX(position) FROM bucket_item WHERE bucket_id=@bucketId", new { bucketId }, tx) ?? 0;
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var added = 0;
+        var uid = Uid(c, tx, bucketId);
         foreach (var mediaId in mediaIds)
         {
-            added += c.Execute("INSERT OR IGNORE INTO bucket_item(bucket_id, media_id, position, added_at) VALUES(@bucketId, @mediaId, @position, @now)",
-                new { bucketId, mediaId, position = ++position, now }, tx);
+            var p = ++position;
+            if (c.Execute("INSERT OR IGNORE INTO bucket_item(bucket_id, media_id, position, added_at) VALUES(@bucketId, @mediaId, @p, @now)",
+                    new { bucketId, mediaId, p, now }, tx) == 0) continue;
+            added++;
+            if (uid != null && MediaUid(c, tx, mediaId) is { } media)
+            {
+                _db.Facts.Set(c, tx, Keys.BucketItem(uid, media), "in", "1");
+                _db.Facts.Set(c, tx, Keys.BucketItem(uid, media), "pos", p.ToString("R", CultureInfo.InvariantCulture));
+            }
         }
         tx.Commit();
         return added;
@@ -86,8 +107,12 @@ public sealed class BucketService
     {
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
+        var uid = Uid(c, tx, bucketId);
         foreach (var mediaId in mediaIds)
+        {
             c.Execute("DELETE FROM bucket_item WHERE bucket_id=@bucketId AND media_id=@mediaId", new { bucketId, mediaId }, tx);
+            if (uid != null && MediaUid(c, tx, mediaId) is { } media) _db.Facts.Set(c, tx, Keys.BucketItem(uid, media), "in", "0");
+        }
         tx.Commit();
     }
 
@@ -102,11 +127,26 @@ public sealed class BucketService
     {
         using var c = _db.Open();
         using var tx = c.BeginTransaction();
+        var uid = Uid(c, tx, bucketId);
+        var before = c.Query<(long Media, double Position)>("SELECT media_id, position FROM bucket_item WHERE bucket_id=@bucketId", new { bucketId }, tx)
+            .ToDictionary(r => r.Media, r => r.Position);
         for (var i = 0; i < orderedMediaIds.Count; i++)
+        {
+            var p = (double)(i + 1);
             c.Execute("UPDATE bucket_item SET position=@p WHERE bucket_id=@bucketId AND media_id=@m",
-                new { bucketId, m = orderedMediaIds[i], p = (double)(i + 1) }, tx);
+                new { bucketId, m = orderedMediaIds[i], p }, tx);
+            // Only the places that changed: the others keep theirs (and another computer's moves of them).
+            if (uid != null && before.TryGetValue(orderedMediaIds[i], out var was) && was != p && MediaUid(c, tx, orderedMediaIds[i]) is { } media)
+                _db.Facts.Set(c, tx, Keys.BucketItem(uid, media), "pos", p.ToString("R", CultureInfo.InvariantCulture));
+        }
         tx.Commit();
     }
+
+    private static string? Uid(Microsoft.Data.Sqlite.SqliteConnection c, System.Data.IDbTransaction tx, long bucketId) =>
+        c.ExecuteScalar<string?>("SELECT uid FROM bucket WHERE id=@bucketId", new { bucketId }, tx);
+
+    private static string? MediaUid(Microsoft.Data.Sqlite.SqliteConnection c, System.Data.IDbTransaction tx, long mediaId) =>
+        c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@mediaId", new { mediaId }, tx);
 
     /// <summary>
     /// Copies the originals to a folder in bucket order. NumberByOrder prefixes 001_, 002_... so a photo book

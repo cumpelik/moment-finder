@@ -20,15 +20,29 @@ public sealed class Database
             Cache = SqliteCacheMode.Private,
             Pooling = true,
         }.ToString();
+        _dataDir = Path.GetDirectoryName(Path.GetFullPath(path))!;
         using var c = Open();
         c.Execute("PRAGMA journal_mode=WAL;");
         Migrate(c, path);
+        MomentFinder.Sync.FactSeed.Run(this);
     }
+
+    private readonly string _dataDir;
+    private MomentFinder.Cloud.DeviceInfo? _device;
+    private MomentFinder.Sync.FactStore? _facts;
+
+    /// <summary>This computer (kept beside the library, never in it: a library copied elsewhere is on another computer).</summary>
+    public MomentFinder.Cloud.DeviceInfo Device => _device ??= MomentFinder.Cloud.DeviceInfo.Load(_dataDir);
+
+    /// <summary>What the people of the library decided, as facts shared with the other computers (see FactStore).</summary>
+    public MomentFinder.Sync.FactStore Facts => _facts ??= new MomentFinder.Sync.FactStore(Device.Id);
 
     public SqliteConnection Open()
     {
         var c = new SqliteConnection(_connectionString);
         c.Open();
+        // A photo's key in the shared library: its folder and its place there (see Keys.MediaUid); the triggers use it.
+        c.CreateFunction("media_uid", (string? sourceUid, string relPath) => MomentFinder.Sync.Keys.MediaUid(sourceUid, relPath), isDeterministic: true);
         c.Execute("PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
         return c;
     }
@@ -223,6 +237,40 @@ public sealed class Database
         // 14: whether the capture time is only the file's time (no date of its own in the photo or video): 1 yes, 0 no,
         // NULL read before this was kept.
         "ALTER TABLE media ADD COLUMN taken_from_file INTEGER;",
+        // 15: one library shared by several computers. Folders, photos, people and buckets get keys that mean the same
+        // on every computer (uid; a photo's is made of its folder's and its path, so two computers that read one
+        // folder find the same keys). What the people decided is kept as facts (the newest value of each field, with
+        // its time), changes made here wait in the outbox until they are sent; sync_seen is how far the changes of
+        // each other computer were taken in; a person merged into another on any computer stays found by the old key.
+        """
+        ALTER TABLE source ADD COLUMN uid TEXT;
+        ALTER TABLE source ADD COLUMN owner TEXT;
+        ALTER TABLE person ADD COLUMN uid TEXT;
+        ALTER TABLE bucket ADD COLUMN uid TEXT;
+        ALTER TABLE media ADD COLUMN uid TEXT;
+        UPDATE source SET uid=lower(hex(randomblob(16))) WHERE uid IS NULL;
+        UPDATE person SET uid=lower(hex(randomblob(16))) WHERE uid IS NULL;
+        UPDATE bucket SET uid=lower(hex(randomblob(16))) WHERE uid IS NULL;
+        UPDATE media SET uid=media_uid((SELECT uid FROM source WHERE id=media.source_id), rel_path);
+        CREATE UNIQUE INDEX source_uid ON source(uid);
+        CREATE UNIQUE INDEX person_uid ON person(uid);
+        CREATE UNIQUE INDEX bucket_uid ON bucket(uid);
+        CREATE INDEX media_uid ON media(uid);
+        CREATE TRIGGER source_uid_new AFTER INSERT ON source WHEN NEW.uid IS NULL
+            BEGIN UPDATE source SET uid=lower(hex(randomblob(16))) WHERE id=NEW.id; END;
+        CREATE TRIGGER person_uid_new AFTER INSERT ON person WHEN NEW.uid IS NULL
+            BEGIN UPDATE person SET uid=lower(hex(randomblob(16))) WHERE id=NEW.id; END;
+        CREATE TRIGGER bucket_uid_new AFTER INSERT ON bucket WHEN NEW.uid IS NULL
+            BEGIN UPDATE bucket SET uid=lower(hex(randomblob(16))) WHERE id=NEW.id; END;
+        CREATE TRIGGER media_uid_new AFTER INSERT ON media
+            BEGIN UPDATE media SET uid=media_uid((SELECT uid FROM source WHERE id=NEW.source_id), NEW.rel_path) WHERE id=NEW.id; END;
+        CREATE TRIGGER media_uid_moved AFTER UPDATE OF source_id, rel_path ON media
+            BEGIN UPDATE media SET uid=media_uid((SELECT uid FROM source WHERE id=NEW.source_id), NEW.rel_path) WHERE id=NEW.id; END;
+        CREATE TABLE fact(obj TEXT NOT NULL, field TEXT NOT NULL, value TEXT, hlc TEXT NOT NULL, PRIMARY KEY(obj, field)) WITHOUT ROWID;
+        CREATE TABLE outbox(seq INTEGER PRIMARY KEY, obj TEXT NOT NULL, field TEXT NOT NULL, value TEXT, hlc TEXT NOT NULL);
+        CREATE TABLE sync_seen(device TEXT PRIMARY KEY, seq INTEGER NOT NULL, name TEXT, last_seen INTEGER);
+        CREATE TABLE person_alias(from_uid TEXT PRIMARY KEY, into_uid TEXT NOT NULL);
+        """,
     ];
 
     /// <summary>
