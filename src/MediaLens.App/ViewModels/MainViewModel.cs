@@ -166,9 +166,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             $"{stats.Photos:N0} photos, {stats.Videos:N0} videos"));
         var best = InterestingMoments.Find(_host.Db).Count;
         if (best > 0 || _host.PeopleModel != null)
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Best, 0, "Best video moments", best.ToString("N0"),
-                "Videos where somebody you named is big on the screen for a few seconds, the best first; they play just those moments. " +
-                "The more people you name (Who is this?), the more are found."));
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Best, 0, "Best moments", best.ToString("N0"), "The best moments of your videos"));
         SidebarItems.Add(new SidebarHeader("SOURCES", "Add a folder", SidebarKind.Source));
         var sources = _host.Repo.ListSources();
         var counts = _host.Repo.CountBySource();
@@ -623,7 +621,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (!keepSelection) ResultsReset?.Invoke();
     }
 
-    /// <summary>For each video of Best video moments: its score and its moments, when and who (to see why it is there).</summary>
+    /// <summary>For each video of Best moments: its score and its moments, when and who (to see why it is there).</summary>
     private Dictionary<long, string> BestNotes()
     {
         var names = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
@@ -637,9 +635,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var text = Format.Count(count, "item", "items");
         if (CurrentScope?.Kind == SidebarKind.Best && !hasText)
-            text = count == 0
-                ? "No video like that yet. Name the people in your videos (Who is this?): a video where somebody named is big on the screen for a few seconds shows here."
-                : Format.Count(count, "video", "videos") + " where somebody you named is big on the screen for a few seconds, the best first. They play just those moments.";
+            text = count == 0 ? "No best moments yet. They come with the people you name in your videos (Who is this?)."
+                : Format.Count(count, "video", "videos");
         else if (hasText && !_host.Search.CanSearchText)
             text += " with these words in the file name. To search by what is in the picture, download the AI models (above).";
         else if (hasText)
@@ -753,7 +750,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private PlayerViewModel CreatePlayer(List<TileViewModel> tiles, int index, bool autoPlay)
     {
         var (personIds, names, hasText) = CurrentQuery();
-        // Best video moments: each video plays its moments worth watching (unless words were searched for).
+        // Best moments: each video plays its moments worth watching (unless words were searched for).
         var best = CurrentScope?.Kind == SidebarKind.Best && !hasText
             ? InterestingMoments.Find(_host.Db).ToDictionary(v => v.MediaId, v => v.Moments.Select(m => (m.StartMs, m.EndMs)).ToList())
             : null;

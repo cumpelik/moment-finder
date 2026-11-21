@@ -84,9 +84,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _loadingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool _loadPending;
 
+    /// <summary>What the slow load is doing: loading, or downloading a file that lives in the cloud.</summary>
+    [ObservableProperty] private string _loadingText = "Loading...";
+
     /// <summary>A quick load shows nothing, a slow one "Loading..." (no flicker on every click).</summary>
     private void BeginLoading()
     {
+        LoadingText = "Loading...";
         _loadPending = true;
         IsLoading = false;
         _loadingTimer.Stop();
@@ -547,12 +551,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private async Task PlayFromCloudAsync(PlaylistEntry entry, int version)
     {
-        Error = "Downloading from the cloud...";
+        LoadingText = "Downloading from the cloud...";
         try
         {
             var path = await Cloud.MediaFiles.LocalPathAsync(entry.Item, CancellationToken.None);
             if (version != _loadVersion || _video == null) return;
-            Error = null;
+            LoadingText = "Loading...";
             _playingPath = Is360 ? Path360(entry.Item, path, version) : path;
             _video.Play(_playingPath, TakeStart(entry));
             HoldIfWanted();

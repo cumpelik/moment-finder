@@ -8,7 +8,7 @@ and then work offline. Windows, Linux and macOS.
 - **Library**: folders (and cloud folders) as sources, incremental scan, EXIF and video metadata, thumbnails.
   Folders on this computer are watched: two minutes after the last change a folder is scanned again (and its
   backup follows); a disk connected later is scanned too.
-- **Best video moments** (sidebar): videos where somebody you named is big on the screen for a few seconds, the
+- **Best moments** (sidebar): videos where somebody you named is big on the screen for a few seconds, the
   best first; they play just those moments. Worked out from what the people analysis knows (who, how big, how
   long), nothing is analyzed again.
 - **Search by description** in Czech or English ("lyžař", "beach at sunset 2023", "video narozeniny"),

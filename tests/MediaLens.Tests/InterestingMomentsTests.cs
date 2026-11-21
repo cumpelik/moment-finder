@@ -10,14 +10,21 @@ public class InterestingMomentsTests
     [Fact]
     public void BigForAFewSecondsIsAMoment()
     {
-        // One look a second: big from 2 s to 6 s, then far away, then big again only for a single look.
-        (int, double)[] path = [(1000, 0.1), (2000, 0.3), (3000, 0.4), (4000, 0.5), (5000, 0.5), (6000, 0.3), (7000, 0.05), (8000, 0.6)];
+        // One look a second: big from 2 s to 6 s, then far away for two looks, then big again only for a single look.
+        (int, double)[] path = [(1000, 0.1), (2000, 0.3), (3000, 0.4), (4000, 0.5), (5000, 0.5), (6000, 0.3), (7000, 0.05), (8000, 0.05), (9000, 0.6)];
         var runs = InterestingMoments.Runs(path, 1000, 7).ToList();
         var run = Assert.Single(runs);
         Assert.Equal((1500, 6500), (run.StartMs, run.EndMs));
         Assert.Equal([7L], run.PersonIds);
         // Five seconds, on average at 0.8 of full size.
         Assert.Equal(5 * 0.8, run.Score, 3);
+    }
+
+    [Fact]
+    public void OneSmallerLookDoesNotBreakAMoment()
+    {
+        (int, double)[] path = [(0, 0.3), (1000, 0.3), (2000, 0.12), (3000, 0.3), (4000, 0.3)];
+        Assert.Equal((0, 4500), InterestingMoments.Runs(path, 1000, 1).Select(r => (r.StartMs, r.EndMs)).Single());
     }
 
     [Fact]
@@ -28,11 +35,13 @@ public class InterestingMomentsTests
     }
 
     [Fact]
-    public void TwoPeopleTogetherAreOneMomentWorthBoth()
+    public void TwoPeopleTogetherAreOneMoment()
     {
         var merged = InterestingMoments.Merge([new Moment(2000, 6000, 3, [1]), new Moment(4000, 9000, 4, [2]), new Moment(30000, 33000, 1, [1])], 40000);
         Assert.Equal(2, merged.Count);
-        Assert.Equal((1000, 10000, 7.0), (merged[0].StartMs, merged[0].EndMs, merged[0].Score));
+        // The best one counts fully, the other one in part: a group is not worth the sum of its people.
+        Assert.Equal((1000, 10000), (merged[0].StartMs, merged[0].EndMs));
+        Assert.Equal(4 + 0.3 * 3, merged[0].Score, 3);
         Assert.Equal([1L, 2L], merged[0].PersonIds.Order());
     }
 
