@@ -34,8 +34,8 @@ public partial class AddCloudFolderPanel : UserControl, IOverlayPanel
     /// <summary>A click on a folder goes into it.</summary>
     private async void OnFolderChosen(object? sender, SelectionChangedEventArgs e)
     {
-        if (Vm is not { NotBusy: true } vm || FolderList.SelectedItem is not string folder) return;
+        if (Vm is not { NotBusy: true } vm || FolderList.SelectedItem is not MediaLens.Cloud.StorageFolder folder) return;
         FolderList.SelectedItem = null;
-        await vm.OpenAsync(folder);
+        await vm.OpenAsync(folder.Name);
     }
 }

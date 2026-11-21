@@ -26,7 +26,7 @@ public sealed partial class AddCloudFolderViewModel : CloudWorkViewModel
     public bool IsBrowsing => Connected;
     /// <summary>The folder shown, inside the storage ("" is its top).</summary>
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGoUp), nameof(PlaceText), nameof(CanAdd), nameof(AddText))] private string _path = "";
-    public ObservableCollection<string> Folders { get; } = [];
+    public ObservableCollection<StorageFolder> Folders { get; } = [];
     [ObservableProperty] private bool _noFolders;
     public bool CanGoUp => Path.Length > 0;
     /// <summary>The top of a storage holds the library's own data too: a folder inside it is added.</summary>

@@ -26,6 +26,12 @@ public sealed class CloudInfo
     };
 }
 
+/// <summary>A folder of a storage; Note says what it is when MediaLens made it.</summary>
+public sealed record StorageFolder(string Name, string? Note)
+{
+    public string Title => Note == null ? Name : $"{Name}  ({Note})";
+}
+
 /// <summary>A local folder waiting to be added (or being added) to a folder in the cloud.</summary>
 public sealed class MergeInfo
 {
@@ -830,11 +836,20 @@ public sealed class CloudService
         return remote;
     }
 
-    /// <summary>The folders in a folder of a storage, without the library's own data.</summary>
-    public async Task<List<string>> FoldersAsync(string remotePath, CancellationToken ct) =>
+    /// <summary>
+    /// The folders in a folder of a storage (hidden ones left out), each with a word on what it is when MediaLens
+    /// made it: the library's own folder (photos put into it are found there too), this computer's backups.
+    /// </summary>
+    public async Task<List<StorageFolder>> FoldersAsync(string remotePath, CancellationToken ct) =>
         (await Rclone.DirsAsync(remotePath, ct)).Select(d => d[(d.LastIndexOf('/') + 1)..])
-            .Where(d => !d.StartsWith("media-lens-", StringComparison.Ordinal) && !d.StartsWith('.'))
-            .Order(StringComparer.CurrentCultureIgnoreCase).ToList();
+            .Where(d => !d.StartsWith('.'))
+            .Order(StringComparer.CurrentCultureIgnoreCase)
+            .Select(d => new StorageFolder(d,
+                d == HomeFolder ? "this library's folder"
+                : d.StartsWith("media-lens-", StringComparison.Ordinal) ? "another MediaLens library"
+                : d == Device.MirrorFolder && remotePath.EndsWith(HomeFolder, StringComparison.Ordinal) ? "backups of this computer"
+                : null))
+            .ToList();
 
     /// <summary>A folder of a storage (the user's photos put there by other means) as a source of the library.</summary>
     public Source AddCloudSourceAt(long cloudId, string remotePath, string name)

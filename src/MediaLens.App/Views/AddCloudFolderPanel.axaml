@@ -4,6 +4,7 @@
              xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="clr-namespace:MediaLens.App.ViewModels"
              xmlns:v="clr-namespace:MediaLens.App.Views"
+             xmlns:c="clr-namespace:MediaLens.Cloud;assembly=MediaLens.Core"
              x:Class="MediaLens.App.Views.AddCloudFolderPanel"
              x:DataType="vm:AddCloudFolderViewModel"
              MaxWidth="780" VerticalAlignment="Center">
@@ -60,10 +61,10 @@
                             <Panel>
                                 <ListBox x:Name="FolderList" ItemsSource="{Binding Folders}" Background="Transparent" SelectionChanged="OnFolderChosen">
                                     <ListBox.ItemTemplate>
-                                        <DataTemplate x:DataType="x:String">
+                                        <DataTemplate x:DataType="c:StorageFolder">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <mi:MaterialIcon Kind="FolderOutline" />
-                                                <TextBlock Text="{Binding}" />
+                                                <TextBlock Text="{Binding Title}" />
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
