@@ -614,12 +614,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             UpdateSummary(hits.Count, hasText);
             return;
         }
-        var tiles = hits.Select(h => new TileViewModel(h.Item, h.TimeMs) { IsSelected = selectedIds.Contains(h.Item.Id) });
+        var notes = CurrentScope?.Kind == SidebarKind.Best && !hasText ? BestNotes() : null;
+        var tiles = hits.Select(h => new TileViewModel(h.Item, h.TimeMs) { IsSelected = selectedIds.Contains(h.Item.Id), Note = notes?.GetValueOrDefault(h.Item.Id) });
         Tiles = new ObservableCollection<TileViewModel>(tiles);
         _anchorIndex = -1;
         MarkBucketMembership();
         UpdateSummary(hits.Count, hasText);
         if (!keepSelection) ResultsReset?.Invoke();
+    }
+
+    /// <summary>For each video of Best video moments: its score and its moments, when and who (to see why it is there).</summary>
+    private Dictionary<long, string> BestNotes()
+    {
+        var names = _host.People.ListPersons().ToDictionary(p => p.Id, p => p.Name);
+        static string At(int ms) => TimeSpan.FromMilliseconds(ms).ToString(ms >= 3_600_000 ? @"h\:mm\:ss" : @"m\:ss");
+        return InterestingMoments.Find(_host.Db).ToDictionary(v => v.MediaId, v =>
+            $"Score {v.Score:0.0}\n" + string.Join("\n", v.Moments.Select(m =>
+                $"{At(m.StartMs)} to {At(m.EndMs)}: {string.Join(", ", m.PersonIds.Select(id => names.GetValueOrDefault(id, "?")))} ({m.Score:0.0})")));
     }
 
     private void UpdateSummary(int count, bool hasText)

@@ -57,7 +57,10 @@ public sealed partial class TileViewModel : ObservableObject
 
     public string? DurationText => Item.DurationMs is { } ms ? Format.Duration(ms) : null;
 
-    public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "");
+    public string ToolTip => $"{Item.FileName}\n{Item.Taken:d. M. yyyy H:mm}" + (Item.Camera is { } c ? $"\n{c}" : "") + (Note is { } n ? $"\n\n{n}" : "");
+
+    /// <summary>Why the tile is in the list (the best moments of a video: when, who, how much).</summary>
+    public string? Note { get; init; }
 
     /// <summary>How many tiles on screen show this item (grouped by person, one item can be in several groups).</summary>
     private int _shown;
