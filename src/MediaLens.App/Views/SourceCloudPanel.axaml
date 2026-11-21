@@ -42,8 +42,50 @@
                 <!-- A folder here, not connected yet -->
                 <StackPanel Spacing="16" IsVisible="{Binding IsLocal}">
                     <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="1. What it should be" />
+                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsBackupMode}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="A backup of this folder" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Your folder stays the main one. What you add is copied to the cloud, what you move or rename is moved there too, and what you delete is deleted there only after you say so. The backup is not another source in the library. Other computers of this library may look at it, not change it. When you lose this computer, another one can take the backup over and be the main one." />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsMoveMode}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="Clone it to the cloud" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Nothing on this computer is deleted or changed. The folder is copied to the cloud once, and the copy becomes a source of its own that lives there; names, people and buckets go with it. Every computer of this library may add, move and delete in it. The folder here stays in the library as a separate source: what changes in one does not reach the other. For getting your photos into the cloud step by step." />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsMergeMode}" IsVisible="{Binding CanMerge}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="Add it to a folder you have in the cloud" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="For making several folders one in the cloud. The files are copied into a folder of this library that lives in the cloud, and only added: nothing there is deleted or written over, a file that is there already is skipped, another file of the same name goes beside it with a number. Nothing on this computer is deleted or changed, and the folder here stays in the library as it is." />
+                                </StackPanel>
+                            </RadioButton>
+                            <TextBlock Classes="muted" TextWrapping="Wrap" Text="A backup and a clone can be switched to the other later." />
+                        </StackPanel>
+                    </Border>
+                    <Border Classes="card" Padding="18" IsVisible="{Binding IsMergeMode}">
                         <StackPanel Spacing="12">
-                            <TextBlock Classes="section" Text="1. Which storage" />
+                            <TextBlock Classes="section" Text="2. Which folder in the cloud" />
+                            <Grid ColumnDefinitions="300,*">
+                                <TextBlock VerticalAlignment="Center" Text="Add it to" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding MergeTargets}" SelectedItem="{Binding MergeTarget}" HorizontalAlignment="Stretch" />
+                            </Grid>
+                            <Grid ColumnDefinitions="300,*">
+                                <TextBlock VerticalAlignment="Center" Text="Into its folder" />
+                                <TextBox Grid.Column="1" Text="{Binding MergeFolder}" PlaceholderText="(empty: straight into it)"
+                                         ToolTip.Tip="A folder of its own keeps two folders with the same names inside (2024, 2025) apart; empty puts the files straight in" />
+                            </Grid>
+                            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding MergeWhereText}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Classes="card" Padding="18" IsVisible="{Binding IsNotMergeMode}">
+                        <StackPanel Spacing="12">
+                            <TextBlock Classes="section" Text="2. Which storage" />
                             <Grid ColumnDefinitions="300,*" IsVisible="{Binding HasClouds}">
                                 <TextBlock VerticalAlignment="Center" Text="Connected storage" />
                                 <ComboBox Grid.Column="1" ItemsSource="{Binding Destinations}" SelectedItem="{Binding Destination}" HorizontalAlignment="Stretch" />
@@ -62,34 +104,14 @@
                             <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding WhereText}" />
                         </StackPanel>
                     </Border>
-                    <Border Classes="card" Padding="18">
+                    <Border Classes="card" Padding="18" IsVisible="{Binding IsNotMergeMode}">
                         <StackPanel Spacing="10">
-                            <TextBlock Classes="section" Text="2. Encrypt it?" />
+                            <TextBlock Classes="section" Text="3. Encrypt it?" />
                             <CheckBox IsChecked="{Binding Encrypt}">Encrypt the files</CheckBox>
                             <TextBlock Classes="warn" IsVisible="{Binding KeyAtRisk}"
                                        Text="The key is kept in your library, and the library is on this computer only. Keep the library in a cloud too (Settings), otherwise a lost computer means files nobody can read." />
                             <TextBlock Classes="muted" TextWrapping="Wrap"
                                        Text="Encrypted, the storage holds only noise: names and contents are unreadable there, only MediaLens with your library (or its recovery string) reads them. Without it the files are there as they are, and you can look at them in the storage's own app too. This cannot be changed later." />
-                        </StackPanel>
-                    </Border>
-                    <Border Classes="card" Padding="18">
-                        <StackPanel Spacing="10">
-                            <TextBlock Classes="section" Text="3. What it should be" />
-                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsBackupMode}">
-                                <StackPanel Spacing="4">
-                                    <TextBlock FontWeight="SemiBold" Text="A backup of this folder" />
-                                    <TextBlock Classes="muted" TextWrapping="Wrap"
-                                               Text="Your folder stays the main one. What you add is copied to the cloud, what you move or rename is moved there too, and what you delete is deleted there only after you say so. The backup is not another source in the library. Other computers of this library may look at it, not change it. When you lose this computer, another one can take the backup over and be the main one." />
-                                </StackPanel>
-                            </RadioButton>
-                            <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsMoveMode}">
-                                <StackPanel Spacing="4">
-                                    <TextBlock FontWeight="SemiBold" Text="Clone it to the cloud" />
-                                    <TextBlock Classes="muted" TextWrapping="Wrap"
-                                               Text="Nothing on this computer is deleted or changed. The folder is copied to the cloud once, and the copy becomes a source of its own that lives there; names, people and buckets go with it. Every computer of this library may add, move and delete in it. The folder here stays in the library as a separate source: what changes in one does not reach the other. For getting your photos into the cloud step by step." />
-                                </StackPanel>
-                            </RadioButton>
-                            <TextBlock Classes="muted" TextWrapping="Wrap" Text="Either can be switched to the other later." />
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -150,6 +172,24 @@
                 </StackPanel>
 
                 <!-- A folder that lives in the cloud -->
+                <!-- This folder being added to a folder in the cloud -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding IsMerging}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="Adding it to the cloud" />
+                        <TextBlock TextWrapping="Wrap" Text="{Binding MergeText}" Classes="muted" Classes.warn="{Binding MergeFailed}" />
+                        <Button Click="OnStopMerge" HorizontalAlignment="Left">Stop adding...</Button>
+                    </StackPanel>
+                </Border>
+
+                <!-- Another folder being added here -->
+                <Border Classes="card" Padding="18" IsVisible="{Binding HasIncoming}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="A folder is being added here" />
+                        <TextBlock TextWrapping="Wrap" Text="{Binding IncomingText}" Classes="muted" Classes.warn="{Binding IncomingFailed}" />
+                        <Button Click="OnStopIncoming" HorizontalAlignment="Left">Stop adding...</Button>
+                    </StackPanel>
+                </Border>
+
                 <Border Classes="card" Padding="18" IsVisible="{Binding IsShared}">
                     <StackPanel Spacing="10">
                         <TextBlock Classes="section" Text="In the cloud" />

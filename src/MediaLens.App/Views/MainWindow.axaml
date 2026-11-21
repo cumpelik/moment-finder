@@ -108,9 +108,9 @@
                             <mi:MaterialIcon Kind="{Binding Icon}" Margin="0,0,8,0" />
                             <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Count}" VerticalAlignment="Center" Margin="6,0,0,0"
-                                       IsVisible="{Binding IsNotClone}" />
+                                       IsVisible="{Binding HasCount}" />
                             <TextBlock Grid.Column="2" Classes="muted small" Text="{Binding Progress.Text}" VerticalAlignment="Center"
-                                       Margin="6,0,0,0" IsVisible="{Binding IsClone}" />
+                                       Margin="6,0,0,0" IsVisible="{Binding HasProgress}" />
                             <Button Grid.Column="3" Classes="icon sourcecloud" Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}"
                                     ToolTip.Tip="{Binding CloudTip}" Margin="4,0,0,0">
                                 <mi:MaterialIcon Kind="{Binding CloudIcon}" Classes.attention="{Binding CloudAttention}"

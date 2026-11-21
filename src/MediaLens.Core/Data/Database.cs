@@ -199,6 +199,15 @@ public sealed class Database
         ALTER TABLE source ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE source ADD COLUMN home_name TEXT;
         """,
+        // 11: a local folder added to a folder that lives in the cloud (several folders made one there): what waits
+        // or runs, into which folder inside it, and how the last try ended.
+        """
+        CREATE TABLE merge_job(
+            source_id INTEGER PRIMARY KEY REFERENCES source(id) ON DELETE CASCADE,
+            target_id INTEGER NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+            subfolder TEXT NOT NULL DEFAULT '',
+            last_result TEXT);
+        """,
     ];
 
     /// <summary>

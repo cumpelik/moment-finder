@@ -19,8 +19,14 @@ public sealed class MirrorScheduler : IDisposable
     /// <summary>Text for the status bar; empty when nothing runs.</summary>
     public event Action<string>? StatusChanged;
     public event Action? MirrorsChanged;
-    /// <summary>How far the copy of a folder is (mirror id, progress): a clone shows it at its place in the sidebar.</summary>
-    public event Action<long, Rclone.CopyProgress>? Copying;
+    /// <summary>
+    /// How far the copy of a folder is: a clone shows it at its place in the sidebar, a folder being added to a cloud
+    /// folder at that one. The key is MirrorKey or MergeKey.
+    /// </summary>
+    public event Action<string, Rclone.CopyProgress>? Copying;
+
+    public static string MirrorKey(long mirrorId) => $"mirror:{mirrorId}";
+    public static string MergeKey(long sourceId) => $"merge:{sourceId}";
     /// <summary>A backup found the folder changed, or a folder cloned to the cloud: the library scans again.</summary>
     public event Action? FoldersChanged;
 
@@ -52,7 +58,7 @@ public sealed class MirrorScheduler : IDisposable
         _wake.Release();
     }
 
-    private long _runningId;
+    private string? _runningKey;
     private CancellationTokenSource? _running;
 
     /// <summary>Stops the copy of this mirror if it runs now (a clone cancelled, a backup stopped).</summary>
@@ -61,14 +67,28 @@ public sealed class MirrorScheduler : IDisposable
         lock (_requested)
         {
             _requested.Remove(mirrorId);
-            if (_runningId == mirrorId) _running?.Cancel();
+            if (_runningKey == MirrorKey(mirrorId)) _running?.Cancel();
         }
     }
+
+    /// <summary>Stops adding this folder to a cloud folder if it runs now.</summary>
+    public void CancelMerge(long sourceId)
+    {
+        lock (_requested)
+        {
+            if (_runningKey == MergeKey(sourceId)) _running?.Cancel();
+        }
+    }
+
+    /// <summary>A folder waits to be added to a cloud folder: started now, not at the next round.</summary>
+    public void MergeNow() => _wake.Release();
 
     /// <summary>A folder changed on this computer: its backup follows (not a stopped one, another computer has it).</summary>
     public void FolderChanged(long sourceId)
     {
         if (_cloud.Mirrors().FirstOrDefault(m => m.SourceId == sourceId && m.Enabled) is { } mirror) RunNow(mirror.Id);
+        // Being added to a cloud folder (perhaps waiting for its disk): it goes on now.
+        if (_cloud.Merges().Any(j => j.SourceId == sourceId)) _wake.Release();
     }
 
     /// <summary>Backs the library up now.</summary>
@@ -100,6 +120,48 @@ public sealed class MirrorScheduler : IDisposable
         MirrorsChanged?.Invoke();
     }
 
+    /// <summary>Folders waiting to be added to a cloud folder; one that cannot go on now (a disk away) waits for the next round.</summary>
+    private async Task MergesAsync(CancellationToken ct)
+    {
+        foreach (var job in _cloud.Merges())
+        {
+            var key = MergeKey(job.SourceId);
+            StatusChanged?.Invoke($"Adding {job.SourceName} to {job.TargetName}...");
+            using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            lock (_requested)
+            {
+                _runningKey = key;
+                _running = run;
+            }
+            try
+            {
+                await _cloud.MergeAsync(job.SourceId, new Progress<Rclone.CopyProgress>(p =>
+                {
+                    StatusChanged?.Invoke($"Adding {job.SourceName} to {job.TargetName}: {p.Percent}% ({p.Text})");
+                    Copying?.Invoke(key, p);
+                }), run.Token);
+                FoldersChanged?.Invoke();
+            }
+            catch (Exception e) when (e is RcloneException or InvalidOperationException or IOException)
+            {
+                // Recorded in the job's last result; tried again at the next round.
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Stopped by the user.
+            }
+            finally
+            {
+                lock (_requested)
+                {
+                    _runningKey = null;
+                    _running = null;
+                }
+            }
+            MirrorsChanged?.Invoke();
+        }
+    }
+
     private async Task LoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -123,7 +185,7 @@ public sealed class MirrorScheduler : IDisposable
                     using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     lock (_requested)
                     {
-                        _runningId = id;
+                        _runningKey = MirrorKey(id);
                         _running = run;
                     }
                     try
@@ -131,7 +193,7 @@ public sealed class MirrorScheduler : IDisposable
                         var result = await _cloud.MirrorAsync(id, new Progress<Rclone.CopyProgress>(p =>
                         {
                             StatusChanged?.Invoke($"{doing} {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})");
-                            Copying?.Invoke(id, p);
+                            Copying?.Invoke(MirrorKey(id), p);
                         }), run.Token);
                         if (result.Moved + result.Gone > 0) FoldersChanged?.Invoke();
                         // All of it is in the cloud now: the folder moves there, if the user asked for it.
@@ -155,12 +217,13 @@ public sealed class MirrorScheduler : IDisposable
                     {
                         lock (_requested)
                         {
-                            _runningId = 0;
+                            _runningKey = null;
                             _running = null;
                         }
                     }
                     MirrorsChanged?.Invoke();
                 }
+                await MergesAsync(ct);
                 await BackupAsync(ct);
                 StatusChanged?.Invoke("");
                 await _wake.WaitAsync(TimeSpan.FromMinutes(10), ct);

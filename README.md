@@ -35,6 +35,10 @@ and then work offline. Windows, Linux and macOS.
   - *Clone to the cloud* (nothing here is deleted): the clone is in the sidebar at once, with how far its copy is
     (its cloud button stops it); once all files are there it is a source of its own that every computer may change; the folder here stays as a separate source and its files get their twins'
     thumbnails and analysis without being read again. Keep it on this computer again: download, backed up.
+  - *Add it to a folder you have in the cloud* (several folders made one): the files are copied into a cloud
+    folder of the library, into a folder of their own inside it or straight in. Only added: nothing there is deleted
+    or written over, a file already there is skipped, another file of the same name goes beside it as `name (2).jpg`.
+    The folder here stays as it is; a break (a disk away, the app closed) goes on where it stopped.
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.
   On a new or second computer, paste it (Settings, Bring a library back, also offered by an empty library): the library comes

@@ -167,12 +167,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var sources = _host.Repo.ListSources();
         var counts = _host.Repo.CountBySource();
         var mirrors = _host.Cloud.Mirrors().GroupBy(m => m.SourceId).ToDictionary(g => g.Key, g => g.First());
+        var merges = _host.Cloud.Merges();
         foreach (var s in sources)
         {
             // A folder of a library restored from another computer, or a disk that is not connected.
             var away = s.Kind == SourceKinds.Local && !Directory.Exists(s.Root);
             var mirror = mirrors.GetValueOrDefault(s.Id);
-            SidebarItems.Add(SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirror));
+            var entry = SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirror);
+            // A folder being added to a cloud folder: how far it is shows at the cloud folder it goes to.
+            if (merges.FirstOrDefault(j => j.TargetId == s.Id) is { } incoming) entry = MergeTarget(entry, incoming);
+            if (merges.FirstOrDefault(j => j.SourceId == s.Id) is { } outgoing)
+                entry = entry with { CloudTip = $"Being added to {outgoing.TargetName}: see it there. Nothing here is deleted." };
+            SidebarItems.Add(entry);
             // A clone is in the library from the start, at its place among the sources, with how far its copy is.
             if (mirror != null && _host.Cloud.MoveRequested(mirror.Id)) SidebarItems.Add(CloneEntry(s, mirror));
         }
@@ -208,11 +214,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SelectedSidebarItem = restored ?? SidebarItems.OfType<SidebarEntry>().First();
     }
 
-    private readonly Dictionary<long, CloneProgress> _clones = [];
+    /// <summary>The progress of clones and of folders being added to a cloud folder, by MirrorScheduler's keys.</summary>
+    private readonly Dictionary<string, CloneProgress> _clones = [];
+
+    private CloneProgress ProgressOf(string key, string start)
+    {
+        if (!_clones.TryGetValue(key, out var progress)) _clones[key] = progress = new CloneProgress { Text = start };
+        return progress;
+    }
+
+    private SidebarEntry MergeTarget(SidebarEntry entry, MergeInfo job)
+    {
+        var progress = ProgressOf(MirrorScheduler.MergeKey(job.SourceId), "adding");
+        var failed = job.LastResult != null;
+        progress.Text = failed ? "waits" : progress.Text == "waits" ? "adding" : progress.Text;
+        return entry with
+        {
+            Progress = progress,
+            ToolTip = $"{job.SourceName} is being added here" + (job.Subfolder.Length > 0 ? $", into the folder {job.Subfolder}." : "."),
+            CloudIcon = failed ? MaterialIconKind.CloudAlertOutline : MaterialIconKind.CloudSyncOutline,
+            CloudAttention = failed,
+            CloudTip = failed ? "Adding a folder here could not go on. Click for why, or to stop it." : $"Adding {job.SourceName} here. Click to see how far it is, or to stop it.",
+        };
+    }
 
     private SidebarEntry CloneEntry(Source s, MirrorInfo mirror)
     {
-        if (!_clones.TryGetValue(mirror.Id, out var progress)) _clones[mirror.Id] = progress = new CloneProgress { Text = "copying" };
+        var progress = ProgressOf(MirrorScheduler.MirrorKey(mirror.Id), "copying");
         var waits = mirror.Gone > 0;
         var failed = !mirror.Enabled || mirror.LastResult is { } r && r != "OK";
         progress.Text = waits ? "waits" : failed ? "failed" : progress.Text is "waits" or "failed" ? "copying" : progress.Text;
@@ -229,9 +257,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         };
     }
 
-    private void OnCopying(long mirrorId, Rclone.CopyProgress p)
+    private void OnCopying(string key, Rclone.CopyProgress p)
     {
-        if (_clones.TryGetValue(mirrorId, out var progress)) progress.Text = $"{p.Percent}%";
+        if (_clones.TryGetValue(key, out var progress)) progress.Text = $"{p.Percent}%";
     }
 
     private SidebarEntry SourceEntry(Source s, bool away, long count, MirrorInfo? mirror)
@@ -282,7 +310,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void OnCloudChanged()
     {
         RebuildSidebar();
-        if (MirrorText.Length == 0 || !MirrorText.StartsWith("Backing up", StringComparison.Ordinal) && !MirrorText.StartsWith("Cloning", StringComparison.Ordinal))
+        if (MirrorText.Length == 0 || !MirrorText.StartsWith("Backing up", StringComparison.Ordinal) && !MirrorText.StartsWith("Cloning", StringComparison.Ordinal) && !MirrorText.StartsWith("Adding", StringComparison.Ordinal))
             MirrorText = CloudSummary();
         _host.Indexer.Wake();
     }

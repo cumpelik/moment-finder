@@ -13,6 +13,19 @@ public sealed record CloudChoice(string Title, CloudInfo? Cloud)
     public override string ToString() => Title;
 }
 
+/// <summary>A folder of the library that lives in the cloud, to add a local folder to.</summary>
+public sealed record MergeChoice(string Title, long Id)
+{
+    public override string ToString() => Title;
+}
+
+public enum ConnectMode
+{
+    Backup,
+    Clone,
+    Merge,
+}
+
 /// <summary>
 /// One source and the cloud: connecting a folder (backed up, or cloned to the cloud), the state of its backup and the
 /// files deleted here that wait for a word, cloning it to the cloud, and giving a folder in the cloud a home here.
@@ -28,7 +41,7 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
 
     /// <summary>The sources changed (a folder cloned to the cloud or got a home here): the sidebar shows it.</summary>
     public event Action? SourcesChanged;
-    /// <summary>A clone started: the window has nothing more to do, the clone shows itself in the sidebar.</summary>
+    /// <summary>A clone or an adding started: the window has nothing more to do, the sidebar shows how far it is.</summary>
     public event Action? CloneStarted;
 
     // ---- which state ----
@@ -61,14 +74,42 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     private int _proposal;
     /// <summary>The key of an encrypted folder is kept in the library: a library on this computer only can lose it.</summary>
     public bool KeyAtRisk => Encrypt && _host.Cloud.BackupCloud == null;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsMoveMode), nameof(ConnectText))] private bool _isBackupMode = true;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsBackupMode), nameof(IsMoveMode), nameof(IsMergeMode), nameof(IsNotMergeMode), nameof(ConnectText))]
+    private ConnectMode _mode;
+    // Radio buttons: the one checked sets the mode, the ones unchecked say nothing.
+    public bool IsBackupMode
+    {
+        get => Mode == ConnectMode.Backup;
+        set { if (value) Mode = ConnectMode.Backup; }
+    }
     public bool IsMoveMode
     {
-        get => !IsBackupMode;
-        set => IsBackupMode = !value;
+        get => Mode == ConnectMode.Clone;
+        set { if (value) Mode = ConnectMode.Clone; }
     }
+    public bool IsMergeMode
+    {
+        get => Mode == ConnectMode.Merge;
+        set { if (value) Mode = ConnectMode.Merge; }
+    }
+    public bool IsNotMergeMode => !IsMergeMode;
     // A clone is no lasting connection: the words say what happens.
-    public string ConnectText => IsBackupMode ? "Back it up" : "Clone it to the cloud";
+    public string ConnectText => Mode switch
+    {
+        ConnectMode.Backup => "Back it up",
+        ConnectMode.Clone => "Clone it to the cloud",
+        _ => "Add it there",
+    };
+
+    // ---- adding it to a folder in the cloud ----
+    public ObservableCollection<MergeChoice> MergeTargets { get; } = [];
+    public bool CanMerge => MergeTargets.Count > 0;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(MergeWhereText))] private MergeChoice? _mergeTarget;
+    /// <summary>A folder of its own inside (the folder's name), or empty: straight into it.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(MergeWhereText))] private string _mergeFolder = "";
+    public string MergeWhereText => MergeTarget is not { } t ? "Choose the folder in the cloud."
+        : CloudService.CleanFolder(MergeFolder) is { Length: > 0 } inside ? $"The files go into {t.Title}, in its folder {inside}."
+        : $"The files go straight into {t.Title}, beside what is there.";
     public string WhereText => Target.Length == 0 ? "Fill in the name of the folder."
         : Destination?.Cloud is { } cloud ? $"It goes into {cloud.Remote[(cloud.Remote.IndexOf(':') + 1)..].TrimEnd('/')}/{Target}."
         : $"It goes into the folder {Target} of the storage.";
@@ -81,7 +122,7 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     partial void OnDestinationChanged(CloudChoice? value) => _ = ProposeAsync();
     partial void OnUnderComputerChanged(bool value) => _ = ProposeAsync();
     partial void OnEncryptChanged(bool value) => _ = ProposeAsync();
-    partial void OnIsBackupModeChanged(bool value) => _ = ProposeAsync();
+    partial void OnModeChanged(ConnectMode value) => _ = ProposeAsync();
 
     /// <summary>The folder's name, with a number when the storage has that folder for something else.</summary>
     private async Task ProposeAsync()
@@ -122,6 +163,35 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     [ObservableProperty] private bool _canMove;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanBackUpNow))] private bool _stopped;
 
+    // ---- being added to a folder in the cloud, or another folder being added here ----
+    private MergeInfo? _merge;
+    private bool _mergeFolderSet;
+    private MergeInfo? _incoming;
+    [ObservableProperty] private bool _isMerging;
+    [ObservableProperty] private string _mergeText = "";
+    [ObservableProperty] private bool _mergeFailed;
+    [ObservableProperty] private bool _hasIncoming;
+    [ObservableProperty] private string _incomingText = "";
+    [ObservableProperty] private bool _incomingFailed;
+    public long SourceId => _sourceId;
+    public long? IncomingSourceId => _incoming?.SourceId;
+    public string IncomingName => _incoming?.SourceName ?? "";
+
+    private static string MergeState(MergeInfo job, string? progress) =>
+        job.LastResult is { } failed ? $"It could not go on: {CloudWorkViewModel.Plain(failed)} It is tried again in a few minutes."
+        : (progress != null ? $"Copied {progress}. " : "The files are copied in the background. ") +
+          "Nothing on this computer is deleted, nothing in the cloud is written over. This window can be closed.";
+
+    /// <summary>Not added any further; what is in the cloud already stays.</summary>
+    public void StopMerge(long sourceId)
+    {
+        _host.Mirrors.CancelMerge(sourceId);
+        _host.Cloud.CancelMerge(sourceId);
+        Status = "Stopped. What was copied stays in the cloud folder.";
+        Reload();
+        SourcesChanged?.Invoke();
+    }
+
     // ---- in the cloud ----
     [ObservableProperty] private string _cloudText = "";
     [ObservableProperty] private string _homeText = "";
@@ -138,6 +208,11 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         }
         HasClouds = Destinations.Count > 0;
         Destinations.Add(new CloudChoice("Another storage (fill it in below)", null));
+        // Two cloud folders of one name are told apart by where they are.
+        var targets = host.Cloud.MergeTargets();
+        foreach (var s in targets)
+            MergeTargets.Add(new MergeChoice(targets.Count(t => t.Name == s.Name) > 1 ? $"{s.Name}: {s.Remote![(s.Remote!.IndexOf(':') + 1)..]}" : s.Name, s.Id));
+        MergeTarget = MergeTargets.FirstOrDefault();
         Reload();
         // The library's own storage first, otherwise the first one connected.
         var library = host.Cloud.BackupCloud;
@@ -148,10 +223,13 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
 
     private void OnMirrorsChanged() => Dispatcher.UIThread.Post(Reload);
 
-    private void OnCopying(long mirrorId, Rclone.CopyProgress p) => Dispatcher.UIThread.Post(() =>
+    private void OnCopying(string key, Rclone.CopyProgress p) => Dispatcher.UIThread.Post(() =>
     {
-        if (_mirror?.Id == mirrorId && MoveWaiting && !Stopped)
+        if (_mirror is { } m && key == MirrorScheduler.MirrorKey(m.Id) && MoveWaiting && !Stopped)
             LastText = $"Copying: {p.Percent}% ({p.Text}). Then the copy becomes a source of its own. This window can be closed.";
+        if (_merge is { } job && key == MirrorScheduler.MergeKey(job.SourceId)) MergeText = MergeState(job, $"{p.Percent}% ({p.Text})");
+        if (_incoming is { } other && key == MirrorScheduler.MergeKey(other.SourceId))
+            IncomingText = $"{other.SourceName} is being added here. " + MergeState(other, $"{p.Percent}% ({p.Text})");
     });
 
     /// <summary>The window closed: no more updates.</summary>
@@ -170,6 +248,11 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
             return;
         }
         SourceName = source.Name;
+        if (MergeFolder.Length == 0 && !_mergeFolderSet)
+        {
+            _mergeFolderSet = true;
+            MergeFolder = DeviceInfo.Safe(source.Name);
+        }
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(WhereText));
         _mirror = _host.Cloud.Mirrors().FirstOrDefault(m => m.SourceId == _sourceId);
@@ -178,7 +261,19 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         // Done in the background while the window was open: what it said about it is old now.
         if (IsBackedUp && !local) Status = "Cloned: the copy lives in the cloud now as a source of its own, and the folder on this computer is a separate source, as it was.";
         IsBackedUp = local && _mirror != null;
-        IsLocal = here && _mirror == null;
+        var merges = _host.Cloud.Merges();
+        _merge = merges.FirstOrDefault(j => j.SourceId == _sourceId);
+        _incoming = merges.FirstOrDefault(j => j.TargetId == _sourceId);
+        IsMerging = _merge != null;
+        MergeFailed = _merge?.LastResult != null;
+        if (_merge is { } job)
+            MergeText = $"Being added to {job.TargetName}" + (job.Subfolder.Length > 0 ? $", into its folder {job.Subfolder}. " : ". ") + MergeState(job, null);
+        HasIncoming = _incoming != null;
+        IncomingFailed = _incoming?.LastResult != null;
+        if (_incoming is { } other) IncomingText = $"{other.SourceName} is being added here. " + MergeState(other, null);
+        OnPropertyChanged(nameof(IncomingSourceId));
+        OnPropertyChanged(nameof(IncomingName));
+        IsLocal = here && _mirror == null && _merge == null;
         IsAway = local && !here && _mirror == null;
         AwayText = $"The folder {source.Root} is not on this computer now. Connect its disk, or say where it is: right click the folder, Locate folder.";
         IsShared = !local && !source.ReadOnly;
@@ -227,6 +322,19 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     [RelayCommand]
     private Task Connect()
     {
+        if (IsMergeMode)
+        {
+            if (MergeTarget is not { } into)
+            {
+                Status = "Choose the folder in the cloud to add it to.";
+                return Task.CompletedTask;
+            }
+            _host.Cloud.RequestMerge(_sourceId, into.Id, MergeFolder);
+            _host.Mirrors.MergeNow();
+            SourcesChanged?.Invoke();
+            CloneStarted?.Invoke();
+            return Task.CompletedTask;
+        }
         if (IsNewStorage && Form.Missing() is { } missing)
         {
             Status = missing;

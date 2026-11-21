@@ -49,9 +49,10 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
 
     /// <summary>The button of a source that opens its window about the cloud, showing the state of its backup.</summary>
     public bool HasCloudButton => Kind is SidebarKind.Source or SidebarKind.Clone;
-    public bool IsClone => Kind == SidebarKind.Clone;
-    public bool IsNotClone => !IsClone;
+    /// <summary>A copy on its way (a clone, a folder being added here): shown instead of the count.</summary>
     public CloneProgress? Progress { get; init; }
+    public bool HasProgress => Progress != null;
+    public bool HasCount => Progress == null;
     public MaterialIconKind CloudIcon { get; init; } = MaterialIconKind.CloudArrowUpOutline;
     public string CloudTip { get; init; } = "";
     /// <summary>The backup waits for the user (deleted files, a failure, stopped).</summary>

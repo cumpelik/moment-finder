@@ -144,6 +144,46 @@ public class FolderBackupTests
     }
 
     [Fact]
+    public async Task AFolderIsAddedToACloudFolderNeverWritingOver()
+    {
+        Assert.SkipUnless(Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        using var lib = new TestLibrary();
+        var a = lib.AddPhoto("2024/a.jpg", width: 64, color: "red");
+        lib.AddPhoto("2024/b.jpg", width: 80, color: "blue");
+        lib.AddPhoto("c.jpg", width: 96, color: "green");
+        var source = lib.AddSource();
+        await lib.ScanAsync(source);
+
+        // The cloud folder has a.jpg already (the same file) and another b.jpg.
+        var cloudDir = Path.Combine(lib.Root, "cloud");
+        var service = new CloudService(lib.Paths, lib.Db, lib.Repo);
+        var cloud = await service.AddFolderAsync("Store", cloudDir, null, ct, encrypt: false);
+        var family = Path.Combine(cloudDir, "Family", "test", "2024");
+        Directory.CreateDirectory(family);
+        File.Copy(a, Path.Combine(family, "a.jpg"));
+        File.SetLastWriteTimeUtc(Path.Combine(family, "a.jpg"), File.GetLastWriteTimeUtc(a));
+        File.WriteAllText(Path.Combine(family, "b.jpg"), "another photo");
+        var target = lib.Repo.AddSource(SourceKinds.Cloud, Path.Combine(lib.Root, "cache"), "Family (Store)", CloudService.Join(cloud.Remote, "Family"));
+        Assert.Contains(service.MergeTargets(), t => t.Id == target.Id);
+
+        service.RequestMerge(source.Id, target.Id, "test");
+        Assert.Equal(new MergeResult(1, 1, 1), await service.MergeAsync(source.Id, null, ct));
+        Assert.Equal("another photo", File.ReadAllText(Path.Combine(family, "b.jpg")));
+        Assert.True(File.Exists(Path.Combine(family, "b (2).jpg")));
+        Assert.True(File.Exists(Path.Combine(cloudDir, "Family", "test", "c.jpg")));
+        Assert.Empty(service.Merges());
+        // The new files in the cloud folder have the rows of their originals (their twins give the rest).
+        var rows = lib.Repo.Query(new MediaFilter { SourceId = target.Id }).Select(i => i.RelPath).Order().ToList();
+        Assert.Equal(["test/2024/a.jpg", "test/2024/b (2).jpg", "test/c.jpg"], rows);
+        Assert.Equal(3, lib.Repo.Query(new MediaFilter { SourceId = source.Id }).Count);
+
+        // Again (a break, or added twice): nothing new is copied.
+        service.RequestMerge(source.Id, target.Id, "test");
+        Assert.Equal(new MergeResult(0, 0, 3), await service.MergeAsync(source.Id, null, ct));
+    }
+
+    [Fact]
     public async Task MovedToTheCloudKeepsEverything()
     {
         Assert.SkipUnless(Rclone.IsAvailable, "rclone is not installed");

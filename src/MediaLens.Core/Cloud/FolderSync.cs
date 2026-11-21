@@ -18,6 +18,9 @@ public static class FolderSync
     /// <summary>rclone keeps the time of a file; some clouds only to the second.</summary>
     private static readonly TimeSpan SameTime = TimeSpan.FromSeconds(1);
 
+    /// <summary>The same file as far as a listing tells: size, and time to the second.</summary>
+    public static bool Same(RemoteFile a, RemoteFile b) => a.Size == b.Size && (a.ModTime - b.ModTime).Duration() <= SameTime;
+
     /// <summary>The files of a local folder as the backup sees them (the same ones the library skips are skipped).</summary>
     public static Dictionary<string, RemoteFile> ListLocal(string root)
     {

@@ -70,6 +70,22 @@ public partial class SourceCloudPanel : UserControl, IOverlayPanel
             vm.Disconnect();
     }
 
+    private async void OnStopMerge(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { } vm) return;
+        if (await Dialogs.ConfirmAsync(Owner, "Stop adding",
+                $"Stop adding \"{vm.SourceName}\" to the cloud folder? What is copied so far stays there; the folder here is not touched."))
+            vm.StopMerge(vm.SourceId);
+    }
+
+    private async void OnStopIncoming(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not { IncomingSourceId: { } from } vm) return;
+        if (await Dialogs.ConfirmAsync(Owner, "Stop adding",
+                $"Stop adding \"{vm.IncomingName}\" here? What is copied so far stays here; that folder is not touched."))
+            vm.StopMerge(from);
+    }
+
     private async void OnMakeHome(object? sender, RoutedEventArgs e)
     {
         if (Vm is not { } vm) return;

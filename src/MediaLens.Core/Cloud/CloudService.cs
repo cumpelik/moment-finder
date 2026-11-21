@@ -26,6 +26,19 @@ public sealed class CloudInfo
     };
 }
 
+/// <summary>A local folder waiting to be added (or being added) to a folder in the cloud.</summary>
+public sealed class MergeInfo
+{
+    public long SourceId { get; init; }
+    public string SourceName { get; init; } = "";
+    public long TargetId { get; init; }
+    public string TargetName { get; init; } = "";
+    public string Subfolder { get; init; } = "";
+    public string? LastResult { get; init; }
+}
+
+public sealed record MergeResult(int Uploaded, int Renamed, int Same);
+
 public sealed class MirrorInfo
 {
     public long Id { get; init; }
@@ -601,6 +614,124 @@ public sealed class CloudService
         }
         Directory.CreateDirectory(cache);
         return localId;
+    }
+
+    // ---- a folder added to a folder in the cloud ----
+
+    /// <summary>The folders in a cloud that a local folder can be added to: shared ones (not another computer's backup).</summary>
+    public List<Source> MergeTargets() =>
+        _repo.ListSources().Where(s => s.Kind == SourceKinds.Cloud && !s.ReadOnly && s.Remote != null && CloudOf(s) != null).ToList();
+
+    public List<MergeInfo> Merges()
+    {
+        using var c = _db.Open();
+        return c.Query<MergeInfo>("""
+            SELECT j.source_id AS SourceId, s.name AS SourceName, j.target_id AS TargetId, t.name AS TargetName,
+                   j.subfolder AS Subfolder, j.last_result AS LastResult
+            FROM merge_job j JOIN source s ON s.id=j.source_id JOIN source t ON t.id=j.target_id
+            """).ToList();
+    }
+
+    /// <summary>The folder is added to the cloud folder by the background work (it may take hours; a break resumes).</summary>
+    public void RequestMerge(long sourceId, long targetId, string subfolder)
+    {
+        using var c = _db.Open();
+        c.Execute("""
+            INSERT INTO merge_job(source_id, target_id, subfolder) VALUES(@sourceId, @targetId, @subfolder)
+            ON CONFLICT(source_id) DO UPDATE SET target_id=excluded.target_id, subfolder=excluded.subfolder, last_result=NULL
+            """, new { sourceId, targetId, subfolder = CleanFolder(subfolder) });
+    }
+
+    /// <summary>Not added any further; what is in the cloud already stays there.</summary>
+    public void CancelMerge(long sourceId)
+    {
+        using var c = _db.Open();
+        c.Execute("DELETE FROM merge_job WHERE source_id=@sourceId", new { sourceId });
+    }
+
+    /// <summary>
+    /// Adds a local folder to a folder that lives in the cloud. Only ever adds: nothing there is deleted or written
+    /// over. A file that is there already (same place, size and time) is skipped; another file under the same name
+    /// goes beside it as "name (2).jpg". The folder here stays as it is. The new files in the cloud folder get the
+    /// library's rows of their originals, so their thumbnails and analysis come from those twins, not from a download.
+    /// Running it again after a break goes on where it stopped.
+    /// </summary>
+    public async Task<MergeResult> MergeAsync(long sourceId, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
+    {
+        var job = Merges().FirstOrDefault(j => j.SourceId == sourceId) ?? throw new InvalidOperationException("Nothing waits to be added.");
+        try
+        {
+            var result = await MergeJobAsync(job, progress, ct);
+            CancelMerge(sourceId);
+            return result;
+        }
+        catch (Exception e) when (e is RcloneException or InvalidOperationException or IOException)
+        {
+            using var c = _db.Open();
+            c.Execute("UPDATE merge_job SET last_result=@r WHERE source_id=@sourceId", new { r = e.Message, sourceId });
+            throw;
+        }
+    }
+
+    private async Task<MergeResult> MergeJobAsync(MergeInfo job, IProgress<Rclone.CopyProgress>? progress, CancellationToken ct)
+    {
+        var sources = _repo.ListSources();
+        var source = sources.First(s => s.Id == job.SourceId);
+        var target = sources.First(s => s.Id == job.TargetId);
+        if (!Directory.Exists(source.Root)) throw new InvalidOperationException($"The folder {source.Root} is not on this computer now.");
+        if (target.Remote is not { } remote || CloudOf(target) == null) throw new InvalidOperationException("The cloud of that folder is not connected.");
+        // The library knows the folder as it is now: its rows go with the files.
+        await new LibraryScanner(_repo, Rclone).ScanAsync(source, null, ct);
+        var into = Join(remote, job.Subfolder);
+        var prefix = job.Subfolder.Length == 0 ? "" : job.Subfolder + "/";
+        var local = FolderSync.ListLocal(source.Root);
+        var there = (await Rclone.ListAsync(into, -1, ct)).GroupBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var plain = new List<string>();
+        var renamed = new List<(string From, string To)>();
+        var placed = new List<(string From, string To)>();
+        var same = 0;
+        foreach (var (rel, file) in local.OrderBy(f => f.Key, StringComparer.Ordinal))
+        {
+            // Already there (from before, or from a run that was stopped): under its name or one with a number.
+            if (Versions(rel).TakeWhile(there.ContainsKey).FirstOrDefault(v => FolderSync.Same(there[v], file)) is { } found)
+            {
+                same++;
+                placed.Add((rel, found));
+                continue;
+            }
+            var to = Versions(rel).First(v => !there.ContainsKey(v));
+            there[to] = file;
+            placed.Add((rel, to));
+            if (to == rel) plain.Add(rel);
+            else renamed.Add((rel, to));
+        }
+        if (plain.Count > 0) await Rclone.CopyFilesAsync(source.Root, into, plain, progress, ct);
+        foreach (var (from, to) in renamed)
+            await Rclone.UploadAsync(Path.Combine(source.Root, from.Replace('/', Path.DirectorySeparatorChar)), Join(into, to), ct);
+        using (var c = _db.Open())
+        using (var tx = c.BeginTransaction())
+        {
+            foreach (var (from, to) in placed)
+                c.Execute("""
+                    INSERT INTO media(source_id, rel_path, kind, size, mtime, quick_hash, taken_at, width, height, duration_ms, lat, lon, camera, event_id)
+                    SELECT @targetId, @to, kind, size, mtime, quick_hash, taken_at, width, height, duration_ms, lat, lon, camera, event_id
+                    FROM media WHERE source_id=@sourceId AND rel_path=@from AND missing=0
+                      AND NOT EXISTS (SELECT 1 FROM media WHERE source_id=@targetId AND rel_path=@to)
+                    """, new { targetId = target.Id, to = prefix + to, sourceId = source.Id, from }, tx);
+            tx.Commit();
+        }
+        return new MergeResult(plain.Count, renamed.Count, same);
+
+        // "a/IMG_1.jpg", then "a/IMG_1 (2).jpg", "a/IMG_1 (3).jpg"...
+        static IEnumerable<string> Versions(string rel)
+        {
+            yield return rel;
+            var dot = rel.LastIndexOf('.');
+            var slash = rel.LastIndexOf('/');
+            var (stem, ext) = dot > slash + 1 ? (rel[..dot], rel[dot..]) : (rel, "");
+            for (var n = 2; ; n++) yield return $"{stem} ({n}){ext}";
+        }
     }
 
     /// <summary>
