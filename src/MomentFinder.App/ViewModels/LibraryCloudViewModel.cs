@@ -119,7 +119,7 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             RecoveryText = "";
             // A cloud that folders are backed up to or live in stays known.
             if (!_host.Cloud.CloudInUse(cloud.Id)) await _host.Cloud.RemoveCloudAsync(cloud.Id, ct);
-            Status = "The library is on this computer only now. What was uploaded stays in the cloud.";
+            Status = "This computer does not back its library up any more. Photos from the cloud open as before; what was uploaded stays there.";
         });
 
     [RelayCommand]

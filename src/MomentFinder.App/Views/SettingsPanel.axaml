@@ -92,7 +92,7 @@
                                     <TextBlock Text="{Binding BackupSummary}" Classes="muted" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Command="{Binding DisconnectCommand}" IsEnabled="{Binding NotBusy}" VerticalAlignment="Top"
-                                        ToolTip.Tip="The library stays on this computer only; what is in the cloud is not deleted">Disconnect</Button>
+                                        ToolTip.Tip="This computer stops uploading its library. Photos and folders in the cloud, and other computers' backups, stay as they are">Stop backing up the library</Button>
                             </Grid>
                             <WrapPanel>
                                 <Button Command="{Binding BackUpNowCommand}" Margin="0,0,8,0">Back up now</Button>
