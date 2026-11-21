@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MomentFinder.Cloud;
+using MomentFinder.Sync;
 
 namespace MomentFinder.App.ViewModels;
 
@@ -31,7 +32,10 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
     [ObservableProperty] private string _restoreText = "";
     public ObservableCollection<BackupChoice> FoundBackups { get; } = [];
     public bool HasFoundBackups => FoundBackups.Count > 0;
-    [ObservableProperty] private BackupChoice? _selectedBackup;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(RestoreButtonText), nameof(ThumbnailChoice))] private BackupChoice? _selectedBackup;
+    /// <summary>A computer's backup: with its thumbnails or not. The shared library takes them as they are needed.</summary>
+    public bool ThumbnailChoice => SelectedBackup?.Found.Shared != true;
+    public string RestoreButtonText => SelectedBackup?.Found.Shared == true ? "Join this library" : "Copy this library here";
     [ObservableProperty] private bool _restoreThumbnails = true;
 
     /// <summary>The copy being made or made: shown in place of the choice.</summary>
@@ -71,6 +75,15 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             KnownCloud ??= KnownClouds.FirstOrDefault();
             return;
         }
+        Shared = _host.Db.GetSetting(LibrarySync.SharedSetting) == "1";
+        if (Shared)
+        {
+            ConnectedText = $"The library is shared through {cloud.Name}: it is the same on every computer that joined it.";
+            BackupSummary = SharedSummary();
+            CanShare = CanJoin = false;
+            return;
+        }
+        _ = CheckSharedAsync();
         var backup = _host.Cloud.Backup;
         ConnectedText = $"The library is kept in {cloud.Name}.";
         BackupSummary = backup.LastAt is { } at
@@ -109,6 +122,66 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             _host.Mirrors.BackupNow();
             Status = "Connected, and the library is being backed up. Save the recovery string now.";
         });
+
+    // ---- the family's shared library ----
+
+    /// <summary>This library is the family's shared one.</summary>
+    [ObservableProperty] private bool _shared;
+    /// <summary>The cloud has no shared library yet: this one can become it.</summary>
+    [ObservableProperty] private bool _canShare;
+    /// <summary>The cloud has the family's shared library, and this library is not it: it can join.</summary>
+    [ObservableProperty] private bool _canJoin;
+
+    /// <summary>Which computers use the shared library, and when they were last heard of.</summary>
+    private string SharedSummary()
+    {
+        using var c = _host.Db.Open();
+        var others = Dapper.SqlMapper.Query<(string Device, long? LastSeen)>(c, "SELECT device, last_seen FROM sync_seen WHERE device<>@me",
+            new { me = _host.Db.Device.Id }).ToList();
+        var sync = _host.Sync.LastError is { } error ? $"The last exchange with the others failed: {Plain(error)}"
+            : _host.Sync.LastSync is { } at ? $"Changes exchanged with the other computers at {at.LocalDateTime:H:mm}; it repeats every minute."
+            : "Changes are exchanged with the other computers every minute.";
+        return others.Count == 0
+            ? "No other computer joined it yet: show the recovery string and paste it there (Settings, Your library on this computer too). " + sync
+            : $"Changes from {others.Count} other {(others.Count == 1 ? "computer" : "computers")} came in. " + sync;
+    }
+
+    private async Task CheckSharedAsync()
+    {
+        try
+        {
+            var exists = await _host.Sync.SharedLibraryExistsAsync(CancellationToken.None);
+            CanShare = !exists;
+            CanJoin = exists;
+        }
+        catch (RcloneException)
+        {
+            CanShare = CanJoin = false;
+        }
+    }
+
+    /// <summary>This library becomes the family's: the other computers join it.</summary>
+    [RelayCommand]
+    private Task Share() => RunAsync("Sharing the library...", async ct =>
+    {
+        await _host.Sync.ShareAsync(new Progress<string>(what => Status = $"Sharing the library: {what}..."), ct);
+        Status = "Shared. On the other computers paste the recovery string (Settings, Your library on this computer too).";
+    });
+
+    /// <summary>This computer takes the family's shared library, and keeps its own folders and what was named here.</summary>
+    [RelayCommand]
+    private Task Join() => _host.Cloud.BackupCloud is not { } cloud ? Task.CompletedTask : RunAsync("Looking for the shared library...", async ct =>
+    {
+        var recovery = RecoveryString.Parse(await _host.Cloud.RecoveryStringAsync(cloud, ct))!;
+        var shared = (await new LibraryRestore(_host.Paths).FindAsync(recovery, ct)).FirstOrDefault(f => f.Shared);
+        if (shared == null)
+        {
+            Status = "The shared library is not there any more.";
+            return;
+        }
+        Copy.Start(recovery, shared, thumbnails: false);
+        Status = "";
+    });
 
     /// <summary>The library is not kept in the cloud any more; what is there stays.</summary>
     [RelayCommand]
@@ -160,12 +233,10 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
             OnPropertyChanged(nameof(HasFoundBackups));
             // Another computer's library first: this one's own is here already.
             SelectedBackup = FoundBackups.FirstOrDefault(b => b.Found.Folder != here) ?? FoundBackups.FirstOrDefault();
-            Status = FoundBackups.Count switch
-            {
-                0 => "The storage answers, but no computer has kept its library there yet.",
-                1 => "Found it. Copy it here with the button above.",
-                _ => $"Found the libraries of {FoundBackups.Count} computers, the newest first. Choose one and copy it here.",
-            };
+            Status = FoundBackups.Count == 0 ? "The storage answers, but no computer has kept its library there yet."
+                : FoundBackups[0].Found.Shared ? "Found the family's shared library (first in the list). Join it with the button above."
+                : FoundBackups.Count == 1 ? "Found it. Copy it here with the button above."
+                : $"Found the libraries of {FoundBackups.Count} computers, the newest first. Choose one and copy it here.";
         });
     }
 

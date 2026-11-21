@@ -65,6 +65,8 @@ public sealed class LibraryHost : IDisposable
         Sync = new MomentFinder.Sync.LibrarySync(Db, Cloud, Paths);
         Db.Facts.Recorded += Sync.Wake;
         Indexer.SharedContentBatch = Sync.Content.TakeAsync;
+        // At most a minute: offline, the library is worked on with what is here.
+        Indexer.BeforeWork = ct => Sync.FirstRound.WaitAsync(TimeSpan.FromSeconds(60), ct);
         Models = new ModelManager(Paths.ModelDir);
         People = new PeopleRepository(Db);
         Identity = new IdentityService(People);

@@ -133,6 +133,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             RebuildSidebar();
             host.Indexer.RequestScan();
         });
+        host.Sync.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
         host.Sync.Changed += () => Dispatcher.UIThread.Post(() =>
         {
             host.RefreshNames();

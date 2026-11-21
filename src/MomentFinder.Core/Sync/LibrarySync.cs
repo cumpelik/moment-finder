@@ -51,6 +51,11 @@ public sealed class LibrarySync : IDisposable
     public event Action<string>? StatusChanged;
 
     public DateTimeOffset? LastSync { get; private set; }
+
+    private readonly TaskCompletionSource _firstRound = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>The first exchange after the start is over (done or failed), or the library is not shared.</summary>
+    public Task FirstRound => Enabled ? _firstRound.Task : Task.CompletedTask;
     public string? LastError { get; private set; }
 
     /// <summary>Nothing goes out or comes in while paused (the pause button pauses all background work).</summary>
@@ -113,6 +118,7 @@ public sealed class LibrarySync : IDisposable
         finally
         {
             _round.Release();
+            _firstRound.TrySetResult();
         }
     }
 

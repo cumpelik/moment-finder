@@ -49,7 +49,8 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
     private void Update()
     {
         var state = _restore.State;
-        var computer = _restore.From?.Computer is { Length: > 0 } name ? name : "the other computer";
+        var computer = _restore.From is { Shared: true } ? "the family (the shared one)"
+            : _restore.From?.Computer is { Length: > 0 } name ? name : "the other computer";
         Active = state != LibraryRestore.CopyState.None;
         Copying = state == LibraryRestore.CopyState.Copying;
         Ready = state == LibraryRestore.CopyState.Ready;
@@ -64,6 +65,9 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
                     : $"Copying the library of {computer} to this computer, part {step.Number} of {step.Of}: {step.What}.",
                 (step is { Detail.Length: > 0 } ? step.Detail + ". " : "") +
                 "You can go on working here, and even close MomentFinder: the copy goes on when it starts again."),
+            LibraryRestore.CopyState.Ready when _restore.From is { Shared: true } => (
+                "The family's shared library is here.",
+                "MomentFinder opens it when it starts again. This computer's own folders and what you named here come along, also what you change until then."),
             LibraryRestore.CopyState.Ready => (
                 $"The library of {computer} is here.",
                 "MomentFinder opens it when it starts again. Until then you work in the library that was here; what you change in it now does not go over."),
@@ -89,6 +93,11 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
     private void ShowRestored()
     {
         if (LibraryRestore.LastRestored(_db) is not { } r) return;
+        if (r.Shared)
+        {
+            ShowJoined(r);
+            return;
+        }
         var computer = r.Computer.Length > 0 ? r.Computer : "the other computer";
         RestoredTitle = $"This is the library of {computer} now, as it was backed up on {r.When.LocalDateTime:d. M. yyyy H:mm}.";
         var lines = new List<string>();
@@ -107,6 +116,25 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
     }
 
     private static string Folders(int n) => n == 1 ? "1 folder" : $"{n} folders";
+
+    /// <summary>This computer joined the family's shared library.</summary>
+    private void ShowJoined(LibraryRestore.Restored r)
+    {
+        RestoredTitle = "This computer uses the family's shared library now.";
+        var lines = new List<string>
+        {
+            "Its folders in the cloud show here, the same as on the other computers. The folders of another computer are only for " +
+            "looking; a photo downloads when you open it. Thumbnails and search data come from the cloud as they are needed.",
+            "Names, who is who and buckets are the same everywhere: what anybody changes shows on the others within a minute.",
+        };
+        if (r.OwnFolders > 0)
+            lines.Add($"{Folders(r.OwnFolders)} of this computer came along with everything found in {(r.OwnFolders == 1 ? "it" : "them")}; " +
+                      "only its search data is made again. Back a folder up to the cloud (its cloud button) and the others see it too.");
+        if (r.Kept > 0) lines.Add("What you named here or put in buckets before stays, and went to the other computers.");
+        if (r.ReplacedOwn) lines.Add("The library this computer had before is kept beside it, as library.before-restore.db.");
+        RestoredText = string.Join("\n", lines);
+        RestoredShown = true;
+    }
 
     [RelayCommand]
     private void DismissRestored()

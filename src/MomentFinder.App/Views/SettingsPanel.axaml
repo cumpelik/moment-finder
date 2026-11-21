@@ -92,12 +92,32 @@
                                     <TextBlock Text="{Binding BackupSummary}" Classes="muted" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Command="{Binding DisconnectCommand}" IsEnabled="{Binding NotBusy}" VerticalAlignment="Top"
+                                        IsVisible="{Binding !Shared}"
                                         ToolTip.Tip="This computer stops uploading its library. Photos and folders in the cloud, and other computers' backups, stay as they are">Stop backing up the library</Button>
                             </Grid>
+                            <!-- The family's library: one for all the computers -->
+                            <Border Classes="card" Padding="14,10" IsVisible="{Binding CanShare}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock FontWeight="SemiBold" Text="Use this library on more computers, at the same time" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Share it, and every computer that joins it has the same library: the folders in the cloud, the names, who is who and the buckets. What anybody changes shows on the others within a minute. Thumbnails and search data are made once for all. Folders only on one computer's disk stay that computer's." />
+                                    <Button Classes="accent" Command="{Binding ShareCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Share this library</Button>
+                                </StackPanel>
+                            </Border>
+                            <Border Classes="card" Padding="14,10" IsVisible="{Binding CanJoin}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock FontWeight="SemiBold" Text="This cloud has the family's shared library" />
+                                    <TextBlock Classes="muted" TextWrapping="Wrap"
+                                               Text="Join it, and this computer uses that library, the same as the other computers. Its own folders come along with everything found in them, and what you named here or put in buckets goes to the others. MomentFinder starts again when it is here." />
+                                    <Button Classes="accent" Command="{Binding JoinCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Join the shared library</Button>
+                                </StackPanel>
+                            </Border>
                             <WrapPanel>
-                                <Button Command="{Binding BackUpNowCommand}" Margin="0,0,8,0">Back up now</Button>
-                                <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" IsEnabled="{Binding NotBusy}"
+                                <Button Command="{Binding BackUpNowCommand}" Margin="0,0,8,0" IsVisible="{Binding !Shared}">Back up now</Button>
+                                <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" IsEnabled="{Binding NotBusy}" IsVisible="{Binding !Shared}"
                                         ToolTip.Tip="One string that brings the whole library back on any computer">Show my recovery string</Button>
+                                <Button Classes="accent" Command="{Binding ShowRecoveryCommand}" IsEnabled="{Binding NotBusy}" IsVisible="{Binding Shared}"
+                                        ToolTip.Tip="Paste it on another computer (Settings, Your library on this computer too): it joins the shared library">Invite another computer: show the recovery string</Button>
                             </WrapPanel>
                             <StackPanel Spacing="8" IsVisible="{Binding RecoveryText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                 <TextBox Text="{Binding RecoveryText}" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="100" FontFamily="monospace" FontSize="12" />
@@ -122,7 +142,7 @@
                         </Panel>
                         <StackPanel Spacing="12" IsVisible="{Binding !Copy.Active}">
                             <TextBlock Classes="muted" TextWrapping="Wrap"
-                                       Text="On a second computer, or a new one: copy here the library of a computer that keeps it in a cloud. On that computer, open Settings and Show my recovery string, and paste it below. The copy brings the names and people, buckets, search data and thumbnails. Its folders that are backed up to a cloud are shown here from there." />
+                                       Text="On a second computer, or a new one: paste the recovery string of your library (on the computer that has it: Settings, the recovery string button). A library the family shares is joined: the same library here as on the other computers, changes go both ways, and this computer's own folders and names come along. Otherwise this computer gets a copy of the library." />
                             <TextBox Text="{Binding RestoreText}" PlaceholderText="Paste the recovery string here" TextWrapping="Wrap" MaxHeight="100"
                                      FontFamily="monospace" FontSize="12" />
                             <Button Command="{Binding FindBackupsCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Find the library</Button>
@@ -134,10 +154,11 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <CheckBox IsChecked="{Binding RestoreThumbnails}"
+                                <CheckBox IsChecked="{Binding RestoreThumbnails}" IsVisible="{Binding ThumbnailChoice}"
                                           ToolTip.Tip="Without them the copy is here sooner, and the thumbnails are made again from the photos">With thumbnails</CheckBox>
                                 <TextBlock Foreground="#F59E0B" TextWrapping="Wrap" IsVisible="{Binding Replaces}" Text="{Binding ReplacesText}" />
-                                <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6">Copy this library here</Button>
+                                <Button Classes="accent" Command="{Binding RestoreLibraryCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left" Padding="16,6"
+                                        Content="{Binding RestoreButtonText}" />
                                 <TextBlock Classes="muted" TextWrapping="Wrap"
                                            Text="It downloads in the background: you can close Settings and go on working. The main window shows how far it is, and when it is here, a restart opens it." />
                             </StackPanel>

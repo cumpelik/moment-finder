@@ -143,8 +143,26 @@ public sealed class Indexer : IDisposable
         StatusChanged?.Invoke(status);
     }
 
+    /// <summary>
+    /// Waited for before any work: in a shared library, the first exchange with the other computers (what they made
+    /// already is taken, not downloaded and computed again here).
+    /// </summary>
+    public Func<CancellationToken, Task>? BeforeWork { get; set; }
+
     private async Task LoopAsync(CancellationToken ct)
     {
+        if (BeforeWork != null)
+        {
+            Report(new IndexerStatus(IndexerPhase.Scanning, "Taking in what the other computers of the library did", 0, 0, false));
+            try
+            {
+                await BeforeWork(ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Not answered: the work goes on, what is missing is made here.
+            }
+        }
         while (!ct.IsCancellationRequested)
         {
             try
