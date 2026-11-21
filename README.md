@@ -6,6 +6,8 @@ and then work offline. Windows, Linux and macOS.
 ## What it does
 
 - **Library**: folders (and cloud folders) as sources, incremental scan, EXIF and video metadata, thumbnails.
+  Folders on this computer are watched: two minutes after the last change a folder is scanned again (and its
+  backup follows); a disk connected later is scanned too.
 - **Search by description** in Czech or English ("lyžař", "beach at sunset 2023", "video narozeniny"),
   with filters for year (`2023`, `2019-2021`), kind (`foto`, `video`) and people by name (`Eva lyže 2024`).
   Videos are searched frame by frame; a found video shows and starts at the matching moment.
@@ -28,10 +30,10 @@ and then work offline. Windows, Linux and macOS.
   encrypted or not (per folder, a key made by the application and kept in the library), in one of two ways:
   - *Backup*: the folder stays the main one. What is added is uploaded, what is moved or renamed is moved in the
     cloud too (same size and time at a new place: nothing is uploaded again), what is deleted waits for the
-    user's word (delete in the cloud too, or bring back). Compared every hour. Other computers of the library
+    user's word (delete in the cloud too, or bring back). Compared two minutes after a change and every hour. Other computers of the library
     see it only for looking; one of them can take it over (download, then it is its folder and backup).
-  - *Move to the cloud*: after the backup is complete the copy in the cloud becomes a source of its own that
-    every computer may change; the folder here stays as a separate source and its files get their twins'
+  - *Clone to the cloud* (nothing here is deleted): the clone is in the sidebar at once, with how far its copy is
+    (its cloud button stops it); once all files are there it is a source of its own that every computer may change; the folder here stays as a separate source and its files get their twins'
     thumbnails and analysis without being read again. Keep it on this computer again: download, backed up.
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **Recovery string**: one string (Settings, Show my recovery string) holds the way to that storage and that key.

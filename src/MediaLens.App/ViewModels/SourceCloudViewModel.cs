@@ -14,8 +14,8 @@ public sealed record CloudChoice(string Title, CloudInfo? Cloud)
 }
 
 /// <summary>
-/// One source and the cloud: connecting a folder (backed up, or moved to the cloud), the state of its backup and the
-/// files deleted here that wait for a word, moving it to the cloud, and giving a folder in the cloud a home here.
+/// One source and the cloud: connecting a folder (backed up, or cloned to the cloud), the state of its backup and the
+/// files deleted here that wait for a word, cloning it to the cloud, and giving a folder in the cloud a home here.
 /// </summary>
 public sealed partial class SourceCloudViewModel : CloudWorkViewModel
 {
@@ -26,8 +26,10 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     public string SourceName { get; private set; } = "";
     public string Title => $"{SourceName} and the cloud";
 
-    /// <summary>The sources changed (a folder moved to the cloud or got a home here): the sidebar shows it.</summary>
+    /// <summary>The sources changed (a folder cloned to the cloud or got a home here): the sidebar shows it.</summary>
     public event Action? SourcesChanged;
+    /// <summary>A clone started: the window has nothing more to do, the clone shows itself in the sidebar.</summary>
+    public event Action? CloneStarted;
 
     // ---- which state ----
     [ObservableProperty] private bool _isLocal;
@@ -53,8 +55,9 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         get => !IsBackupMode;
         set => IsBackupMode = !value;
     }
-    public string ConnectText => IsBackupMode ? "Connect and back it up" : "Connect and move it to the cloud";
-    public string WhereText => $"In the storage it goes into the folder {_host.Cloud.Device.MirrorFolder}/{DeviceInfo.Safe(SourceName)} (named after this computer).";
+    // A clone is no lasting connection: the words say what happens.
+    public string ConnectText => IsBackupMode ? "Back it up" : "Clone it to the cloud";
+    public string WhereText => $"In the storage it goes into the folder {_host.Cloud.Device.MirrorFolder}/{DeviceInfo.Safe(SourceName)} (named after this computer; with a number when that one is taken).";
 
     // ---- backed up ----
     [ObservableProperty] private string _placeText = "";
@@ -63,10 +66,13 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     [ObservableProperty] private bool _hasGone;
     [ObservableProperty] private string _goneText = "";
     public ObservableCollection<string> GoneFiles { get; } = [];
-    [ObservableProperty] private bool _moveWaiting;
-    [ObservableProperty] private string _moveWaitingText = "";
+    /// <summary>A clone was asked for: the files are being copied, then the copy becomes a source of its own.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CardTitle), nameof(CanBackUpNow), nameof(DisconnectText))] private bool _moveWaiting;
+    public string CardTitle => MoveWaiting ? "Cloning to the cloud" : "Backup";
+    public bool CanBackUpNow => !Stopped && !MoveWaiting;
+    public string DisconnectText => MoveWaiting ? "Stop the clone..." : "Stop backing it up...";
     [ObservableProperty] private bool _canMove;
-    [ObservableProperty] private bool _stopped;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanBackUpNow))] private bool _stopped;
 
     // ---- in the cloud ----
     [ObservableProperty] private string _cloudText = "";
@@ -89,12 +95,23 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         Destination = Destinations.FirstOrDefault(d => library != null && d.Cloud?.Id == library.Id) ?? Destinations[0];
         Reload();
         host.Mirrors.MirrorsChanged += OnMirrorsChanged;
+        host.Mirrors.Copying += OnCopying;
     }
 
     private void OnMirrorsChanged() => Dispatcher.UIThread.Post(Reload);
 
+    private void OnCopying(long mirrorId, Rclone.CopyProgress p) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_mirror?.Id == mirrorId && MoveWaiting && !Stopped)
+            LastText = $"Copying: {p.Percent}% ({p.Text}). Then the copy becomes a source of its own. This window can be closed.";
+    });
+
     /// <summary>The window closed: no more updates.</summary>
-    public void Detach() => _host.Mirrors.MirrorsChanged -= OnMirrorsChanged;
+    public void Detach()
+    {
+        _host.Mirrors.MirrorsChanged -= OnMirrorsChanged;
+        _host.Mirrors.Copying -= OnCopying;
+    }
 
     protected override void Reload()
     {
@@ -111,7 +128,7 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         var local = source.Kind == SourceKinds.Local;
         var here = local && Directory.Exists(source.Root);
         // Done in the background while the window was open: what it said about it is old now.
-        if (IsBackedUp && !local) Status = "Moved: the folder lives in the cloud now, and the one on this computer is a source of its own.";
+        if (IsBackedUp && !local) Status = "Cloned: the copy lives in the cloud now as a source of its own, and the folder on this computer is a separate source, as it was.";
         IsBackedUp = local && _mirror != null;
         IsLocal = here && _mirror == null;
         IsAway = local && !here && _mirror == null;
@@ -125,12 +142,16 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         HomeText = $"This is the backup of a folder on {home}. Only that computer changes it; here it is for looking.";
 
         if (_mirror is not { } m) return;
-        PlaceText = $"Backed up to {m.CloudName}, in the folder {m.Target}" + (m.Encrypted ? ", encrypted." : ".");
+        MoveWaiting = _host.Cloud.MoveRequested(m.Id);
+        PlaceText = (MoveWaiting ? $"Copying to {m.CloudName}, into the folder {m.Target}" : $"Backed up to {m.CloudName}, in the folder {m.Target}") +
+            (m.Encrypted ? ", encrypted." : ".");
         Stopped = !m.Enabled;
         LastFailed = m.LastResult is { } r && r != "OK";
         LastText = Stopped ? CloudWorkViewModel.Plain(m.LastResult ?? "Stopped.")
+            : MoveWaiting && m.LastOk && m.Gone > 0 ? "Waiting for you: decide about the deleted files below, then the copy becomes a source of its own."
+            : MoveWaiting && !LastFailed ? "The files are copied in the background, then the copy becomes a source of its own. The progress is in the status bar of the main window; this window can be closed."
             : m.LastRunAt is not { } at ? "The first backup is running or starts in a moment. Its progress is in the status bar of the main window; this window can be closed."
-            : m.LastOk ? $"Compared with the cloud {When(at)}: everything of the folder is there. It is compared again every hour."
+            : m.LastOk ? $"Compared with the cloud {When(at)}: everything of the folder is there. It is compared again two minutes after the folder changes, and every hour."
             : $"The last try ({When(at)}) failed: {CloudWorkViewModel.Plain(m.LastResult!)} It is tried again in an hour.";
         HasGone = m.Gone > 0;
         GoneText = $"{m.Gone:N0} {(m.Gone == 1 ? "file was" : "files were")} deleted from the folder but {(m.Gone == 1 ? "is" : "are")} still in the cloud ({Size(m.GoneBytes)}). Nothing is deleted there until you say so.";
@@ -141,8 +162,6 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
             foreach (var g in gone.Take(30)) GoneFiles.Add(g.Path);
             if (gone.Count > 30) GoneFiles.Add($"and {gone.Count - 30:N0} more");
         }
-        MoveWaiting = _host.Cloud.MoveRequested(m.Id);
-        MoveWaitingText = "It moves to the cloud as soon as its backup is complete" + (HasGone ? " and you decided about the deleted files above." : ".");
         CanMove = !MoveWaiting && !Stopped;
     }
 
@@ -169,13 +188,14 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         return RunAsync(IsNewStorage ? Form.ConnectingText : "Connecting...", async ct =>
         {
             var cloud = Destination?.Cloud ?? await Form.ConnectAsync(_host.Cloud, ct);
-            var mirror = await _host.Cloud.AddMirrorAsync(_sourceId, cloud.Id, Encrypt, ct);
+            var mirror = await _host.Cloud.AddMirrorAsync(_sourceId, cloud.Id, Encrypt, ct, clone: move);
             if (move) _host.Cloud.RequestMoveToCloud(mirror.Id, true);
             _host.Mirrors.RunNow(mirror.Id);
             Status = move
-                ? "Connected. The folder is copied to the cloud in the background, then it lives there; the progress is in the status bar of the main window."
+                ? "Cloning: the files are copied to the cloud in the background, then the copy becomes a source of its own. Nothing here is deleted; the progress is in the status bar of the main window."
                 : "Connected. The backup runs in the background; its progress is in the status bar of the main window.";
             SourcesChanged?.Invoke();
+            if (move) CloneStarted?.Invoke();
         });
     }
 
@@ -212,8 +232,10 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
         if (_mirror is not { } m) return;
         _host.Cloud.RequestMoveToCloud(m.Id, true);
         _host.Mirrors.RunNow(m.Id);
-        Status = "The folder moves to the cloud after a last comparison; the progress is in the status bar of the main window.";
+        Status = "Cloning: the clone is in the sidebar now, with how far its copy is.";
         Reload();
+        SourcesChanged?.Invoke();
+        CloneStarted?.Invoke();
     }
 
     [RelayCommand]
@@ -221,7 +243,7 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     {
         if (_mirror is not { } m) return;
         _host.Cloud.RequestMoveToCloud(m.Id, false);
-        Status = "The folder stays here, backed up.";
+        Status = "No clone: the folder stays here as the main one, backed up.";
         Reload();
     }
 
@@ -229,9 +251,11 @@ public sealed partial class SourceCloudViewModel : CloudWorkViewModel
     public void Disconnect()
     {
         if (_mirror is not { } m) return;
+        Status = MoveWaiting ? "The clone is stopped. What was copied stays in the cloud as it is."
+            : "The folder is not backed up any more. Its copy stays in the cloud as it is.";
+        _host.Mirrors.Cancel(m.Id);
         _host.Cloud.RequestMoveToCloud(m.Id, false);
         _host.Cloud.RemoveMirror(m.Id);
-        Status = "The folder is not backed up any more. Its copy stays in the cloud as it is.";
         Reload();
         SourcesChanged?.Invoke();
     }

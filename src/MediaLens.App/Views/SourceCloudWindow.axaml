@@ -73,9 +73,9 @@
                             </RadioButton>
                             <RadioButton Classes="mode" GroupName="mode" IsChecked="{Binding IsMoveMode}">
                                 <StackPanel Spacing="4">
-                                    <TextBlock FontWeight="SemiBold" Text="Move it to the cloud" />
+                                    <TextBlock FontWeight="SemiBold" Text="Clone it to the cloud" />
                                     <TextBlock Classes="muted" TextWrapping="Wrap"
-                                               Text="It is copied to the cloud once and then lives there, as a source of its own; names, people and buckets go with it. Every computer of this library may add, move and delete in it. The folder on this computer stays as it is and stays in the library as a separate source: what changes in one does not reach the other. For moving your photos to the cloud step by step." />
+                                               Text="Nothing on this computer is deleted or changed. The folder is copied to the cloud once, and the copy becomes a source of its own that lives there; names, people and buckets go with it. Every computer of this library may add, move and delete in it. The folder here stays in the library as a separate source: what changes in one does not reach the other. For getting your photos into the cloud step by step." />
                                 </StackPanel>
                             </RadioButton>
                             <TextBlock Classes="muted" TextWrapping="Wrap" Text="Either can be switched to the other later." />
@@ -94,13 +94,15 @@
                 <StackPanel Spacing="16" IsVisible="{Binding IsBackedUp}">
                     <Border Classes="card" Padding="18">
                         <StackPanel Spacing="10">
-                            <TextBlock Classes="section" Text="Backup" />
+                            <TextBlock Classes="section" Text="{Binding CardTitle}" />
                             <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding PlaceText}" />
                             <TextBlock TextWrapping="Wrap" Text="{Binding LastText}" Classes="muted" Classes.warn="{Binding LastFailed}" />
                             <WrapPanel>
-                                <Button Command="{Binding BackUpNowCommand}" IsVisible="{Binding !Stopped}" Margin="0,0,8,0">Back up now</Button>
-                                <Button Click="OnDisconnect" IsEnabled="{Binding NotBusy}"
-                                        ToolTip.Tip="The copy in the cloud stays as it is">Stop backing it up...</Button>
+                                <Button Command="{Binding BackUpNowCommand}" IsVisible="{Binding CanBackUpNow}" Margin="0,0,8,0">Back up now</Button>
+                                <Button Command="{Binding KeepHereCommand}" IsVisible="{Binding MoveWaiting}" Margin="0,0,8,0"
+                                        ToolTip.Tip="No clone: the folder stays the main one and the copy in the cloud is its backup">Back it up instead</Button>
+                                <Button Click="OnDisconnect" IsEnabled="{Binding NotBusy}" Content="{Binding DisconnectText}"
+                                        ToolTip.Tip="The copy in the cloud stays as it is" />
                             </WrapPanel>
                         </StackPanel>
                     </Border>
@@ -128,16 +130,12 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Classes="card" Padding="18">
+                    <Border Classes="card" Padding="18" IsVisible="{Binding !MoveWaiting}">
                         <StackPanel Spacing="10">
-                            <TextBlock Classes="section" Text="Move it to the cloud" />
+                            <TextBlock Classes="section" Text="Clone it to the cloud" />
                             <TextBlock Classes="muted" TextWrapping="Wrap"
-                                       Text="The copy in the cloud becomes a source of its own that lives there; names, people and buckets go with it, and every computer of this library may change it. This folder stays as it is, in the library as a separate source, no longer backed up." />
-                            <Button Click="OnMoveToCloud" IsVisible="{Binding CanMove}" HorizontalAlignment="Left">Move it to the cloud...</Button>
-                            <StackPanel Spacing="8" IsVisible="{Binding MoveWaiting}">
-                                <TextBlock Classes="warn" Text="{Binding MoveWaitingText}" />
-                                <Button Command="{Binding KeepHereCommand}" HorizontalAlignment="Left">Keep it here, backed up</Button>
-                            </StackPanel>
+                                       Text="Nothing on this computer is deleted. The copy in the cloud becomes a source of its own that lives there; names, people and buckets go with it, and every computer of this library may change it. This folder stays as it is, in the library as a separate source, no longer backed up." />
+                            <Button Click="OnMoveToCloud" IsVisible="{Binding CanMove}" HorizontalAlignment="Left">Clone it to the cloud...</Button>
                         </StackPanel>
                     </Border>
                 </StackPanel>

@@ -3,8 +3,8 @@ using MediaLens.Data;
 namespace MediaLens.Cloud;
 
 /// <summary>
-/// Keeps the backups of folders and of the library current: every hour (and on request) each backed up folder is
-/// compared with its copy in the cloud, every few hours the library itself goes to its cloud. One at a time, so the upload does not choke the connection.
+/// Keeps the backups of folders and of the library current: after a change in a folder, every hour and on request
+/// each backed up folder is compared with its copy in the cloud, every few hours the library itself goes to its cloud. One at a time, so the upload does not choke the connection.
 /// </summary>
 public sealed class MirrorScheduler : IDisposable
 {
@@ -19,7 +19,9 @@ public sealed class MirrorScheduler : IDisposable
     /// <summary>Text for the status bar; empty when nothing runs.</summary>
     public event Action<string>? StatusChanged;
     public event Action? MirrorsChanged;
-    /// <summary>A backup found the folder changed, or a folder moved to the cloud: the library scans again.</summary>
+    /// <summary>How far the copy of a folder is (mirror id, progress): a clone shows it at its place in the sidebar.</summary>
+    public event Action<long, Rclone.CopyProgress>? Copying;
+    /// <summary>A backup found the folder changed, or a folder cloned to the cloud: the library scans again.</summary>
     public event Action? FoldersChanged;
 
     public MirrorScheduler(CloudService cloud, Database db)
@@ -48,6 +50,25 @@ public sealed class MirrorScheduler : IDisposable
                 _requested.Add(m.Id);
         }
         _wake.Release();
+    }
+
+    private long _runningId;
+    private CancellationTokenSource? _running;
+
+    /// <summary>Stops the copy of this mirror if it runs now (a clone cancelled, a backup stopped).</summary>
+    public void Cancel(long mirrorId)
+    {
+        lock (_requested)
+        {
+            _requested.Remove(mirrorId);
+            if (_runningId == mirrorId) _running?.Cancel();
+        }
+    }
+
+    /// <summary>A folder changed on this computer: its backup follows (not a stopped one, another computer has it).</summary>
+    public void FolderChanged(long sourceId)
+    {
+        if (_cloud.Mirrors().FirstOrDefault(m => m.SourceId == sourceId && m.Enabled) is { } mirror) RunNow(mirror.Id);
     }
 
     /// <summary>Backs the library up now.</summary>
@@ -97,17 +118,27 @@ public sealed class MirrorScheduler : IDisposable
                 {
                     var mirror = _cloud.Mirrors().FirstOrDefault(m => m.Id == id);
                     if (mirror == null) continue;
-                    StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}...");
+                    var doing = _cloud.MoveRequested(id) ? "Cloning" : "Backing up";
+                    StatusChanged?.Invoke($"{doing} {mirror.SourceName} to {mirror.CloudName}...");
+                    using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    lock (_requested)
+                    {
+                        _runningId = id;
+                        _running = run;
+                    }
                     try
                     {
                         var result = await _cloud.MirrorAsync(id, new Progress<Rclone.CopyProgress>(p =>
-                            StatusChanged?.Invoke($"Backing up {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})")), ct);
+                        {
+                            StatusChanged?.Invoke($"{doing} {mirror.SourceName} to {mirror.CloudName}: {p.Percent}% ({p.Text})");
+                            Copying?.Invoke(id, p);
+                        }), run.Token);
                         if (result.Moved + result.Gone > 0) FoldersChanged?.Invoke();
                         // All of it is in the cloud now: the folder moves there, if the user asked for it.
                         if (_cloud.MoveRequested(id) && _cloud.Mirrors().FirstOrDefault(m => m.Id == id) is { Gone: 0 })
                         {
-                            StatusChanged?.Invoke($"Moving {mirror.SourceName} to {mirror.CloudName}...");
-                            await _cloud.MoveToCloudAsync(id, null, ct);
+                            StatusChanged?.Invoke($"Cloning {mirror.SourceName} to {mirror.CloudName}...");
+                            await _cloud.MoveToCloudAsync(id, null, run.Token);
                             _cloud.RequestMoveToCloud(id, false);
                             FoldersChanged?.Invoke();
                         }
@@ -115,6 +146,18 @@ public sealed class MirrorScheduler : IDisposable
                     catch (Exception e) when (e is RcloneException or InvalidOperationException)
                     {
                         // Recorded in the mirror's last result; tried again at the next interval.
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        // Cancelled by the user: the next mirror goes on.
+                    }
+                    finally
+                    {
+                        lock (_requested)
+                        {
+                            _runningId = 0;
+                            _running = null;
+                        }
                     }
                     MirrorsChanged?.Invoke();
                 }

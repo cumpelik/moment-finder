@@ -104,6 +104,15 @@ public sealed class Indexer : IDisposable
         _wake.Release();
     }
 
+    private readonly HashSet<long> _scanSources = [];
+
+    /// <summary>Scans one source (a folder that changed); the others are not listed again.</summary>
+    public void RequestScan(long sourceId)
+    {
+        lock (_scanSources) _scanSources.Add(sourceId);
+        _wake.Release();
+    }
+
     /// <summary>New thumbnails and analyses are processed without a scan.</summary>
     public void Wake() => _wake.Release();
 
@@ -159,7 +168,19 @@ public sealed class Indexer : IDisposable
         if (_scanRequested)
         {
             _scanRequested = false;
-            await ScanAllAsync(ct);
+            lock (_scanSources) _scanSources.Clear();
+            await ScanAllAsync(null, ct);
+            return true;
+        }
+        long[] only;
+        lock (_scanSources)
+        {
+            only = [.. _scanSources];
+            _scanSources.Clear();
+        }
+        if (only.Length > 0)
+        {
+            await ScanAllAsync(only, ct);
             return true;
         }
         if (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct))
@@ -206,11 +227,12 @@ public sealed class Indexer : IDisposable
         while (await StepAsync(ct)) { }
     }
 
-    private async Task ScanAllAsync(CancellationToken ct)
+    /// <summary>All sources, or only these.</summary>
+    private async Task ScanAllAsync(long[]? only, CancellationToken ct)
     {
         try
         {
-            await ScanSourcesAsync(ct);
+            await ScanSourcesAsync(only, ct);
         }
         finally
         {
@@ -222,9 +244,9 @@ public sealed class Indexer : IDisposable
         }
     }
 
-    private async Task ScanSourcesAsync(CancellationToken ct)
+    private async Task ScanSourcesAsync(long[]? only, CancellationToken ct)
     {
-        foreach (var source in _repo.ListSources().Where(s => s.Enabled))
+        foreach (var source in _repo.ListSources().Where(s => s.Enabled && (only == null || only.Contains(s.Id))))
         {
             Report(new IndexerStatus(IndexerPhase.Scanning, $"Scanning {source.Name}", 0, 0, false));
             var progress = new Progress<string>(m => Report(new IndexerStatus(IndexerPhase.Scanning, m, 0, 0, false)));

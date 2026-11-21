@@ -369,7 +369,7 @@ public sealed class CloudService
     /// their folders apart). Encrypted: the folder gets a crypt remote of its own with a key made here (it travels
     /// with the library's backup); the folder's name stays readable, the names and contents inside do not.
     /// </summary>
-    public async Task<MirrorInfo> AddMirrorAsync(long sourceId, long cloudId, bool encrypt, CancellationToken ct)
+    public async Task<MirrorInfo> AddMirrorAsync(long sourceId, long cloudId, bool encrypt, CancellationToken ct, bool clone = false)
     {
         var source = _repo.ListSources().First(s => s.Id == sourceId);
         var cloud = Clouds().First(x => x.Id == cloudId);
@@ -397,8 +397,9 @@ public sealed class CloudService
 
         async Task<bool> ReusableAsync(string place)
         {
-            // Under this computer's name without a marker: an older copy made here.
-            if (encrypt) return false;
+            // Under this computer's name without a marker: an older copy made here. A clone starts in a folder of its
+            // own: files of an older copy would wait there as deleted from the folder.
+            if (encrypt || clone) return false;
             var marker = await FolderMarker.ReadAsync(Rclone, place, ct);
             return marker == null || marker.IsBackup && marker.Home == Device.Id;
         }
@@ -518,7 +519,7 @@ public sealed class CloudService
     }
 
     /// <summary>
-    /// The user wants the folder moved to the cloud: done by the scheduler once the backup is complete (which may take
+    /// The user wants the folder cloned to the cloud: done by the scheduler once the backup is complete (which may take
     /// hours the first time) and nothing deleted waits for a decision.
     /// </summary>
     public void RequestMoveToCloud(long mirrorId, bool move) => _db.SetSetting($"move_to_cloud_{mirrorId}", move ? "1" : null);
@@ -526,7 +527,17 @@ public sealed class CloudService
     public bool MoveRequested(long mirrorId) => _db.GetSetting($"move_to_cloud_{mirrorId}") == "1";
 
     /// <summary>
-    /// The folder moves to the cloud: after a last backup, the copy in the cloud becomes a source of its own that lives
+    /// The name of a folder's clone: the folder and the cloud, or its folder in the cloud ("Photos 2") when a source of
+    /// that name is there already (a clone made before).
+    /// </summary>
+    public string CloneName(string sourceName, MirrorInfo mirror)
+    {
+        var name = $"{sourceName} ({mirror.CloudName})";
+        return _repo.ListSources().Any(s => s.Name == name) ? $"{mirror.Target[(mirror.Target.LastIndexOf('/') + 1)..]} ({mirror.CloudName})" : name;
+    }
+
+    /// <summary>
+    /// The folder is cloned to the cloud (nothing on this computer is deleted): after a last backup, the copy in the cloud becomes a source of its own that lives
     /// there (everything known about the files stays with it: names, buckets). The folder on this computer stays in
     /// the library as another source, its files get what is known from their twins without being read again.
     /// Returns the id of the source of the local folder.
@@ -543,6 +554,7 @@ public sealed class CloudService
         await new LibraryScanner(_repo, Rclone).ScanAsync(source, null, ct);
         await new FolderMarker(FolderMarker.Shared, Device.Id, Device.Name, source.Name).WriteAsync(Rclone, mirror.Place, ct);
         var cache = Path.Combine(_paths.CacheDir, "cloud", source.Id.ToString());
+        var name = CloneName(source.Name, mirror);
         long localId;
         using (var c = _db.Open())
         using (var tx = c.BeginTransaction())
@@ -556,7 +568,7 @@ public sealed class CloudService
                 """, new { localId, source.Id }, tx);
             c.Execute("""
                 UPDATE source SET kind=@kind, root=@cache, remote=@remote, cloud_id=@cloudId, name=@name, read_only=0, home_name=NULL WHERE id=@Id
-                """, new { kind = SourceKinds.Cloud, cache, remote = mirror.Place, cloudId = cloud.Id, name = $"{source.Name} ({cloud.Name})", source.Id }, tx);
+                """, new { kind = SourceKinds.Cloud, cache, remote = mirror.Place, cloudId = cloud.Id, name, source.Id }, tx);
             c.Execute("DELETE FROM mirror WHERE id=@mirrorId", new { mirrorId }, tx);
             tx.Commit();
         }

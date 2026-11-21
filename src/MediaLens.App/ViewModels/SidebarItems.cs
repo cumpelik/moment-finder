@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using Material.Icons;
 
 namespace MediaLens.App.ViewModels;
@@ -6,6 +7,8 @@ public enum SidebarKind
 {
     All,
     Source,
+    /// <summary>A folder being cloned to the cloud: there already, its files on their way (the id is the folder's source).</summary>
+    Clone,
     Bucket,
     Person,
     Groups,
@@ -18,6 +21,12 @@ public sealed record SidebarHeader(string Title, string AddToolTip, SidebarKind 
     public bool CanAdd => AddToolTip.Length > 0;
 }
 
+/// <summary>How far a clone is: changes while the sidebar stays as it is.</summary>
+public sealed partial class CloneProgress : ObservableObject
+{
+    [ObservableProperty] private string _text = "";
+}
+
 /// <summary>A selectable scope of the grid: the whole library, one source or one bucket.</summary>
 public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string Count, string ToolTip)
 {
@@ -28,6 +37,7 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
     {
         SidebarKind.All => MaterialIconKind.ImageMultiple,
         SidebarKind.Source => MaterialIconKind.Folder,
+        SidebarKind.Clone => MaterialIconKind.CloudUploadOutline,
         SidebarKind.Person => MaterialIconKind.AccountOutline,
         SidebarKind.Groups => MaterialIconKind.AccountQuestionOutline,
         SidebarKind.Review => MaterialIconKind.AccountCheckOutline,
@@ -38,7 +48,10 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
     public bool IsAway { get; init; }
 
     /// <summary>The button of a source that opens its window about the cloud, showing the state of its backup.</summary>
-    public bool HasCloudButton => Kind == SidebarKind.Source;
+    public bool HasCloudButton => Kind is SidebarKind.Source or SidebarKind.Clone;
+    public bool IsClone => Kind == SidebarKind.Clone;
+    public bool IsNotClone => !IsClone;
+    public CloneProgress? Progress { get; init; }
     public MaterialIconKind CloudIcon { get; init; } = MaterialIconKind.CloudArrowUpOutline;
     public string CloudTip { get; init; } = "";
     /// <summary>The backup waits for the user (deleted files, a failure, stopped).</summary>
@@ -51,7 +64,7 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
     public bool CanRename => Kind is SidebarKind.Bucket or SidebarKind.Person;
     public bool CanRescan => Kind == SidebarKind.Source;
     public bool CanRemove => Kind is SidebarKind.Source or SidebarKind.Bucket or SidebarKind.Person;
-    public bool HasMenu => CanRename || CanRescan || CanRemove;
+    public bool HasMenu => CanRename || CanRescan || CanRemove || HasCloudButton;
     public string RemoveText => Kind switch
     {
         SidebarKind.Source => "Remove from the library (files stay)",

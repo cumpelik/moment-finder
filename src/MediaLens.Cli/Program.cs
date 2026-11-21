@@ -42,7 +42,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           mirror gone <mirror id>          files deleted from the folder that are still in the cloud
           mirror delete-gone <mirror id>   delete them in the cloud too
           mirror bring-back <mirror id>    copy them back into the folder
-          mirror to-cloud <mirror id>      the folder moves to the cloud (a source of its own), the local one stays
+          mirror to-cloud <mirror id>      the folder is cloned to the cloud (a source of its own), the local one stays as it is
           source home <source id> <folder> a folder in the cloud gets a home here, backed up from now on
           backup cloud <cloud id>          choose the cloud the library itself is kept in (0: none)
           backup run                       the library (index, search data, thumbnails, clouds) into that cloud

@@ -121,6 +121,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
         host.Mirrors.MirrorsChanged += () => Dispatcher.UIThread.Post(OnCloudChanged);
         host.Mirrors.FoldersChanged += host.Indexer.RequestScan;
+        host.Mirrors.Copying += (id, p) => Dispatcher.UIThread.Post(() => OnCopying(id, p));
         host.Indexer.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
         {
             _refreshPending = true;
@@ -138,6 +139,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _ = RunSearchAsync(keepSelection: false);
         _host.Indexer.Start(scanNow: true);
         _host.Mirrors.Start();
+        // A folder that changed is read again, and its backup follows, once it has been quiet for a while.
+        _watcher = new FolderWatcher(_host.Repo);
+        _watcher.FolderChanged += id =>
+        {
+            _host.Indexer.RequestScan(id);
+            _host.Mirrors.FolderChanged(id);
+        };
         _ = LoadModelAsync();
     }
 
@@ -145,6 +153,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void RebuildSidebar()
     {
+        // A folder added, removed or located elsewhere is watched from now on (off this thread: a network folder may be slow).
+        if (_watcher is { } watcher) _ = Task.Run(watcher.Refresh);
         // Clearing the lists makes the bound controls push null into the selections; restore them afterwards.
         _rebuilding = true;
         var selected = _scope;
@@ -161,7 +171,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             // A folder of a library restored from another computer, or a disk that is not connected.
             var away = s.Kind == SourceKinds.Local && !Directory.Exists(s.Root);
-            SidebarItems.Add(SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirrors.GetValueOrDefault(s.Id)));
+            var mirror = mirrors.GetValueOrDefault(s.Id);
+            SidebarItems.Add(SourceEntry(s, away, counts.GetValueOrDefault(s.Id), mirror));
+            // A clone is in the library from the start, at its place among the sources, with how far its copy is.
+            if (mirror != null && _host.Cloud.MoveRequested(mirror.Id)) SidebarItems.Add(CloneEntry(s, mirror));
         }
         IsLibraryEmpty = sources.Count == 0;
         var persons = _host.People.ListPersons();
@@ -185,12 +198,40 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Buckets.Add(b);
             SidebarItems.Add(new SidebarEntry(SidebarKind.Bucket, b.Id, b.Name, b.Count.ToString("N0"), b.Name));
         }
-        var restored = selected == null ? null : SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == selected.Kind && e.Id == selected.Id);
+        // A clone that is done is a source of the same id (the folder here got a new one).
+        var restored = selected == null ? null : SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == selected.Kind && e.Id == selected.Id)
+            ?? (selected.Kind == SidebarKind.Clone ? SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == SidebarKind.Source && e.Id == selected.Id) : null);
         ActiveBucket = activeId is { } id ? Buckets.FirstOrDefault(b => b.Id == id) : null;
         OnPropertyChanged(nameof(HasBuckets));
         _rebuilding = false;
         // A removed scope falls back to the whole library (and searches again).
         SelectedSidebarItem = restored ?? SidebarItems.OfType<SidebarEntry>().First();
+    }
+
+    private readonly Dictionary<long, CloneProgress> _clones = [];
+
+    private SidebarEntry CloneEntry(Source s, MirrorInfo mirror)
+    {
+        if (!_clones.TryGetValue(mirror.Id, out var progress)) _clones[mirror.Id] = progress = new CloneProgress { Text = "copying" };
+        var waits = mirror.Gone > 0;
+        var failed = !mirror.Enabled || mirror.LastResult is { } r && r != "OK";
+        progress.Text = waits ? "waits" : failed ? "failed" : progress.Text is "waits" or "failed" ? "copying" : progress.Text;
+        var where = $"{mirror.CloudName}, folder {mirror.Target}";
+        return new SidebarEntry(SidebarKind.Clone, s.Id, _host.Cloud.CloneName(s.Name, mirror), "",
+            $"Being copied to {where}. Once all files are there it is a source of its own; the folder {s.Name} on this computer is not touched.")
+        {
+            Progress = progress,
+            CloudIcon = waits || failed ? MaterialIconKind.CloudAlertOutline : MaterialIconKind.CloudSyncOutline,
+            CloudAttention = waits || failed,
+            CloudTip = waits ? "Waits for you: click to decide about files deleted from the folder."
+                : failed ? "The copy failed. Click for why, or to stop it."
+                : "Click to see how far it is, or to stop it.",
+        };
+    }
+
+    private void OnCopying(long mirrorId, Rclone.CopyProgress p)
+    {
+        if (_clones.TryGetValue(mirrorId, out var progress)) progress.Text = $"{p.Percent}%";
     }
 
     private SidebarEntry SourceEntry(Source s, bool away, long count, MirrorInfo? mirror)
@@ -211,8 +252,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                     CloudTip = "Lives in the cloud. Click to keep it on this computer too.",
                 };
         if (mirror == null)
-            return entry with { CloudIdle = true, CloudTip = "Back this folder up to a cloud, or move it there..." };
-        var moving = _host.Cloud.MoveRequested(mirror.Id);
+            return entry with { CloudIdle = true, CloudTip = "Back this folder up to a cloud, or clone it there..." };
+        // Being cloned: the clone below shows it; this folder stays as it was.
+        if (_host.Cloud.MoveRequested(mirror.Id))
+            return entry with { CloudIdle = true, CloudTip = $"Being cloned to {mirror.CloudName}: see {s.Name} ({mirror.CloudName}) below. Nothing here is deleted." };
         if (mirror.Gone > 0 || !mirror.Enabled || mirror.LastResult is { } r && r != "OK")
             return entry with
             {
@@ -220,12 +263,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 CloudTip = mirror.Gone > 0 ? $"{mirror.Gone:N0} files deleted here are still in the cloud. Click to decide." :
                     !mirror.Enabled ? "The backup stopped. Click for why." : "The last backup failed. Click for why.",
             };
-        if (mirror.LastRunAt == null || moving)
-            return entry with
-            {
-                CloudIcon = MaterialIconKind.CloudSyncOutline,
-                CloudTip = moving ? $"Moving to {mirror.CloudName}: after the backup is complete." : $"The first backup to {mirror.CloudName} is running.",
-            };
+        if (mirror.LastRunAt == null)
+            return entry with { CloudIcon = MaterialIconKind.CloudSyncOutline, CloudTip = $"The first backup to {mirror.CloudName} is running." };
         return entry with { CloudIcon = MaterialIconKind.CloudCheckOutline, CloudDone = true, CloudTip = $"Backed up to {mirror.CloudName}. Click for more." };
     }
 
@@ -239,11 +278,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             : failed > 0 ? "A backup needs a look: click the orange cloud of the folder." : "";
     }
 
-    /// <summary>A backup ran, a folder moved to the cloud or got a home here: the sidebar shows it, copies get their twins' analysis.</summary>
+    /// <summary>A backup ran, a folder cloned to the cloud or got a home here: the sidebar shows it, copies get their twins' analysis.</summary>
     public void OnCloudChanged()
     {
         RebuildSidebar();
-        if (MirrorText.Length == 0 || !MirrorText.StartsWith("Backing up", StringComparison.Ordinal) && !MirrorText.StartsWith("Moving", StringComparison.Ordinal))
+        if (MirrorText.Length == 0 || !MirrorText.StartsWith("Backing up", StringComparison.Ordinal) && !MirrorText.StartsWith("Cloning", StringComparison.Ordinal))
             MirrorText = CloudSummary();
         _host.Indexer.Wake();
     }
@@ -312,7 +351,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private MediaFilter ScopeFilter() => WithDates(CurrentScope switch
     {
-        { Kind: SidebarKind.Source } e => new MediaFilter { SourceId = e.Id },
+        { Kind: SidebarKind.Source or SidebarKind.Clone } e => new MediaFilter { SourceId = e.Id },
         { Kind: SidebarKind.Bucket } e => new MediaFilter { BucketId = e.Id },
         { Kind: SidebarKind.Person } e => new MediaFilter { PersonIds = [e.Id] },
         _ => new MediaFilter(),
@@ -890,8 +929,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private FolderWatcher? _watcher;
+
     public void Dispose()
     {
+        _watcher?.Dispose();
         _searchCts?.Cancel();
         _downloadCts?.Cancel();
     }
