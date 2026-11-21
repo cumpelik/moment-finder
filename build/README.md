@@ -1,6 +1,6 @@
 # Release build of MediaLens
 
-Each platform has one script that publishes the application **self-contained** (nobody has to install .NET), adds the external tools and builds the packages. The scripts run by hand or from the release pipeline ([`azure-pipelines.yml`](azure-pipelines.yml)), which only calls them.
+Each platform has one script that publishes the application **self-contained** (nobody has to install .NET), adds the external tools and builds the packages. The scripts run by hand or from the GitHub workflows ([`.github/workflows`](../.github/workflows)), which only call them.
 
 | Platform | Runs on | Script | Result in `build/out/` |
 |---|---|---|---|
@@ -57,37 +57,44 @@ Unsigned, the installer works, but SmartScreen shows "Windows protected your PC"
 
 Signing starts when `ARTIFACT_SIGNING_ACCOUNT` is set; then all of these are needed:
 
-| Environment variable | Pipeline variable (group `medialens-release`) | Value | Secret |
-|---|---|---|---|
-| `ARTIFACT_SIGNING_ENDPOINT` | `ArtifactSigningEndpoint` | endpoint of the region of the account, West Europe = `https://weu.codesigning.azure.net` | no |
-| `ARTIFACT_SIGNING_ACCOUNT` | `ArtifactSigningAccount` | the Artifact Signing account | no |
-| `ARTIFACT_SIGNING_PROFILE` | `ArtifactSigningProfile` | its certificate profile (Public Trust) | no |
-| `AZURE_TENANT_ID` | `ArtifactSigningTenantId` | Directory (tenant) ID of the app registration | no |
-| `AZURE_CLIENT_ID` | `ArtifactSigningClientId` | Application (client) ID | no |
-| `AZURE_CLIENT_SECRET` | `ArtifactSigningClientSecret` | its client secret | yes |
+| Environment variable (in GitHub: environment `release`) | Value | Secret |
+|---|---|---|
+| `ARTIFACT_SIGNING_ENDPOINT` | endpoint of the region of the account, West Europe = `https://weu.codesigning.azure.net` | no (variable) |
+| `ARTIFACT_SIGNING_ACCOUNT` | the Artifact Signing account | no (variable) |
+| `ARTIFACT_SIGNING_PROFILE` | its certificate profile (Public Trust) | no (variable) |
+| `AZURE_TENANT_ID` | Directory (tenant) ID of the app registration | no (variable) |
+| `AZURE_CLIENT_ID` | Application (client) ID | no (variable) |
+| `AZURE_CLIENT_SECRET` | its client secret | yes (secret) |
 
-The same signing account, certificate profile and app registration (role **Artifact Signing Certificate Profile Signer**) as for the other Letsnet applications can be used. An endpoint of another region than the account fails with 403.
+The app registration needs the role **Artifact Signing Certificate Profile Signer** on the certificate profile. An endpoint of another region than the account fails with 403.
 
 ### macOS: Developer ID and notarization
 
 macOS opens an application downloaded from the internet only when it is signed with a **Developer ID Application** certificate and notarized by Apple. `build/macos/build.sh` signs every file in the bundle (the .NET libraries, libVLC and its plugins, ONNX Runtime and the tools in `Contents/MacOS/tools`) with the hardened runtime and `entitlements.plist`, then the bundle, then the `.dmg`, submits the `.dmg` for notarization and staples the ticket.
 
-| Environment variable | Pipeline variable / secure file | Value |
-|---|---|---|
-| `MAC_SIGN_IDENTITY` | `MacSignIdentity` | `Developer ID Application: Name (TEAMID)`, the certificate must be in the keychain |
-| `NOTARY_KEY_PATH` | secure file `MediaLens-AuthKey.p8` | path to the App Store Connect API key (`.p8`) |
-| `NOTARY_KEY_ID` | `NotaryKeyId` | its Key ID |
-| `NOTARY_ISSUER_ID` | `NotaryIssuerId` | its Issuer ID |
-| (pipeline only) | secure file `MediaLens-DeveloperID.p12`, `MacCertPassword` (secret) | the certificate with its key, and its password |
+| Environment variable | Value |
+|---|---|
+| `MAC_SIGN_IDENTITY` | `Developer ID Application: Name (TEAMID)`, the certificate must be in the keychain |
+| `NOTARY_KEY_PATH` | path to the App Store Connect API key (`.p8`) |
+| `NOTARY_KEY_ID` | its Key ID |
+| `NOTARY_ISSUER_ID` | its Issuer ID |
 
-The Developer ID certificate and the API key belong to the developer account, not to an application: the same `.p12` and `.p8` as for the other applications work. Upload them under the names above or change `MacCertSecureFile` and `NotaryKeySecureFile` at the top of `azure-pipelines.yml`.
+The Developer ID certificate and the API key belong to the developer account, not to an application.
 
 Bundle identifier: `cz.letsnet.MediaLens` (`macos/Info.plist`). `Info.plist` also holds the texts of the permission prompts (Photos library, Desktop, Documents, Downloads, removable and network volumes).
 
 Without `MAC_SIGN_IDENTITY` the script builds unsigned `.dmg` files (the tools get an ad-hoc signature so that they run on Apple Silicon): only for testing, macOS blocks them on other computers.
 
-## The pipeline
+## GitHub workflows
 
-**Create it once:** Pipelines -> New pipeline -> Azure Repos Git -> this repository -> Existing Azure Pipelines YAML file -> path `/build/azure-pipelines.yml` -> Save. Create the variable group `medialens-release` (Pipelines -> Library) with the variables above and upload the secure files. The first run asks to permit the variable group and the secure files (View -> Permit).
+- **Build** (`.github/workflows/build.yml`), on every push to `main` and every pull request: the tests on Linux and an unsigned Windows installer, kept as the artifact `MediaLens-dev-win-x64` of the run.
+- **Release** (`.github/workflows/release.yml`), on a tag `v<major>.<minor>.<patch>`: the signed Windows installer and zip with their SHA-256, published as the GitHub Release of the tag. Raise `<Version>` in `Directory.Build.props` with it.
 
-**Run it:** Run pipeline -> Version (e.g. `0.2.0`) -> What to build: *All platforms* or *Without macOS*. Windows, Linux and macOS build in parallel; the files are in the artifacts `installers-windows`, `installers-linux` and `installers-macos` of the run. The notarization waits for Apple, usually a few minutes per `.dmg`.
+```
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+**Set up once** (Settings -> Environments -> New environment `release`): deployment tags `v*` only, the five variables and the secret of the signing table above. Without them the release is built unsigned.
+
+Linux and macOS packages are built by hand with their scripts for now.

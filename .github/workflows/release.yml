@@ -1,0 +1,57 @@
+name: Release
+
+# Tag v1.2.3 -> the Windows installer and zip of MediaLens 1.2.3 as GitHub Release v1.2.3.
+# Signing settings live in the "release" environment (Settings -> Environments -> release), which only tags v* may use:
+#   variables: ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT, ARTIFACT_SIGNING_PROFILE, AZURE_TENANT_ID, AZURE_CLIENT_ID
+#   secret:    AZURE_CLIENT_SECRET
+# Without them the release is unsigned.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # 9 builds MediaLens; the Artifact Signing plugin of SignTool runs on 8.
+          dotnet-version: |
+            9.0.x
+            8.0.x
+      - name: Version from the tag
+        id: v
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "The tag must be v<major>.<minor>.<patch>, e.g. v1.2.0 - not '$env:GITHUB_REF_NAME'" }
+          "version=$version" | Out-File -Append $env:GITHUB_OUTPUT
+      - name: Build and sign
+        shell: pwsh
+        run: build/windows/build.ps1 -Version ${{ steps.v.outputs.version }}
+        env:
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      - name: SHA-256 of the files
+        shell: pwsh
+        run: |
+          Get-ChildItem build/out -File -Filter "MediaLens-*-win-x64.*" | ForEach-Object {
+            "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())  $($_.Name)" | Out-File -Encoding ascii "$($_.FullName).sha256"
+          }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.exe
+            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.exe.sha256
+            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.zip
+            build/out/MediaLens-${{ steps.v.outputs.version }}-win-x64.zip.sha256
+          generate_release_notes: true

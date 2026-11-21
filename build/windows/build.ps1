@@ -97,6 +97,7 @@ rclone $RcloneVersion
   Binaries: https://downloads.rclone.org/v$RcloneVersion/
   Source code: https://github.com/rclone/rclone/tree/v$RcloneVersion
 "@ | Set-Content -Encoding utf8 (Join-Path $toolsDir 'THIRD-PARTY.txt')
+Copy-Item "$root\LICENSE" (Join-Path $publish 'LICENSE.txt')
 # A quick check that the binaries run here.
 & "$toolsDir\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
 & "$toolsDir\ffprobe.exe" -hide_banner -version | Select-Object -First 1
@@ -122,7 +123,7 @@ if (Setting 'ARTIFACT_SIGNING_ACCOUNT') {
     New-Item -ItemType Directory -Force $tools | Out-Null
     $nuget = Join-Path $tools 'nuget.exe'
     if (-not (Test-Path $nuget)) { Invoke-WebRequest -Uri 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile $nuget }
-    # The signing plugin is pinned: 1.0.151 (2026-11-03) runs on .NET 10, the pipeline installs the .NET 8 runtime for it.
+    # The signing plugin is pinned: 1.0.151 (2026-11-03) runs on .NET 10, the release workflow installs the .NET 8 runtime for it.
     foreach ($package in @(@('Microsoft.Windows.SDK.BuildTools', $null), @('Microsoft.ArtifactSigning.Client', '1.0.146'))) {
         $name, $version = $package
         $versionArgs = @()

@@ -11,7 +11,7 @@
 #
 # Must run on macOS (Microsoft-hosted macos-latest agent). Environment variables:
 #   MAC_SIGN_IDENTITY   "Developer ID Application: Your Name (TEAMID)" - the certificate must be in the keychain
-#                       (the "Install Apple certificate" task of the pipeline does that)
+#                       (import the .p12 into a keychain first)
 #   NOTARY_KEY_PATH     path to the App Store Connect API key (.p8)
 #   NOTARY_KEY_ID       its Key ID
 #   NOTARY_ISSUER_ID    its Issuer ID

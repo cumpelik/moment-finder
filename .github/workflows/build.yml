@@ -1,0 +1,35 @@
+name: Build
+
+# Every push to main and every pull request: the tests (Linux) and an unsigned Windows installer to try.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: rclone and ffmpeg (for the cloud and video tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rclone ffmpeg
+      - name: Test
+        run: dotnet test tests/MediaLens.Tests
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Build (unsigned)
+        shell: pwsh
+        run: build/windows/build.ps1 -Version 0.0.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaLens-dev-win-x64
+          path: build/out/MediaLens-0.0.0-win-x64.exe

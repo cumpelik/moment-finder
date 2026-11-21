@@ -3,6 +3,11 @@
 Photo and video browser with local AI. Everything runs on your computer: the models are downloaded once
 and then work offline. Windows, Linux and macOS.
 
+## Download
+
+Windows: the installer is on the [Releases](../../releases/latest) page (`MediaLens-<version>-win-x64.exe`, or the
+`.zip` to unzip and run). Linux and macOS packages follow.
+
 ## What it does
 
 - **Library**: folders (and cloud folders) as sources, incremental scan, EXIF and video metadata, thumbnails.
@@ -151,3 +156,9 @@ media and evaluates the filters first. Face and body embeddings are stored with 
 
 Before any commercial release the face models must be replaced (for example YuNet for detection and a
 face recognition model with a commercial license).
+
+## License
+
+MIT, see [LICENSE](LICENSE). The installers bundle FFmpeg (GPL) and rclone (MIT); their licenses and sources are
+listed in `tools/THIRD-PARTY.txt` next to the application. The AI models are downloaded on first use under their own
+licenses.
