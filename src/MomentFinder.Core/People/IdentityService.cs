@@ -185,23 +185,10 @@ public sealed class IdentityService
         {
             long best = 0;
             float bestScore = -1, second = -1;
-            Span<float> top = stackalloc float[3];
             foreach (var (person, list) in ByPerson)
             {
                 if (rejected != null && rejected.Contains(person)) continue;
-                top.Fill(float.MinValue);
-                foreach (var p in list)
-                {
-                    var s = TensorPrimitives.Dot(e, p);
-                    if (s <= top[2]) continue;
-                    if (s > top[0]) (top[0], top[1], top[2]) = (s, top[0], top[1]);
-                    else if (s > top[1]) (top[1], top[2]) = (s, top[1]);
-                    else top[2] = s;
-                }
-                var n = Math.Min(3, list.Count);
-                var max = 0f;
-                for (var k = 0; k < n; k++) max += top[k];
-                max /= n;
+                var max = Closeness(e, list);
                 if (max > bestScore)
                 {
                     second = bestScore;
@@ -215,6 +202,87 @@ public sealed class IdentityService
             }
             return (best, bestScore, second);
         }
+
+        /// <summary>How close a face is to a person: the average of the three closest of the person's pictures.</summary>
+        public static float Closeness(float[] e, List<float[]> list)
+        {
+            Span<float> top = stackalloc float[3];
+            top.Fill(float.MinValue);
+            foreach (var p in list)
+            {
+                var s = TensorPrimitives.Dot(e, p);
+                if (s <= top[2]) continue;
+                if (s > top[0]) (top[0], top[1], top[2]) = (s, top[0], top[1]);
+                else if (s > top[1]) (top[1], top[2]) = (s, top[1]);
+                else top[2] = s;
+            }
+            var n = Math.Min(3, list.Count);
+            var sum = 0f;
+            for (var k = 0; k < n; k++) sum += top[k];
+            return sum / n;
+        }
+    }
+
+    /// <summary>Somebody the detections asked about may be. Likely: close enough to be offered first, with one click.</summary>
+    public sealed record Candidate(Person Person, float Score, bool Likely);
+
+    /// <summary>
+    /// Who somebody may be (one person: a face, a figure, a group or a video track of them), for choosing the name:
+    /// all known people, the most likely first. By the face against the faces the people are known by (as the
+    /// matching does it: the closest named face of the same day, or the three closest of all); by the clothes
+    /// against the figures known on the same day; who was there that day comes before who was not, who is on more
+    /// photos before who is on few. People the user said it is not come last.
+    /// </summary>
+    public List<Candidate> Candidates(IReadOnlyCollection<long> detectionIds)
+    {
+        var persons = _repo.ListPersons();
+        if (persons.Count == 0) return [];
+        var asked = _repo.Load(detectionIds);
+        var faces = asked.Where(d => d.Kind == DetectionKind.Face && d.Quality >= FaceMinQuality).OrderByDescending(d => d.Quality).Take(8).ToList();
+        var bodies = asked.Where(d => d.Kind == DetectionKind.Body && d.EventId != null).OrderByDescending(d => d.Quality).Take(8).ToList();
+        var rejections = _repo.Rejections();
+        var not = asked.SelectMany(d => rejections.GetValueOrDefault(d.Id) ?? []).ToHashSet();
+
+        var byFace = new Dictionary<long, float>();
+        if (faces.Count > 0)
+        {
+            var askedIds = asked.Select(d => d.Id).ToHashSet();
+            var known = _repo.KnownFaces(FaceExtend, MaxPrototypes).Where(f => !askedIds.Contains(f.Id)).ToList();
+            bool Said(DetectionRow f) => f.Confirmed || f.AssignSource == AssignSource.Linked;
+            var protos = new Prototypes();
+            foreach (var f in known.OrderByDescending(Said).ThenByDescending(f => f.Quality)) protos.Add(f.PersonId!.Value, f.Embedding);
+            foreach (var (person, list) in protos.ByPerson)
+                byFace[person] = faces.Where(f => f.Embedding.Length == list[0].Length).Select(f => Prototypes.Closeness(f.Embedding, list)).DefaultIfEmpty(-1).Max();
+            // A face the user named on the same day counts by itself (MatchSameDay).
+            foreach (var named in known.Where(k => Said(k) && k.EventId != null))
+            {
+                var s = faces.Where(f => f.EventId == named.EventId && f.Embedding.Length == named.Embedding.Length)
+                    .Select(f => TensorPrimitives.Dot(f.Embedding, named.Embedding)).DefaultIfEmpty(-1).Max();
+                if (s > byFace.GetValueOrDefault(named.PersonId!.Value, -1)) byFace[named.PersonId.Value] = s;
+            }
+        }
+        var there = _repo.KnownFiguresOf(asked.Where(d => d.EventId != null).Select(d => d.EventId!.Value).Distinct().ToList(),
+            asked.Select(d => d.Id).ToList());
+        var byClothes = new Dictionary<long, float>();
+        foreach (var known in there.Where(k => k.Quality >= BodyMinQuality && (k.Confirmed || (k.Confidence ?? 0) >= 0.4f) && k.AssignSource != AssignSource.Outfit))
+        {
+            var s = bodies.Where(b => b.EventId == known.EventId && b.Embedding.Length == known.Embedding.Length)
+                .Select(b => TensorPrimitives.Dot(b.Embedding, known.Embedding)).DefaultIfEmpty(-1).Max();
+            if (s > byClothes.GetValueOrDefault(known.PersonId!.Value, -1)) byClothes[known.PersonId.Value] = s;
+        }
+        var wasThere = there.Select(k => k.PersonId!.Value).ToHashSet();
+
+        // Clothes on the scale of faces: as sure as a face (BodyAuto) counts like a face that is (FaceAuto).
+        var clothes = BodyAuto - FaceAuto;
+        return persons.Select(p =>
+            {
+                var score = Math.Max(byFace.GetValueOrDefault(p.Id, -1), byClothes.GetValueOrDefault(p.Id, -1) - clothes);
+                if (not.Contains(p.Id)) score = -2;
+                return (Person: p, Score: score, There: wasThere.Contains(p.Id));
+            })
+            .OrderByDescending(c => c.Score + (c.There && c.Score > -2 ? 0.05f : 0)).ThenByDescending(c => c.Person.MediaCount).ThenBy(c => c.Person.Name)
+            .Select(c => new Candidate(c.Person, c.Score, c.Score >= FaceSuggest))
+            .ToList();
     }
 
     /// <summary>

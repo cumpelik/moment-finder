@@ -598,7 +598,7 @@ public partial class MainWindow : Window
     private async void OnNameCluster(object? sender, RoutedEventArgs e)
     {
         if (_vm == null || (sender as Control)?.DataContext is not CropViewModel card) return;
-        var name = await Dialogs.PromptNameAsync(this, "Who is this?", _vm.People.PersonNames());
+        var name = await Dialogs.PromptNameAsync(this, "Who is this?", await _vm.People.AskAsync(card));
         if (name == null) return;
         if (card.FigureKey != null) _vm.People.NameFigure(card, name);
         else _vm.People.NameCluster(card, name);
@@ -638,14 +638,14 @@ public partial class MainWindow : Window
             await Dialogs.InfoAsync(this, "It is someone else", "Click the pictures that are another person first (Ctrl or Shift selects more), then this button.");
             return;
         }
-        var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.People.PersonNames());
+        var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskSelectedAsync());
         if (!string.IsNullOrWhiteSpace(name)) _vm.People.MoveSelectedTo(name);
     }
 
     private async Task ReviewOtherAsync()
     {
         if (_vm == null) return;
-        var name = await Dialogs.PromptNameAsync(this, "Who is it?", _vm.People.PersonNames());
+        var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskReviewAsync());
         if (name != null) _vm.People.ReviewOther(name);
     }
 

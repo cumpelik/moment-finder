@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
+using MomentFinder.App.ViewModels;
 
 namespace MomentFinder.App.Views;
 
@@ -146,59 +147,116 @@ public static class Dialogs
         return string.IsNullOrWhiteSpace(result) ? null : result.Trim();
     }
 
-    public enum WhoAction { Cancel, Name, NotThisPerson, Ignore }
+    /// <summary>
+    /// The part of a dialog that asks who somebody is: the person's picture (so the answer goes to the right one), the
+    /// most likely people as buttons (one click, after the caller's own first button), and a box to write in or to
+    /// pick from: everybody, the most likely first. chosen gets the name of a button, picked in the list, or written
+    /// and confirmed with Enter. The box is not in the view: it goes into the dialog's last row, beside OK and
+    /// Cancel (Build), so its open list covers nothing of the dialog.
+    /// </summary>
+    private static (Control View, NameBox Box) NameInput(WhoQuestion who, string text, string placeholder, string? without,
+        Action<string> chosen, Button? first = null, Control? more = null)
+    {
+        var box = new NameBox(who.Names) { PlaceholderText = placeholder };
+        var quick = new WrapPanel();
+        if (first != null) quick.Children.Add(first);
+        foreach (var name in who.Names.Take(who.Likely).Where(n => n != without).Take(4))
+        {
+            var likely = new Button { Content = name, Margin = new Avalonia.Thickness(0, 0, 8, 4) };
+            ToolTip.SetTip(likely, $"It is {name}");
+            likely.Click += (_, _) => chosen(name);
+            quick.Children.Add(likely);
+        }
+        quick.IsVisible = quick.Children.Count > 0;
+        box.Picked += chosen;
+        var view = new DockPanel();
+        if (Picture(who.Picture) is { } bitmap)
+        {
+            var picture = new Border
+            {
+                CornerRadius = new Avalonia.CornerRadius(6),
+                ClipToBounds = true,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Avalonia.Thickness(0, 0, 16, 0),
+                Child = new Image { Source = bitmap, MaxWidth = 150, MaxHeight = 200 },
+            };
+            picture.DetachedFromVisualTree += (_, _) => bitmap.Dispose();
+            DockPanel.SetDock(picture, Dock.Left);
+            view.Children.Add(picture);
+        }
+        var words = new StackPanel
+        {
+            Spacing = 8,
+            Children = { new TextBlock { Text = text, TextWrapping = Avalonia.Media.TextWrapping.Wrap }, quick },
+        };
+        if (more != null) words.Children.Add(more);
+        view.Children.Add(words);
+        return (view, box);
+    }
 
-    /// <summary>The names given last, the newest first: offered as buttons, a series of photos is mostly of the same few people.</summary>
-    private static readonly List<string> LastNames = [];
+    private static Avalonia.Media.Imaging.Bitmap? Picture(string? path)
+    {
+        if (path == null || !File.Exists(path)) return null;
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 300);
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The name box has the keyboard and shows its list at once: the answer is one click or a few letters away.</summary>
+    private static void OpenWithList(Window dialog, NameBox box) => dialog.Opened += (_, _) =>
+    {
+        box.Focus();
+        Avalonia.Threading.Dispatcher.UIThread.Post(box.ShowAll, Avalonia.Threading.DispatcherPriority.Background);
+    };
+
+    /// <summary>Who is it: the person's picture, the most likely people to click, everybody to pick from, or a new name.</summary>
+    public static async Task<string?> PromptNameAsync(Window owner, string title, WhoQuestion who)
+    {
+        string? result = null;
+        Window? dialog = null;
+        var (view, box) = NameInput(who, "Who is it? An existing name adds to that person.", "Name", null, name =>
+        {
+            result = name;
+            dialog?.Close();
+        });
+        dialog = Build(title, view, out var ok, out var cancel, "OK", who.Picture == null ? 440 : 560, box);
+        ok.Click += (_, _) => { result = box.Text; dialog.Close(); };
+        cancel.Click += (_, _) => dialog.Close();
+        OpenWithList(dialog, box);
+        await dialog.ShowDialog(owner);
+        return string.IsNullOrWhiteSpace(result) ? null : NameBox.Known(who.Names, result);
+    }
+
+    public enum WhoAction { Cancel, Name, NotThisPerson, Ignore }
 
     /// <summary>
     /// Who is a box: a name, or for a box that already has one "Not Greta" (a mistake), or "not a person" (a hand,
     /// a snow cannon, a stranger: the box goes away for good). A name the analysis only guessed (guess) is confirmed
-    /// with one button; the names given last are buttons too, nothing to type.
+    /// with one button; the other likely people are buttons too, and everybody is in the list of the name box.
     /// </summary>
-    public static async Task<(WhoAction Action, string? Name)> AskWhoAsync(Window owner, IEnumerable<string> names, string? current,
-        bool guess = false)
+    public static async Task<(WhoAction Action, string? Name)> AskWhoAsync(Window owner, WhoQuestion who, string? current, bool guess = false)
     {
-        var box = new AutoCompleteBox
-        {
-            ItemsSource = names.ToList(),
-            FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
-            MinimumPrefixLength = 1,
-            PlaceholderText = current == null ? "Name" : "Another name",
-        };
         var result = (WhoAction.Cancel, (string?)null);
-        var content = new StackPanel { Spacing = 8 };
-        content.Children.Add(new TextBlock
-        {
-            Text = current == null ? "Who is it? An existing name adds to that person." :
-                guess ? $"The analysis thinks it is {current}. Is it?" : $"Marked as {current}. Who is it really?",
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        });
-        var quick = new WrapPanel();
-        content.Children.Add(quick);
-        content.Children.Add(box);
-        var dialog = Build(current == null ? "Who is it?" : guess ? $"Is it {current}?" : $"Not {current}?", content, out var ok, out var cancel, "OK");
+        Window? dialog = null;
         void Close((WhoAction, string?) r)
         {
             result = r;
-            dialog.Close();
+            dialog?.Close();
         }
+        Button? yes = null;
         if (guess && current != null)
         {
-            var yes = new Button { Content = $"Yes, it is {current}", Margin = new Avalonia.Thickness(0, 0, 8, 4) };
+            yes = new Button { Content = $"Yes, it is {current}", Margin = new Avalonia.Thickness(0, 0, 8, 4) };
             yes.Classes.Add("accent");
             yes.Click += (_, _) => Close((WhoAction.Name, current));
-            quick.Children.Add(yes);
         }
-        foreach (var last in LastNames.Where(n => n != current).Take(4))
-        {
-            var other = new Button { Content = last, Margin = new Avalonia.Thickness(0, 0, 8, 4) };
-            ToolTip.SetTip(other, $"It is {last}");
-            other.Click += (_, _) => Close((WhoAction.Name, last));
-            quick.Children.Add(other);
-        }
-        quick.IsVisible = quick.Children.Count > 0;
-        var actions = new WrapPanel { Margin = new Avalonia.Thickness(0, 6, 0, 0) };
+        var actions = new WrapPanel();
         if (current != null)
         {
             var notThis = new Button { Content = $"Not {current}", Margin = new Avalonia.Thickness(0, 0, 8, 0) };
@@ -209,23 +267,18 @@ public static class Dialogs
         ToolTip.SetTip(ignore, "The box goes away and the person is never offered again");
         ignore.Click += (_, _) => Close((WhoAction.Ignore, null));
         actions.Children.Add(ignore);
-        content.Children.Add(actions);
-
+        var (view, box) = NameInput(who,
+            current == null ? "Who is it? An existing name adds to that person." :
+            guess ? $"The analysis thinks it is {current}. Is it?" : $"Marked as {current}. Who is it really?",
+            current == null ? "Name" : "Another name", current, name => Close((WhoAction.Name, name)), yes, actions);
+        dialog = Build(current == null ? "Who is it?" : guess ? $"Is it {current}?" : $"Not {current}?", view, out var ok, out var cancel, "OK",
+            who.Picture == null ? 440 : 560, box);
         ok.Click += (_, _) => Close((WhoAction.Name, box.Text));
         cancel.Click += (_, _) => dialog.Close();
-        box.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Enter && !box.IsDropDownOpen) Close((WhoAction.Name, box.Text));
-        };
-        dialog.Opened += (_, _) => box.Focus();
+        OpenWithList(dialog, box);
         await dialog.ShowDialog(owner);
         if (result.Item1 == WhoAction.Name && string.IsNullOrWhiteSpace(result.Item2)) return (WhoAction.Cancel, null);
-        if (result.Item1 == WhoAction.Name)
-        {
-            LastNames.Remove(result.Item2!.Trim());
-            LastNames.Insert(0, result.Item2.Trim());
-        }
-        return (result.Item1, result.Item2?.Trim());
+        return (result.Item1, result.Item1 == WhoAction.Name ? NameBox.Known(who.Names, result.Item2!) : null);
     }
 
     public static async Task<bool> ConfirmAsync(Window owner, string title, string message)
@@ -246,7 +299,9 @@ public static class Dialogs
         await dialog.ShowDialog(owner);
     }
 
-    private static Window Build(string title, Control content, out Button ok, out Button cancel, string okText)
+    /// <param name="beside">Fills the last row left of the buttons (the name box: its list opens below the dialog).</param>
+    private static Window Build(string title, Control content, out Button ok, out Button cancel, string okText, double width = 440,
+        Control? beside = null)
     {
         ok = new Button { Content = okText, IsDefault = true, MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
         ok.Classes.Add("accent");
@@ -258,17 +313,25 @@ public static class Dialogs
             HorizontalAlignment = HorizontalAlignment.Right,
             Children = { ok, cancel },
         };
-        DockPanel.SetDock(buttons, Dock.Bottom);
-        buttons.Margin = new Avalonia.Thickness(0, 16, 0, 0);
+        Control last = buttons;
+        if (beside != null)
+        {
+            DockPanel.SetDock(buttons, Dock.Right);
+            buttons.Margin = new Avalonia.Thickness(12, 0, 0, 0);
+            beside.VerticalAlignment = VerticalAlignment.Center;
+            last = new DockPanel { Children = { buttons, beside } };
+        }
+        DockPanel.SetDock(last, Dock.Bottom);
+        last.Margin = new Avalonia.Thickness(0, 16, 0, 0);
         return new Window
         {
             Title = title,
-            Width = 440,
+            Width = width,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
             ShowInTaskbar = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Content = new DockPanel { Margin = new Avalonia.Thickness(20), Children = { buttons, content } },
+            Content = new DockPanel { Margin = new Avalonia.Thickness(20), Children = { last, content } },
         };
     }
 }

@@ -354,17 +354,43 @@ public sealed class PeopleRepository
     }
 
     /// <summary>All detections with their media's event and time, for the identity matching.</summary>
-    public List<DetectionRow> LoadAll()
+    public List<DetectionRow> LoadAll() => Load("1=1", null);
+
+    /// <summary>These detections, as LoadAll gives them (with what they look like and their day out).</summary>
+    public List<DetectionRow> Load(IEnumerable<long> detectionIds) =>
+        detectionIds.Distinct().Chunk(500).SelectMany(ids => Load("d.id IN @ids", new { ids })).ToList();
+
+    /// <summary>
+    /// The faces the named people are known by, at most so many of each, the surest first: those the user said
+    /// (confirmed, or the clear face on a figure the user named: IdentityService.FacesOfNamedFigures), then the
+    /// clear ones the matching is this sure of.
+    /// </summary>
+    public List<DetectionRow> KnownFaces(float sure, int ofEach) => Load("""
+        d.id IN (SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY person_id
+                       ORDER BY (confirmed=1 OR assign_source=@linked) DESC, quality DESC) AS n
+            FROM detection
+            WHERE kind=@face AND person_id IS NOT NULL
+              AND (confirmed=1 OR (assign_source=@linked AND confidence>=1) OR (assign_source=@byFace AND confidence>=@sure AND quality>=0.3)))
+          WHERE n<=@ofEach)
+        """, new { face = (int)DetectionKind.Face, linked = (int)AssignSource.Linked, byFace = (int)AssignSource.Face, sure, ofEach });
+
+    /// <summary>The figures of known people on these days out, except the detections asked about (who else was there, in what clothes).</summary>
+    public List<DetectionRow> KnownFiguresOf(IReadOnlyCollection<long> eventIds, IReadOnlyCollection<long> exceptDetectionIds) =>
+        eventIds.Count == 0 ? [] : Load("d.kind=@body AND d.person_id IS NOT NULL AND m.event_id IN @eventIds AND d.id NOT IN @exceptDetectionIds",
+            new { body = (int)DetectionKind.Body, eventIds, exceptDetectionIds });
+
+    private List<DetectionRow> Load(string where, object? args)
     {
         using var c = _db.Open();
         var rows = new List<DetectionRow>();
         var folders = new Dictionary<(long Source, string Folder), long>();
-        using var reader = c.ExecuteReader("""
+        using var reader = c.ExecuteReader($"""
             SELECT d.id, d.media_id, d.time_ms, d.kind, d.x, d.y, d.w, d.h, d.score, d.quality, d.track, d.linked_id,
                    d.cluster, d.person_id, d.assign_source, d.confidence, d.confirmed, d.suggest_person_id, d.suggest_score,
                    m.event_id, m.taken_at, d.embedding, m.source_id, m.rel_path
-            FROM detection d JOIN media m ON m.id=d.media_id WHERE m.missing=0
-            """);
+            FROM detection d JOIN media m ON m.id=d.media_id WHERE m.missing=0 AND ({where})
+            """, args);
         while (reader.Read())
         {
             var path = reader.GetString(23);

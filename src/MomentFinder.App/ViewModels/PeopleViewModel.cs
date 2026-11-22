@@ -85,6 +85,12 @@ public sealed partial class CropViewModel : ObservableObject
     }
 }
 
+/// <summary>
+/// What a dialog that asks who somebody is shows: the known people, the most likely first (the first Likely of them
+/// are close enough to be offered with one click), and the picture of the person asked about.
+/// </summary>
+public sealed record WhoQuestion(IReadOnlyList<string> Names, int Likely, string? Picture);
+
 /// <summary>A titled part of Who is this: a day out with its place, or a video.</summary>
 public sealed class FigureSection(string title, string count, List<CropViewModel> cards)
 {
@@ -222,6 +228,35 @@ public sealed partial class PeopleViewModel : ObservableObject
     }
 
     public IReadOnlyList<string> PersonNames() => _host.People.ListPersons().Select(p => p.Name).ToList();
+
+    /// <summary>Who a card of Who is this may be (a group of faces or of figures).</summary>
+    public Task<WhoQuestion> AskAsync(CropViewModel card) => AskAsync(
+        card.FigureKey is { } key ? _host.People.FigureDetectionIds(key) :
+        card.Cluster is { } cluster ? _host.People.ClusterDetectionIds(cluster) : [card.DetectionId], card.DetectionId);
+
+    /// <summary>Who a box in the viewer may be: its whole video track and the faces on it say.</summary>
+    public Task<WhoQuestion> AskBoxAsync(long detectionId) => AskAsync(_host.People.SamePersonDetectionIds(detectionId), detectionId);
+
+    /// <summary>Who else the question in review may be, when it is not who the analysis thought.</summary>
+    public Task<WhoQuestion> AskReviewAsync() => HasReview
+        ? AskAsync([_queue[_queueIndex].Id], _queue[_queueIndex].Id, _queue[_queueIndex].SuggestPersonId)
+        : Task.FromResult(new WhoQuestion(PersonNames(), 0, null));
+
+    /// <summary>Who the selected pictures of the person shown may be instead.</summary>
+    public Task<WhoQuestion> AskSelectedAsync()
+    {
+        var selected = PersonCrops.Where(c => c.IsSelected).Select(c => c.DetectionId).ToList();
+        return selected.Count == 0 ? Task.FromResult(new WhoQuestion(PersonNames(), 0, null)) : AskAsync(selected, selected[0], Person?.Id);
+    }
+
+    /// <param name="pictureOf">The detection whose picture stands for the person asked about.</param>
+    /// <param name="not">Who it is known not to be (the question is "who else"): left out.</param>
+    private Task<WhoQuestion> AskAsync(IReadOnlyCollection<long> detectionIds, long pictureOf, long? not = null) => Task.Run(() =>
+    {
+        var candidates = _host.Identity.Candidates(detectionIds).Where(c => c.Person.Id != not).ToList();
+        var picture = CropPath(pictureOf);
+        return new WhoQuestion(candidates.Select(c => c.Person.Name).ToList(), candidates.Count(c => c.Likely), File.Exists(picture) ? picture : null);
+    });
 
     // ---- unnamed groups ----
 

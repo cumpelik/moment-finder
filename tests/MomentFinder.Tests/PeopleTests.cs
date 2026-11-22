@@ -301,6 +301,46 @@ public class PeopleTests
         Assert.Equal(david.Id, repo.DetectionsOfMedia(items["david_too.jpg"]).Single().PersonId);
     }
 
+    /// <summary>
+    /// Choosing a name: the known people are offered the most likely first. By the face; without a face by the
+    /// clothes of that day; who the user said it is not comes last.
+    /// </summary>
+    [Fact]
+    public async Task NamesAreOfferedMostLikelyFirst()
+    {
+        using var lib = new TestLibrary();
+        foreach (var (f, t) in new[] { ("anna.jpg", "2024-02-10 10:00"), ("helmet.jpg", "2024-02-10 11:00"), ("ben.jpg", "2024-03-10 10:00"),
+                     ("who.jpg", "2024-05-10 10:00") })
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var anna = repo.CreatePerson("Anna");
+        var ben = repo.CreatePerson("Ben");
+        repo.Confirm([repo.ReplaceDetections(items["anna.jpg"], [Face(Emb(0), link: 1), Body(Emb(5))])[0]], anna.Id);
+        repo.Confirm(repo.ReplaceDetections(items["ben.jpg"], [Face(Emb(1))]), ben.Id);
+        var helmet = repo.ReplaceDetections(items["helmet.jpg"], [Body(Emb(5, 0.2f))]);
+        var who = repo.ReplaceDetections(items["who.jpg"], [Face(Mix((1, 0.8f), (9, 0.6f)))]);
+        var identity = new IdentityService(repo);
+        identity.Recompute();
+
+        // A face like Ben's: Ben first and offered with one click, Anna not.
+        var byFace = identity.Candidates(who);
+        Assert.Equal(["Ben", "Anna"], byFace.Select(c => c.Person.Name));
+        Assert.Equal([true, false], byFace.Select(c => c.Likely));
+        // No face, but Anna's jacket on the day she was there.
+        var byClothes = identity.Candidates(helmet);
+        Assert.Equal("Anna", byClothes[0].Person.Name);
+        Assert.True(byClothes[0].Likely);
+        Assert.False(byClothes[1].Likely);
+        // "Not Ben": he comes last and is not offered.
+        repo.Reject(who, ben.Id);
+        var notBen = identity.Candidates(who);
+        Assert.Equal(["Anna", "Ben"], notBen.Select(c => c.Person.Name));
+        Assert.False(notBen[1].Likely);
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

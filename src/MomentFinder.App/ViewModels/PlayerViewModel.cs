@@ -532,7 +532,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId, known, known != null && !who.Confirmed);
     }
 
-    public IReadOnlyList<string> Names() => _main.People.PersonNames();
+    /// <summary>For the dialog that asks who a box is: its picture and the known people, the most likely first.</summary>
+    public Task<WhoQuestion> AskAsync(long detectionId) => _main.People.AskBoxAsync(detectionId);
 
     /// <summary>The person the user named last, the photo or video it was on, and the name as written.</summary>
     private (long Person, long MediaId, string Name)? _lookingFor;

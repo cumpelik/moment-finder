@@ -327,7 +327,7 @@ public partial class PlayerView : UserControl
         if (_vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) return;
         var wasRunning = vm.HoldForDialog();
         var box = vm.PeopleBoxes().FirstOrDefault(b => b.DetectionId == detectionId);
-        var (action, name) = await Dialogs.AskWhoAsync(owner, vm.Names(), box?.PersonName, box?.Guess == true);
+        var (action, name) = await Dialogs.AskWhoAsync(owner, await vm.AskAsync(detectionId), box?.PersonName, box?.Guess == true);
         switch (action)
         {
             case Dialogs.WhoAction.Name: vm.NameDetection(detectionId, name!); break;
