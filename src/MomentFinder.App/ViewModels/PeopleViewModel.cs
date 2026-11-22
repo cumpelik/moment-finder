@@ -209,7 +209,15 @@ public sealed partial class PeopleViewModel : ObservableObject
             if (gained == null) host.Indexer.RequestIdentity();
             Avalonia.Threading.Dispatcher.UIThread.Post(() => Answered?.Invoke(gained));
         };
+        host.Indexer.PeopleFound += id => Avalonia.Threading.Dispatcher.UIThread.Post(() => PeopleFound?.Invoke(id));
+        host.Identity.Changed += () => Avalonia.Threading.Dispatcher.UIThread.Post(() => Rematched?.Invoke());
     }
+
+    /// <summary>The people of this photo or video were looked for again (it was turned): its boxes are other ones now. On the UI thread.</summary>
+    public event Action<long>? PeopleFound;
+
+    /// <summary>The matching changed who is who somewhere (after an analysis, after an answer). On the UI thread.</summary>
+    public event Action? Rematched;
 
     /// <summary>
     /// The matching after the user's answers is done: how far they reached, null when it could not be done now

@@ -214,6 +214,15 @@ public class SyncTests
             var later = Faces(b, Item(b, "b.jpg"))[0];
             Assert.Equal(evaB.Id, peopleB.DetectionsOfMedia(Item(b, "b.jpg")).Single(d => d.Id == later).PersonId);
 
+            // A photo turned on one computer is turned on the other, and its people are looked for again there.
+            a.Repo.SetRotation(Item(a, "a.jpg"), 90);
+            await syncA.RunAsync(ct);
+            await syncB.RunAsync(ct);
+            Assert.Equal(90, b.Repo.Query(new MediaFilter()).Single(i => i.FileName == "a.jpg").Rotation);
+            Assert.Equal(0, b.Repo.Query(new MediaFilter()).Single(i => i.FileName == "b.jpg").Rotation);
+            using (var c = b.Db.Open())
+                Assert.Equal(0, c.ExecuteScalar<int>("SELECT people_version FROM media WHERE id=@id", new { id = Item(b, "a.jpg") }));
+
             // Nothing is taken in twice, nothing is lost: one more round changes nothing.
             await syncB.RunAsync(ct);
             Assert.Null(syncB.LastError);

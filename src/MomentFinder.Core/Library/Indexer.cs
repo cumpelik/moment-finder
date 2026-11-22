@@ -491,6 +491,12 @@ public sealed class Indexer : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// The people of an item were looked for just now (again, when the user turned it): what was shown of them
+    /// before is replaced. Raised on a background thread.
+    /// </summary>
+    public event Action<long>? PeopleFound;
+
     private async Task<bool> PeopleBatchAsync(CancellationToken ct)
     {
         if (_people is not { } people) return false;
@@ -510,6 +516,7 @@ public sealed class Indexer : IDisposable
                 // Unreadable file: it stays without people, the rest goes on.
             }
             _repo.SetPeopleVersion(item.Id, PeopleVersion);
+            PeopleFound?.Invoke(item.Id);
             Report(new IndexerStatus(IndexerPhase.People, "Looking for people in the pictures", ++done, (int)stats.Total, false));
             // Match from time to time, so names spread while a large library is still being analyzed.
             if (++_sinceIdentity >= 300) _identityDirty = true;

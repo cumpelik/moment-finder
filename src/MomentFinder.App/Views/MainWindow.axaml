@@ -28,7 +28,10 @@
         <DataTemplate x:Key="TileTemplate" DataType="vm:TileViewModel">
             <Border Classes="tile" Classes.selected="{Binding IsSelected}" ToolTip.Tip="{Binding ToolTip}">
                 <Grid>
-                    <Image Classes="thumb" Source="{Binding Thumb}" />
+                    <!-- A picture the user turned: its thumbnail is the file's, shown turned -->
+                    <LayoutTransformControl LayoutTransform="{Binding Rotation, Converter={x:Static views:Turn.ToTransform}}">
+                        <Image Classes="thumb" Source="{Binding Thumb}" />
+                    </LayoutTransformControl>
                     <Button Classes="tileplay" Click="OnTilePlay" ToolTip.Tip="Full screen (or double click the picture)">
                         <mi:MaterialIcon Kind="Fullscreen" Width="18" Height="18" Foreground="White" />
                     </Button>

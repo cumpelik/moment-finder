@@ -157,6 +157,67 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _inBucket;
     [ObservableProperty] private double _contentWidth = 1;
     [ObservableProperty] private double _contentHeight = 1;
+    /// <summary>
+    /// The picture's own size (its file, a video frame, the 360 view). ContentWidth and ContentHeight are what is
+    /// shown: the same, or turned when the user turned the item (SetPictureSize).
+    /// </summary>
+    [ObservableProperty] private double _pictureWidth = 1;
+    [ObservableProperty] private double _pictureHeight = 1;
+    /// <summary>How the user turned the item on screen, in degrees clockwise (MediaItem.Rotation); 0 for a 360 one.</summary>
+    [ObservableProperty] private int _rotation;
+
+    /// <summary>The size of the picture as it comes; what is shown is that, turned as the user turned the item.</summary>
+    public void SetPictureSize(double width, double height)
+    {
+        PictureWidth = width;
+        PictureHeight = height;
+        var sideways = Media.QuarterTurn.Sideways(Rotation);
+        ContentWidth = sideways ? height : width;
+        ContentHeight = sideways ? width : height;
+    }
+
+    partial void OnRotationChanged(int value)
+    {
+        SetPictureSize(PictureWidth, PictureHeight);
+        PeopleChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Turns the photo or video on screen by a quarter (it lies on its side): at once here and in its tile, kept,
+    /// and its people are looked for again on the turned picture. Not a 360 one (that is looked around in).
+    /// </summary>
+    public void Rotate(int by)
+    {
+        if (Is360) return;
+        _main.Rotate(Current.Item, Current.Item.Rotation + by);
+        if (ShowPeople) PeopleHint = "Looking for the people again on the turned picture...";
+    }
+
+    [RelayCommand]
+    private void RotateRight() => Rotate(90);
+
+    [RelayCommand]
+    private void RotateLeft() => Rotate(-90);
+
+    /// <summary>Turned here or in the other viewer (the same file elsewhere in the library is turned with it).</summary>
+    private void OnItemTurned(IReadOnlyCollection<long> ids, int rotation)
+    {
+        if (!ids.Contains(Current.Item.Id) || Is360) return;
+        Current.Item.Rotation = rotation;
+        Rotation = rotation;
+    }
+
+    /// <summary>The people of the item on screen were looked for again: the boxes of before are gone.</summary>
+    private void OnPeopleFound(long mediaId)
+    {
+        if (ShowPeople && mediaId == Current.Item.Id) LoadPeople();
+    }
+
+    /// <summary>Who is who changed somewhere (an analysis finished, not an answer given here: that one says more).</summary>
+    private void OnRematched()
+    {
+        if (ShowPeople && _lookingFor == null) LoadPeople();
+    }
     [ObservableProperty] private bool _showPeople;
 
     /// <summary>The people layer must be redrawn (other item, other moment of the video, a new name).</summary>
@@ -184,6 +245,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _loop = settings.Loop;
         _showPeople = settings.ShowPeople;
         _main.People.Answered += OnAnswered;
+        _main.People.PeopleFound += OnPeopleFound;
+        _main.People.Rematched += OnRematched;
+        _main.ItemTurned += OnItemTurned;
         _allChoices = momentChoices.ToList();
         _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
@@ -220,6 +284,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         // The previous video's last frame must not stand under the new video's boxes.
         VideoReady = false;
         Is360 = Media.Fisheye360.IsDualFisheye(item.FullPath);
+        Rotation = Is360 ? 0 : item.Rotation;
         Preparing360 = false;
         if (Is360) View.Model = Media.Fisheye360.ModelOf(item.FullPath);
         Title = item.FileName;
@@ -526,6 +591,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// <summary>A box in content pixels; for 360 media from the map into the current view, null when not in it.</summary>
     private PeopleBox? Box(People.DetectionRow d, float x, float y, float w, float h, People.DetectionRow? face)
     {
+        // What is stored is where the person is in the file; shown is the picture as the user turned it.
+        if (!Is360) (x, y, w, h) = Media.QuarterTurn.ToTurned(Rotation, x, y, w, h);
         double bx = x * ContentWidth, by = y * ContentHeight, bw = w * ContentWidth, bh = h * ContentHeight;
         if (Is360)
         {
@@ -757,8 +824,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         else
         {
             Photo = ToBitmap(decoded);
-            ContentWidth = decoded.Width;
-            ContentHeight = decoded.Height;
+            SetPictureSize(decoded.Width, decoded.Height);
             EndLoading();
             // The boxes are placed in the photo's pixels: now that its size is known.
             PeopleChanged?.Invoke();
@@ -773,8 +839,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             var thumb = new Bitmap(path);
             Photo = thumb;
-            ContentWidth = thumb.PixelSize.Width;
-            ContentHeight = thumb.PixelSize.Height;
+            SetPictureSize(thumb.PixelSize.Width, thumb.PixelSize.Height);
             PeopleChanged?.Invoke();
         }
         catch (Exception)
@@ -1212,6 +1277,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _main.People.Answered -= OnAnswered;
+        _main.People.PeopleFound -= OnPeopleFound;
+        _main.People.Rematched -= OnRematched;
+        _main.ItemTurned -= OnItemTurned;
         _loadingTimer.Stop();
         _slideTimer.Stop();
         _positionTimer.Stop();

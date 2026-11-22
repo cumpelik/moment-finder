@@ -53,7 +53,7 @@ public sealed class MediaRepository
 
     private const string MediaColumns =
         "m.id, m.source_id, m.rel_path, m.kind, m.size, m.mtime, m.quick_hash, m.taken_at, m.width, m.height, " +
-        "m.duration_ms, m.lat, m.lon, m.camera, m.thumb_state, m.analysis_version";
+        "m.duration_ms, m.lat, m.lon, m.camera, m.thumb_state, m.analysis_version, m.rotation";
 
     // ---- sources ----
 
@@ -347,7 +347,7 @@ public sealed class MediaRepository
                 Height = reader.IsDBNull(9) ? null : reader.GetInt32(9), DurationMs = reader.IsDBNull(10) ? null : reader.GetInt64(10),
                 Lat = reader.IsDBNull(11) ? null : reader.GetDouble(11), Lon = reader.IsDBNull(12) ? null : reader.GetDouble(12),
                 Camera = Share(reader, 13), ThumbState = reader.GetInt32(14), AnalysisVersion = reader.GetInt32(15),
-                SourceRoot = Share(reader, 16) ?? "", SourceRemote = Share(reader, 17),
+                Rotation = reader.GetInt32(16), SourceRoot = Share(reader, 17) ?? "", SourceRemote = Share(reader, 18),
             });
         }
         return items;
@@ -401,8 +401,33 @@ public sealed class MediaRepository
         return c.Query<MediaRow>(
                 $"SELECT {MediaColumns}, s.root AS SourceRoot, s.remote AS SourceRemote FROM media m JOIN source s ON s.id=m.source_id " +
                 "WHERE m.people_version<@version AND m.thumb_state=1 AND m.missing=0 AND s.enabled=1 " +
-                "ORDER BY m.taken_at DESC LIMIT @limit", new { version, limit })
+                // What the user just turned comes first: they are looking at it.
+                "ORDER BY m.rotation<>0 DESC, m.taken_at DESC LIMIT @limit", new { version, limit })
             .Select(r => r.ToItem()).ToList();
+    }
+
+    /// <summary>
+    /// The user turned a photo or video (degrees clockwise: 0, 90, 180, 270). Kept with the item and said to the
+    /// other computers of the library; the same file elsewhere in the library (a folder and its clone in the cloud)
+    /// is turned with it. The people are looked for again, on the turned picture. Returns the items turned.
+    /// </summary>
+    public List<long> SetRotation(long mediaId, int rotation)
+    {
+        rotation = Media.QuarterTurn.Normal(rotation);
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        var same = c.Query<(long Id, string? Uid)>("""
+            SELECT t.id, t.uid FROM media m
+            JOIN media t ON t.id=m.id OR (m.quick_hash IS NOT NULL AND t.quick_hash=m.quick_hash AND t.size=m.size AND t.missing=0)
+            WHERE m.id=@mediaId
+            """, new { mediaId }, tx).ToList();
+        foreach (var (id, uid) in same)
+        {
+            c.Execute("UPDATE media SET rotation=@rotation, people_version=0 WHERE id=@id", new { id, rotation }, tx);
+            if (uid != null) _db.Facts.Set(c, tx, Keys.Media(uid), "rotation", rotation.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        tx.Commit();
+        return same.Select(s => s.Id).ToList();
     }
 
     public void SetPeopleVersion(long id, int version)
@@ -474,6 +499,7 @@ public sealed class MediaRepository
         public string? Camera { get; init; }
         public int ThumbState { get; init; }
         public int AnalysisVersion { get; init; }
+        public int Rotation { get; init; }
         public string SourceRoot { get; init; } = "";
         public string? SourceRemote { get; init; }
 
@@ -482,7 +508,7 @@ public sealed class MediaRepository
             Id = Id, SourceId = SourceId, RelPath = RelPath, Kind = (MediaKind)Kind, Size = Size, Mtime = Mtime,
             QuickHash = QuickHash, TakenAt = TakenAt, Width = Width, Height = Height, DurationMs = DurationMs,
             Lat = Lat, Lon = Lon, Camera = Camera, ThumbState = ThumbState, AnalysisVersion = AnalysisVersion,
-            SourceRoot = SourceRoot, SourceRemote = SourceRemote,
+            Rotation = Rotation, SourceRoot = SourceRoot, SourceRemote = SourceRemote,
         };
     }
 }

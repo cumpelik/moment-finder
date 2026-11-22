@@ -52,6 +52,11 @@ public sealed class MediaItem
     public string? Camera { get; init; }
     public int ThumbState { get; init; }
     public int AnalysisVersion { get; init; }
+    /// <summary>
+    /// How the user turned it, in degrees clockwise (0, 90, 180, 270): a file lying on its side is shown upright.
+    /// Set on the item that is on screen when the user turns it (MediaRepository.SetRotation keeps it).
+    /// </summary>
+    public int Rotation { get; set; }
 
     /// <summary>The root of the source (shared by all its items); the paths below are made from it when asked for.</summary>
     public string SourceRoot { get; init; } = "";

@@ -52,6 +52,7 @@ public sealed class FactApplier
                     // Moved: its row follows to the new place (when that came before this), then what was said of it.
                     if (FactStore.Get(_c, _tx, obj, "moved") is { } now && Catalog.Place(_c, _tx, now) is { } atNew) arrived.Add(atNew);
                     Moved(obj[2..]);
+                    if (MediaId(obj[2..]) is { } turned) Turned(_c, _tx, obj[2..], turned);
                     break;
                 case "bi": BucketItem(obj); break;
                 case "d" when Keys.ParseDetection(obj) is { } d: media.Add(d.MediaUid); break;
@@ -328,6 +329,17 @@ public sealed class FactApplier
         PeopleOf(_c, _tx, media);
     }
 
+    /// <summary>
+    /// The user turned a photo or video on some computer: turned here too, and its people are looked for again on
+    /// the turned picture (each computer finds the people itself; the names follow by where the boxes are).
+    /// </summary>
+    private static void Turned(SqliteConnection c, IDbTransaction? tx, string uid, long mediaId)
+    {
+        if (!int.TryParse(FactStore.Get(c, tx, Keys.Media(uid), "rotation"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var degrees)) return;
+        var rotation = Media.QuarterTurn.Normal(degrees);
+        c.Execute("UPDATE media SET rotation=@rotation, people_version=0 WHERE id=@mediaId AND rotation<>@rotation", new { mediaId, rotation }, tx);
+    }
+
     /// <summary>The photos whose facts wait for them (just added to the library: by a scan, from another computer).</summary>
     public static void Arrived(SqliteConnection c, IDbTransaction? tx, IEnumerable<long> mediaIds)
     {
@@ -343,6 +355,7 @@ public sealed class FactApplier
         foreach (var id in ids)
         {
             if (c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@id", new { id }, tx) is not { } uid) continue;
+            Turned(c, tx, uid, id);
             foreach (var item in items.GetValueOrDefault(uid) ?? [])
             {
                 if (item.Value != "1" || !buckets.TryGetValue(item.Obj.Split(':')[1], out var bucket)) continue;

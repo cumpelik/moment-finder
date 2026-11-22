@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             xmlns:views="clr-namespace:MomentFinder.App.Views"
              x:Class="MomentFinder.App.Views.PlayerView"
              x:DataType="vm:PlayerViewModel">
     <UserControl.Styles>
@@ -28,9 +29,15 @@
         <!-- The mouse wheel zooms it (the transform is set in code), from its top left corner -->
         <Viewbox x:Name="Fit" Stretch="Uniform" RenderTransformOrigin="0,0">
             <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
-                <!-- A photo; or the thumbnail of a video from the cloud until its first frame is here -->
-                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !VideoReady}" />
-                <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding VideoReady}" />
+                <!-- The picture in its own size, laid out as the user turned it (a file lying on its side); the
+                     boxes above it are placed on what is shown -->
+                <LayoutTransformControl LayoutTransform="{Binding Rotation, Converter={x:Static views:Turn.ToTransform}}">
+                    <Panel Width="{Binding PictureWidth}" Height="{Binding PictureHeight}">
+                        <!-- A photo; or the thumbnail of a video from the cloud until its first frame is here -->
+                        <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !VideoReady}" />
+                        <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding VideoReady}" />
+                    </Panel>
+                </LayoutTransformControl>
                 <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
             </Panel>
         </Viewbox>
@@ -168,6 +175,14 @@
                                     <TextBlock Text="Who is who" VerticalAlignment="Center" />
                                 </StackPanel>
                             </ToggleButton>
+                            <Button Command="{Binding RotateLeftCommand}" IsVisible="{Binding !Is360}"
+                                    ToolTip.Tip="Turn left (Shift+R): for a photo or video lying on its side. It stays turned.">
+                                <mi:MaterialIcon Kind="RotateLeft" />
+                            </Button>
+                            <Button Command="{Binding RotateRightCommand}" IsVisible="{Binding !Is360}"
+                                    ToolTip.Tip="Turn right (R): for a photo or video lying on its side. It stays turned.">
+                                <mi:MaterialIcon Kind="RotateRight" />
+                            </Button>
                             <Button Command="{Binding AddToBucketCommand}" ToolTip.Tip="Add to the bucket (B)">
                                 <Panel>
                                     <mi:MaterialIcon Kind="BasketPlusOutline" IsVisible="{Binding !InBucket}" />

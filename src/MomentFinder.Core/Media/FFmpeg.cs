@@ -171,17 +171,19 @@ public static class FFmpeg
     /// Frames every intervalSeconds, named 0001.jpg, 0002.jpg... Frame n is at (n-1) * intervalSeconds (round=up:
     /// the default takes the frame half an interval later, measured on a video numbering its frames).
     /// keyframesOnly decodes only keyframes: fast even for long videos, but the times are approximate.
+    /// rotation: the frames turned clockwise by 90, 180 or 270 degrees (a video the user turned, see QuarterTurn).
     /// </summary>
     public static async Task<string[]> ExtractFramesAsync(string file, double intervalSeconds, int maxFrames, string outDir, int maxSize,
-        CancellationToken ct = default, bool keyframesOnly = true)
+        CancellationToken ct = default, bool keyframesOnly = true, int rotation = 0)
     {
         if (FfmpegPath.Value is not { } ffmpeg) return [];
         Directory.CreateDirectory(outDir);
         var fps = (1.0 / intervalSeconds).ToString("0.######", CultureInfo.InvariantCulture);
+        var turned = rotation switch { 90 => ",transpose=1", 180 => ",hflip,vflip", 270 => ",transpose=2", _ => "" };
         await RunAsync(ffmpeg,
         [
             "-v", "error", "-y", .. (keyframesOnly ? new[] { "-skip_frame", "nokey" } : []), "-i", file,
-            "-vf", $"fps=fps={fps}:round=up,scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease",
+            "-vf", $"fps=fps={fps}:round=up,scale={maxSize}:{maxSize}:force_original_aspect_ratio=decrease{turned}",
             "-frames:v", maxFrames.ToString(CultureInfo.InvariantCulture), "-q:v", "3",
             Path.Combine(outDir, "%04d.jpg"),
         ], ct);

@@ -26,6 +26,12 @@ public sealed partial class TileViewModel : ObservableObject
 
     public bool IsVideo => Item.IsVideo;
 
+    /// <summary>How the user turned the picture (MediaItem.Rotation): the thumbnail is shown turned so.</summary>
+    public int Rotation => Item.Rotation;
+
+    /// <summary>The item was turned just now.</summary>
+    public void Turned() => OnPropertyChanged(nameof(Rotation));
+
     /// <summary>A 360 photo or video (Insta360 original): can be looked around in.</summary>
     public bool Is360 => Media.Fisheye360.IsDualFisheye(Item.RelPath);
 

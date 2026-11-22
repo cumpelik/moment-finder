@@ -388,6 +388,121 @@ public class PeopleTests
         Assert.All(Of(6), p => Assert.Equal(david.Id, p));
     }
 
+    /// <summary>Finds one "face": the white patch of the picture, wherever it is in what it is given.</summary>
+    private sealed class WhitePatchModel : IPeopleModel
+    {
+        public string ModelId => "white-patch";
+        public string Device => "test";
+        /// <summary>The sizes of the images it was given (the analyzer hands it the upright picture).</summary>
+        public List<(int Width, int Height)> Seen { get; } = [];
+
+        public IReadOnlyList<DetectedObject> Analyze(MomentFinder.Media.RgbImage image, bool includeWeak = false)
+        {
+            Seen.Add((image.Width, image.Height));
+            int x0 = int.MaxValue, y0 = int.MaxValue, x1 = -1, y1 = -1;
+            for (var y = 0; y < image.Height; y++)
+                for (var x = 0; x < image.Width; x++)
+                {
+                    if (image.Data[(y * image.Width + x) * 3] < 200) continue;
+                    (x0, y0, x1, y1) = (Math.Min(x0, x), Math.Min(y0, y), Math.Max(x1, x), Math.Max(y1, y));
+                }
+            if (x1 < 0) return [];
+            return [new DetectedObject { Kind = DetectionKind.Face, Box = new Box(x0, y0, x1 - x0 + 1, y1 - y0 + 1), Score = 0.9f, Quality = 0.9f, Embedding = Emb(0) }];
+        }
+    }
+
+    /// <summary>
+    /// A photo lying on its side, turned by the user: the people are looked for on the upright picture, and what is
+    /// found is stored where it is in the file. So the name said before the turn stays on the same person, and the
+    /// other way round, whichever way it is turned.
+    /// </summary>
+    [Fact]
+    public async Task ATurnedPhotoIsAnalyzedUprightAndStoredInTheFile()
+    {
+        using var lib = new TestLibrary();
+        var path = Path.Combine(lib.MediaDir, "side.png");
+        using (var image = new ImageMagick.MagickImage(ImageMagick.MagickColors.Black, 200, 100))
+        {
+            // The "face": a white patch near the top right corner of the file.
+            image.Draw(new ImageMagick.Drawing.Drawables().FillColor(ImageMagick.MagickColors.White).Rectangle(150, 10, 189, 39));
+            image.Write(path);
+        }
+        var source = lib.AddSource();
+        await lib.ScanAsync(source);
+        MediaItem Item() => lib.Repo.Query(new MediaFilter()).Single();
+        var repo = new PeopleRepository(lib.Db);
+        var model = new WhitePatchModel();
+        var analyzer = new PeopleAnalyzer(lib.Paths, repo, model);
+        var ct = TestContext.Current.CancellationToken;
+        void IsThePatch(DetectionRow d)
+        {
+            Assert.Equal(0.75f, d.X, 0.02f);
+            Assert.Equal(0.10f, d.Y, 0.02f);
+            Assert.Equal(0.20f, d.W, 0.02f);
+            Assert.Equal(0.30f, d.H, 0.02f);
+        }
+
+        await analyzer.AnalyzeAsync(Item(), ct);
+        var eva = repo.CreatePerson("Eva");
+        repo.Confirm(repo.DetectionsOfMedia(Item().Id).Select(d => d.Id), eva.Id);
+        foreach (var rotation in new[] { 90, 180, 270 })
+        {
+            lib.Repo.SetRotation(Item().Id, rotation);
+            Assert.Equal(rotation, Item().Rotation);
+            using (var c = lib.Db.Open())
+                Assert.Equal(0, c.ExecuteScalar<int>("SELECT people_version FROM media"));
+            await analyzer.AnalyzeAsync(Item(), ct);
+            // Looked at upright (the long side is the height when it is turned on its side)...
+            Assert.Equal(rotation == 180 ? (200, 100) : (100, 200), model.Seen[^1]);
+            // ...stored in the file, and still Eva.
+            var found = repo.DetectionsOfMedia(Item().Id).Single();
+            IsThePatch(found);
+            Assert.Equal((eva.Id, true), (found.PersonId!.Value, found.Confirmed));
+            // On the turned picture the patch is where a turn puts the top right corner.
+            var (x, y, _, _) = MomentFinder.Media.QuarterTurn.ToTurned(rotation, found.X, found.Y, found.W, found.H);
+            Assert.Equal(rotation switch { 90 => (true, true), 180 => (false, true), _ => (false, false) }, (x > 0.5f, y > 0.5f));
+        }
+    }
+
+    /// <summary>The same for a video filmed with the camera on its side: its frames are turned before the people are looked for.</summary>
+    [Fact]
+    public async Task ATurnedVideoIsAnalyzedUprightAndStoredInTheFile()
+    {
+        Assert.SkipUnless(MomentFinder.Media.FFmpeg.IsAvailable, "ffmpeg is not installed");
+        using var lib = new TestLibrary();
+        var ct = TestContext.Current.CancellationToken;
+        var psi = new System.Diagnostics.ProcessStartInfo("ffmpeg")
+        {
+            ArgumentList =
+            {
+                "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=200x100:r=5:d=3,drawbox=x=150:y=10:w=40:h=30:color=white:t=fill",
+                "-pix_fmt", "yuv420p", Path.Combine(lib.MediaDir, "side.mp4"),
+            },
+        };
+        await System.Diagnostics.Process.Start(psi)!.WaitForExitAsync(ct);
+        await lib.ScanAsync(lib.AddSource());
+        MediaItem Item() => lib.Repo.Query(new MediaFilter()).Single();
+        var repo = new PeopleRepository(lib.Db);
+        var model = new WhitePatchModel();
+        var analyzer = new PeopleAnalyzer(lib.Paths, repo, model);
+        foreach (var rotation in new[] { 0, 90, 270 })
+        {
+            lib.Repo.SetRotation(Item().Id, rotation);
+            await analyzer.AnalyzeAsync(Item(), ct);
+            Assert.Equal(rotation == 0, model.Seen[^1].Width > model.Seen[^1].Height);
+            var found = repo.DetectionsOfMedia(Item().Id);
+            Assert.NotEmpty(found);
+            Assert.All(found, d =>
+            {
+                Assert.Equal(0.75f, d.X, 0.03f);
+                Assert.Equal(0.10f, d.Y, 0.03f);
+                Assert.Equal(0.20f, d.W, 0.04f);
+                Assert.Equal(0.30f, d.H, 0.04f);
+            });
+            Assert.All(repo.TrackPaths(Item().Id), p => Assert.Equal(0.75f, p.X, 0.03f));
+        }
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

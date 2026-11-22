@@ -247,6 +247,9 @@ public partial class MainWindow : Window
             case Key.I when _panelPlayer != null:
                 _panelPlayer.ShowPeople = !_panelPlayer.ShowPeople;
                 break;
+            case Key.R when _panelPlayer != null && !ctrl:
+                _panelPlayer.Rotate(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -90 : 90);
+                break;
             case Key.A when ctrl:
                 _vm.SelectAll();
                 break;

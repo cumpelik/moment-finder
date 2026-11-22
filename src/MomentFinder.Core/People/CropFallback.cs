@@ -15,8 +15,8 @@ public static class CropFallback
         var path = paths.PeopleCropPath(detectionId);
         if (File.Exists(path)) return path;
         using var c = db.Open();
-        var d = c.QueryFirstOrDefault<(long MediaId, int Kind, double X, double Y, double W, double H, string RelPath)?>("""
-            SELECT d.media_id, m.kind, d.x, d.y, d.w, d.h, m.rel_path FROM detection d JOIN media m ON m.id=d.media_id WHERE d.id=@detectionId
+        var d = c.QueryFirstOrDefault<(long MediaId, int Kind, double X, double Y, double W, double H, string RelPath, int Rotation)?>("""
+            SELECT d.media_id, m.kind, d.x, d.y, d.w, d.h, m.rel_path, m.rotation FROM detection d JOIN media m ON m.id=d.media_id WHERE d.id=@detectionId
             """, new { detectionId });
         // A video's thumbnail is another moment, a 360 one another view: no crop rather than a wrong one.
         if (d is not { } det || det.Kind != (int)Library.MediaKind.Photo || Media.Fisheye360.IsDualFisheye(det.RelPath)) return path;
@@ -31,6 +31,8 @@ public static class CropFallback
             var h = (uint)Math.Clamp(det.H * image.Height, 1, image.Height - y);
             image.Crop(new MagickGeometry(x, y, w, h));
             image.ResetPage();
+            // A photo the user turned: the box and the thumbnail are the file's, the person is shown upright.
+            if (det.Rotation != 0) image.Rotate(det.Rotation);
             image.Quality = 82;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             image.Write(path, MagickFormat.Jpeg);

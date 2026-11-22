@@ -875,6 +875,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         AddToBucket(items);
     }
 
+    /// <summary>A photo or video was turned (also the same file elsewhere in the library): the ids, and how it is turned now.</summary>
+    public event Action<IReadOnlyCollection<long>, int>? ItemTurned;
+
+    /// <summary>
+    /// The user turns a photo or video that lies on its side (degrees clockwise). Kept, shown so in the viewers and
+    /// the tiles at once, said to the other computers, and its people are looked for again on the turned picture.
+    /// </summary>
+    public void Rotate(MediaItem item, int rotation)
+    {
+        var ids = _host.Repo.SetRotation(item.Id, rotation).ToHashSet();
+        rotation = Media.QuarterTurn.Normal(rotation);
+        item.Rotation = rotation;
+        foreach (var t in Tiles.Where(t => ids.Contains(t.Item.Id)))
+        {
+            t.Item.Rotation = rotation;
+            t.Turned();
+        }
+        ItemTurned?.Invoke(ids, rotation);
+        _host.Indexer.Wake();
+    }
+
     public void AddToBucket(IReadOnlyList<long> mediaIds)
     {
         if (ActiveBucket == null)
@@ -968,6 +989,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // tiles (the ones already shown kept with their thumbnails), the bucket marks.
         ObservableCollection<TileViewModel>? tiles;
         HashSet<long> inBucket = [];
+        // The items the user turned (few): a tile kept from before learns a turn made on another computer.
+        Dictionary<long, int> turned = [];
         int count;
         LibraryStats? stats = null;
         var started = DateTime.UtcNow;
@@ -976,6 +999,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             (tiles, count) = await Task.Run(() =>
             {
                 var hits = _host.Search.Search(text, scope);
+                foreach (var h in hits.Where(h => h.Item.Rotation != 0)) turned[h.Item.Id] = h.Item.Rotation;
                 // How many photos the search knows at this moment (the sidebar's count may be a while old).
                 if (hasText) stats = _host.Repo.Stats(Indexer.AnalysisVersion);
                 cts.Token.ThrowIfCancellationRequested();
@@ -1005,6 +1029,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         if (cts.IsCancellationRequested) return;
         _lastSearch = DateTime.UtcNow - started;
+        foreach (var t in tiles ?? old)
+        {
+            var rotation = turned.GetValueOrDefault(t.Item.Id);
+            if (t.Item.Rotation == rotation) continue;
+            t.Item.Rotation = rotation;
+            t.Turned();
+        }
         if (tiles != null)
         {
             foreach (var t in tiles)

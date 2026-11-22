@@ -308,6 +308,9 @@ public sealed class Database
             media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
             path TEXT NOT NULL);
         """,
+        // 19: a photo or video the user turned (0, 90, 180, 270 degrees clockwise): shown turned, the file and what
+        // is stored about it (boxes, tracks) stay in the file's own coordinates (Media.QuarterTurn).
+        "ALTER TABLE media ADD COLUMN rotation INTEGER NOT NULL DEFAULT 0;",
     ];
 
     /// <summary>

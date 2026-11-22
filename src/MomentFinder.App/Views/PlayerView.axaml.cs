@@ -159,8 +159,8 @@ public partial class PlayerView : UserControl
         if (e.PropertyName is nameof(PlayerViewModel.LoopStartMs) or nameof(PlayerViewModel.LoopEndMs) or nameof(PlayerViewModel.Loop)
             or nameof(PlayerViewModel.VideoLength) or nameof(PlayerViewModel.HasLoopPart))
             LayoutLoop();
-        // Another photo or video shows whole again.
-        if (e.PropertyName == nameof(PlayerViewModel.Index)) SetZoom(1, default);
+        // Another photo or video shows whole again, and so does one that was turned.
+        if (e.PropertyName is nameof(PlayerViewModel.Index) or nameof(PlayerViewModel.Rotation)) SetZoom(1, default);
     }
 
     // ---- zooming with the mouse wheel ----
@@ -240,11 +240,7 @@ public partial class PlayerView : UserControl
         if (!ReferenceEquals(VideoImage.Source, _vm?.VideoFrame))
         {
             VideoImage.Source = _vm?.VideoFrame;
-            if (_vm?.VideoFrame is { } frame)
-            {
-                _vm.ContentWidth = frame.PixelSize.Width;
-                _vm.ContentHeight = frame.PixelSize.Height;
-            }
+            if (_vm?.VideoFrame is { } frame) _vm.SetPictureSize(frame.PixelSize.Width, frame.PixelSize.Height);
         }
         VideoImage.InvalidateVisual();
         // The boxes follow the people frame by frame.
@@ -426,6 +422,7 @@ public partial class PlayerView : UserControl
             case Key.Space: _vm.TogglePlay(); ShowOverlay(); break;
             case Key.B: _vm.AddToBucket(); ShowOverlay(); break;
             case Key.I: _vm.ShowPeople = !_vm.ShowPeople; break;
+            case Key.R: _vm.Rotate(shift ? -90 : 90); ShowOverlay(); break;
             case Key.OemOpenBrackets: _vm.StepRate(-1); ShowOverlay(); break;
             case Key.OemCloseBrackets: _vm.StepRate(1); ShowOverlay(); break;
             case Key.L: _vm.ToggleLoop(); ShowOverlay(); break;

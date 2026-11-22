@@ -129,8 +129,7 @@ public sealed partial class PlayerViewModel
     private void Render360()
     {
         if (!View.Render()) return;
-        ContentWidth = View.Width;
-        ContentHeight = View.Height;
+        SetPictureSize(View.Width, View.Height);
         VideoFrameChanged?.Invoke();
     }
 

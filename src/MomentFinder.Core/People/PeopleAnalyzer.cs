@@ -41,9 +41,10 @@ public sealed class PeopleAnalyzer
             Save(item.Id, Frame(around, EquirectWidth, EquirectHeight, 0, null));
             return;
         }
-        var image = await Task.Run(() => RgbImage.Load(path, PhotoSize), ct);
+        // A photo the user turned: people are looked for on the upright picture, and stored where they are in the file.
+        var image = await Task.Run(() => RgbImage.Load(path, PhotoSize).Turned(item.Rotation), ct);
         var found = await Task.Run(() => _model.Analyze(image), ct);
-        var items = Frame(found, image.Width, image.Height, 0, null);
+        var items = Frame(found, image.Width, image.Height, 0, null, item.Rotation);
         Save(item.Id, items);
     }
 
@@ -166,15 +167,17 @@ public sealed class PeopleAnalyzer
         return found;
     }
 
-    private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, int width, int height, int timeMs, int[]? tracks)
+    /// <param name="rotation">How the analyzed image was turned from the file (QuarterTurn): the boxes are stored in the file's coordinates.</param>
+    private static List<(NewDetection Det, RgbImage? Crop)> Frame(IReadOnlyList<DetectedObject> found, int width, int height, int timeMs, int[]? tracks,
+        int rotation = 0)
     {
         var list = new List<(NewDetection, RgbImage?)>();
         var linkOf = FaceLinks.Link(found.Select(d => (d.Kind, d.Box)).ToList());
         for (var i = 0; i < found.Count; i++)
         {
             var d = found[i];
-            list.Add((new NewDetection(d.Kind, timeMs, d.Box.X / width, d.Box.Y / height,
-                d.Box.W / width, d.Box.H / height, d.Score, d.Quality, d.Embedding,
+            var (x, y, w, h) = QuarterTurn.ToFile(rotation, d.Box.X / width, d.Box.Y / height, d.Box.W / width, d.Box.H / height);
+            list.Add((new NewDetection(d.Kind, timeMs, x, y, w, h, d.Score, d.Quality, d.Embedding,
                 // A face rides on the track of its body: one track, one person.
                 tracks?[linkOf.TryGetValue(i, out var lb) ? lb : i], linkOf.TryGetValue(i, out var b) ? b : null), d.Crop));
         }
@@ -220,7 +223,7 @@ public sealed class PeopleAnalyzer
             }
             else
             {
-                var frames = await FFmpeg.ExtractFramesAsync(source, interval, 90, dir, FrameSize, ct, keyframesOnly: false);
+                var frames = await FFmpeg.ExtractFramesAsync(source, interval, 90, dir, FrameSize, ct, keyframesOnly: false, rotation: video.Rotation);
                 foreach (var frame in frames)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -247,7 +250,8 @@ public sealed class PeopleAnalyzer
             for (var f = 0; f < perFrame.Count; f++)
             {
                 var offset = all.Count;
-                foreach (var (det, crop) in Frame(perFrame[f].Found, perFrame[f].Width, perFrame[f].Height, perFrame[f].TimeMs, tracks[f]))
+                foreach (var (det, crop) in Frame(perFrame[f].Found, perFrame[f].Width, perFrame[f].Height, perFrame[f].TimeMs, tracks[f],
+                             Fisheye360.IsDualFisheye(source) ? 0 : video.Rotation))
                     all.Add((det with { LinkedIndex = det.LinkedIndex + offset }, crop, f));
             }
             // The path of each track: its body in every frame, its face where no body was found.

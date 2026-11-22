@@ -28,7 +28,24 @@ public sealed class RgbImage
         if (image.Width > maxSize || image.Height > maxSize)
             image.Resize(new MagickGeometry((uint)maxSize, (uint)maxSize));
         image.Alpha(AlphaOption.Remove);
+        // A 16 bit picture (a scan saved as PNG or TIFF) would come as six bytes a pixel.
+        image.Depth = 8;
         return new RgbImage(image.ToByteArray(MagickFormat.Rgb), (int)image.Width, (int)image.Height);
+    }
+
+    /// <summary>The image turned clockwise by 0, 90, 180 or 270 degrees (itself for 0).</summary>
+    public RgbImage Turned(int rotation)
+    {
+        if (rotation is not (90 or 180 or 270)) return this;
+        var (w, h) = QuarterTurn.Sideways(rotation) ? (Height, Width) : (Width, Height);
+        var data = new byte[Data.Length];
+        for (var y = 0; y < Height; y++)
+            for (var x = 0; x < Width; x++)
+            {
+                var (tx, ty) = rotation switch { 90 => (Height - 1 - y, x), 180 => (Width - 1 - x, Height - 1 - y), _ => (y, Width - 1 - x) };
+                Buffer.BlockCopy(Data, (y * Width + x) * 3, data, (ty * w + tx) * 3, 3);
+            }
+        return new RgbImage(data, w, h);
     }
 
     /// <summary>Bilinear sample of channel c at (x, y); outside the image the border pixel.</summary>
