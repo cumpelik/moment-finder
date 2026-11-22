@@ -347,6 +347,47 @@ public class PeopleTests
         Assert.False(notBen[1].Likely);
     }
 
+    /// <summary>
+    /// A class of children in white shirts, filmed: David is known by his face in one photo of that day. The shirt
+    /// names nobody where several children wear it, and of two children on screen at once only one can be David (the
+    /// one with the better face), in every frame of the video. A track after his own may be him again.
+    /// </summary>
+    [Fact]
+    public async Task NobodyIsTwiceOnScreenAtOnce()
+    {
+        using var lib = new TestLibrary();
+        foreach (var (f, t) in new[] { ("david.jpg", "2024-05-20 09:00"), ("show.jpg", "2024-05-20 10:00") })
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var david = repo.CreatePerson("David");
+        repo.Confirm([repo.ReplaceDetections(items["david.jpg"], [Face(Emb(0), link: 1), Body(Emb(5))])[0]], david.Id);
+        // The "video": five children, each a track over two frames, all in the same shirt. Track 1 shows David's
+        // face in the first frame; track 2 shows a face a little like his in the second. Track 6 comes after track 1.
+        NewDetection Child(int track, int time, float x) =>
+            new(DetectionKind.Body, time, x, 0.1f, 0.1f, 0.6f, 0.9f, 0.8f, Emb(5, 0.1f + track * 0.01f), track, null);
+        NewDetection FaceOn(float[] e, int track, int time, float x, int link) =>
+            new(DetectionKind.Face, time, x + 0.02f, 0.12f, 0.05f, 0.08f, 0.9f, 0.8f, e, track, link);
+        var show = new List<NewDetection>();
+        for (var track = 1; track <= 5; track++)
+            foreach (var time in new[] { 0, 1000 })
+                show.Add(Child(track, time, track * 0.15f));
+        show.Add(FaceOn(Emb(0, 0.15f), 1, 0, 0.15f, 0));
+        show.Add(FaceOn(Mix((0, 0.6f), (9, 0.8f)), 2, 1000, 0.30f, 3));
+        show.Add(Child(6, 2000, 0.15f));
+        show.Add(FaceOn(Emb(0, 0.2f), 6, 2000, 0.15f, 12));
+        var ids = repo.ReplaceDetections(items["show.jpg"], show);
+        new IdentityService(repo).Recompute();
+
+        var seen = repo.DetectionsOfMedia(items["show.jpg"]).ToDictionary(d => d.Id);
+        long?[] Of(int track) => Enumerable.Range(0, show.Count).Where(i => show[i].Track == track).Select(i => seen[ids[i]].PersonId).ToArray();
+        Assert.All(Of(1), p => Assert.Equal(david.Id, p));
+        for (var track = 2; track <= 5; track++) Assert.All(Of(track), Assert.Null);
+        Assert.All(Of(6), p => Assert.Equal(david.Id, p));
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

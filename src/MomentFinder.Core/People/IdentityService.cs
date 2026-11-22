@@ -5,6 +5,7 @@ namespace MomentFinder.People;
 
 /// <summary>
 /// Who is on which detection, recomputed from what the user confirmed, in layers:
+/// (after the layers: nobody is twice on screen at once in a video, nor twice in one picture)
 /// 1. the clear face on a figure the user named is that person; faces against the faces named on the same day
 ///    (the closest one decides), then against the faces of named people of all years (confident new matches
 ///    extend a person, so a child is followed as it grows),
@@ -155,6 +156,7 @@ public sealed class IdentityService
             SpreadTracks(all);
             MatchOutfits(bodies, faces, rejections);
             SpreadTracks(all);
+            OncePerMoment(all);
             OncePerPicture(all);
             ClusterFaces(faces);
             ClusterFigures(bodies);
@@ -520,6 +522,8 @@ public sealed class IdentityService
         // A body with a clear face of its own: the face says who it is (or that it is nobody known), not the clothes.
         // A child in the same striped shirt as her mother is not her mother.
         var faceShown = faces.Where(f => f.LinkedId != null && f.Quality >= 0.3f).Select(f => f.LinkedId!.Value).ToHashSet();
+        // Who is in each picture already (by the face, by the user's word): the clothes name no second one there.
+        var there = bodies.Concat(faces).Where(d => d.PersonId != null).Select(d => (d.MediaId, d.TimeMs, d.PersonId!.Value)).ToHashSet();
         foreach (var ev in bodies.Where(b => b.EventId != null).GroupBy(b => b.EventId!.Value))
         {
             var protos = new Prototypes();
@@ -528,17 +532,26 @@ public sealed class IdentityService
                          .OrderByDescending(b => b.Quality))
                 protos.Add(b.PersonId!.Value, b.Embedding);
             if (protos.ByPerson.Count == 0) continue;
+            var alike = new List<(DetectionRow Body, long Person, float Score, bool Sure)>();
             foreach (var b in ev.Where(b => !b.Confirmed && b.PersonId == null && b.Quality >= BodyMinQuality && !faceShown.Contains(b.Id)))
             {
                 var (person, score, second) = protos.Best(b.Embedding, rejections.GetValueOrDefault(b.Id));
-                if (person == 0) continue;
-                if (score >= BodyAuto && score - second >= Margin)
+                if (person == 0 || score < BodySuggest || there.Contains((b.MediaId, b.TimeMs, person))) continue;
+                alike.Add((b, person, score, score >= BodyAuto && score - second >= Margin));
+            }
+            // Clothes tell people apart only where they differ: several figures of one picture in what the person
+            // wears (a class in white shirts, a team in its jerseys) are not named by it, none of them.
+            foreach (var same in alike.GroupBy(a => (a.Body.MediaId, a.Body.TimeMs, a.Person)))
+            {
+                if (same.Count() > 1) continue;
+                var (b, person, score, sure) = same.First();
+                if (sure)
                 {
                     b.PersonId = person;
                     b.AssignSource = AssignSource.Outfit;
                     b.Confidence = score * 0.8f;
                 }
-                else if (score >= BodySuggest)
+                else
                 {
                     b.SuggestPersonId = person;
                     b.SuggestScore = score;
@@ -571,6 +584,52 @@ public sealed class IdentityService
         return changed;
     }
 
+    /// <summary>How strong a reason for a name is: the user's word, a face named that day, the face, the body of a known face, a video track, the clothes.</summary>
+    private static int Rank(AssignSource? s) => s switch
+    {
+        AssignSource.User => 6, AssignSource.SameDay => 5, AssignSource.Face => 4, AssignSource.Linked => 3, AssignSource.Track => 2,
+        AssignSource.Outfit => 1, _ => 0,
+    };
+
+    /// <summary>
+    /// Nobody is twice on screen at once: tracks of one video that share an analyzed frame are different people.
+    /// When several of them carry the same name (each got it in another frame, and a track is named as a whole), the
+    /// one with the strongest reason keeps it; the others lose it in all their frames and are asked about.
+    /// Tracks one after another (a skier lost and found again) share a name as before; what the user said stays.
+    /// </summary>
+    private static void OncePerMoment(List<DetectionRow> all)
+    {
+        foreach (var video in all.Where(d => d.Track != null).GroupBy(d => d.MediaId))
+        {
+            var tracks = video.GroupBy(d => d.Track!.Value).Select(g => (Detections: g.ToList(), Times: g.Select(d => d.TimeMs).ToHashSet())).ToList();
+            if (tracks.Count < 2) continue;
+            foreach (var person in video.Where(d => d.PersonId != null).Select(d => d.PersonId!.Value).Distinct().ToList())
+            {
+                var named = tracks.Select(t => (Track: t, Of: t.Detections.Where(d => d.PersonId == person).ToList())).Where(t => t.Of.Count > 0)
+                    .OrderByDescending(t => t.Of.Any(d => d.Confirmed))
+                    .ThenByDescending(t => t.Of.Max(d => Rank(d.AssignSource)))
+                    .ThenByDescending(t => t.Of.Where(d => d.AssignSource != AssignSource.Track).Sum(d => d.Confidence ?? 0))
+                    .ThenBy(t => t.Track.Detections.Min(d => d.Id)).ToList();
+                if (named.Count < 2) continue;
+                var kept = new List<HashSet<int>>();
+                foreach (var (track, of) in named)
+                {
+                    if (of.Any(d => d.Confirmed) || !kept.Any(times => times.Overlaps(track.Times)))
+                    {
+                        kept.Add(track.Times);
+                        continue;
+                    }
+                    foreach (var d in of.Where(d => !d.Confirmed))
+                    {
+                        d.PersonId = null;
+                        d.AssignSource = null;
+                        d.Confidence = null;
+                    }
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Nobody is twice in one picture: when two people in it are both taken for the same person, the one with the
     /// stronger reason keeps the name (confirmed, then the face, then the body of a known face, a video track, the
@@ -578,11 +637,6 @@ public sealed class IdentityService
     /// </summary>
     private static void OncePerPicture(List<DetectionRow> all)
     {
-        static int Rank(AssignSource? s) => s switch
-        {
-            AssignSource.User => 6, AssignSource.SameDay => 5, AssignSource.Face => 4, AssignSource.Linked => 3, AssignSource.Track => 2,
-            AssignSource.Outfit => 1, _ => 0,
-        };
         foreach (var frame in all.GroupBy(d => (d.MediaId, d.TimeMs)))
         {
             var dets = frame.ToList();

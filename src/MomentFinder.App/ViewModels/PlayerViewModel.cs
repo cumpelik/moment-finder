@@ -460,10 +460,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         foreach (var person in tracks.Where(t => t.Who.PersonId != null).GroupBy(t => t.Who.PersonId!.Value))
         {
             var parts = person.OrderBy(t => t.Path[0].TimeMs).ToList();
-            var seen = parts.Select(t => (t.Who, At: Where(t.Path, now, interval))).FirstOrDefault(t => t.At != null);
-            if (seen.At is { } inside)
+            var seen = parts.Select(t => (t.Who, t.Path, At: Where(t.Path, now, interval))).Where(t => t.At != null).ToList();
+            if (seen.Count > 0)
             {
-                if (Box(seen.Who, inside.X, inside.Y, inside.W, inside.H, null) is { } shown) boxes.Add(shown);
+                // Everybody found has a box: two people on screen at once who are both taken for this person both
+                // show (the name is then wrong on one, and can be corrected there). Of tracks one after another
+                // only the first shows while both are held around the moment one ends and the next begins.
+                var shown = new List<List<People.TrackBox>>();
+                foreach (var (who, path, at) in seen)
+                {
+                    if (shown.Count > 0 && !shown.Any(s => s[0].TimeMs <= path[^1].TimeMs && path[0].TimeMs <= s[^1].TimeMs)) continue;
+                    shown.Add(path);
+                    var inside = at!.Value;
+                    if (Box(who, inside.X, inside.Y, inside.W, inside.H, null) is { } box) boxes.Add(box);
+                }
                 continue;
             }
             var (before, after) = (parts.LastOrDefault(t => t.Path[^1].TimeMs <= now), parts.FirstOrDefault(t => t.Path[0].TimeMs > now));
