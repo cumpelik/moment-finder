@@ -190,7 +190,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         if (Is360) return;
         _main.Rotate(Current.Item, Current.Item.Rotation + by);
-        if (ShowPeople) PeopleHint = "Looking for the people again on the turned picture...";
+        if (ShowPeople) Say("Looking for the people again on the turned picture...");
     }
 
     [RelayCommand]
@@ -225,6 +225,14 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     /// <summary>The people layer must be redrawn (other item, other moment of the video, a new name).</summary>
     public event Action? PeopleChanged;
+    /// <summary>The hint says what the user's last step did: the view makes sure it is seen.</summary>
+    public event Action? PeopleNews;
+
+    private void Say(string news)
+    {
+        PeopleHint = news;
+        PeopleNews?.Invoke();
+    }
     private List<People.DetectionRow> _detections = [];
     private Dictionary<long, List<People.TrackBox>> _paths = [];
     private Dictionary<long, string> _names = [];
@@ -643,7 +651,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (person is not { } id) return;
         // The answer is matched against the whole library in the background: said now, and what it found when it is done.
         _lookingFor = (id, Current.Item.Id, name.Trim());
-        PeopleHint = LookingText(name.Trim());
+        Say(LookingText(name.Trim()));
     }
 
     private static string LookingText(string name) => $"Looking for {name} in the other photos and videos...";
@@ -669,10 +677,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         var found = reach?.Found.GetValueOrDefault(person)?.Where(m => m != mediaId).ToHashSet() ?? [];
         // Named before as a guess, and settled now by this answer: the rest of the day's series.
         var settled = reach?.Settled.GetValueOrDefault(person)?.Count(m => m != mediaId && !found.Contains(m)) ?? 0;
-        PeopleHint = reach == null ? $"The library is busy: {name} is looked for in the other photos and videos a little later."
+        Say(reach == null ? $"The library is busy: {name} is looked for in the other photos and videos a little later."
             : found.Count > 0 ? $"{name} is on {Format.Count(found.Count, "more photo or video", "more photos and videos")} now."
             : settled > 0 ? $"{name}: also on {Format.Count(settled, "more photo", "more photos")} of that day, no need to confirm them."
-            : $"{name}: no new photos or videos found this time.";
+            : $"{name}: no new photos or videos found this time.");
     }
 
     public void RejectDetection(long detectionId, long personId)

@@ -30,7 +30,7 @@ public partial class PlayerView : UserControl
         _hideOverlay = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
         _hideOverlay.Tick += (_, _) =>
         {
-            if (Overlay.IsPointerOver) return;
+            if (Overlay.IsPointerOver || DateTime.UtcNow < _newsUntil) return;
             _hideOverlay.Stop();
             Overlay.Opacity = 0;
             Root.Cursor = new Cursor(StandardCursorType.None);
@@ -219,6 +219,7 @@ public partial class PlayerView : UserControl
         {
             _vm.VideoFrameChanged -= OnVideoFrame;
             _vm.PeopleChanged -= DrawPeople;
+            _vm.PeopleNews -= OnPeopleNews;
             _vm.PropertyChanged -= OnVmChanged;
         }
         _vm = DataContext as PlayerViewModel;
@@ -229,6 +230,7 @@ public partial class PlayerView : UserControl
         if (_vm == null) return;
         _vm.VideoFrameChanged += OnVideoFrame;
         _vm.PeopleChanged += DrawPeople;
+        _vm.PeopleNews += OnPeopleNews;
         _vm.PropertyChanged += OnVmChanged;
         ShowOverlay();
     }
@@ -397,6 +399,16 @@ public partial class PlayerView : UserControl
         // Some platforms send a move without a move (e.g. when the image changes).
         if (Math.Abs(p.X - _lastPointer.X) + Math.Abs(p.Y - _lastPointer.Y) < 3) return;
         _lastPointer = p;
+        ShowOverlay();
+    }
+
+    /// <summary>Until when the bar stays although the mouse rests: news in it is being read.</summary>
+    private DateTime _newsUntil;
+
+    /// <summary>What an answer about a person did is said in the bar: it comes up and stays long enough to be read.</summary>
+    private void OnPeopleNews()
+    {
+        _newsUntil = DateTime.UtcNow.AddSeconds(6);
         ShowOverlay();
     }
 

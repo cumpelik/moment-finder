@@ -41,10 +41,6 @@
                 <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
             </Panel>
         </Viewbox>
-        <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,16,0,0" Padding="14,8" CornerRadius="6"
-                Background="#CC000000" IsVisible="{Binding ShowPeople}" IsHitTestVisible="False">
-            <TextBlock Text="{Binding PeopleHint}" Foreground="White" FontSize="15" />
-        </Border>
         <Border VerticalAlignment="Center" HorizontalAlignment="Center" Padding="18,12" CornerRadius="8" MaxWidth="560"
                 Background="#CC000000" IsHitTestVisible="False"
                 IsVisible="{Binding Notice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
@@ -82,6 +78,9 @@
                 </Transitions>
             </Border.Transitions>
             <StackPanel Spacing="6">
+                <!-- What the boxes are for and what an answer did: in the bar, so it never lies over a name -->
+                <TextBlock Text="{Binding PeopleHint}" IsVisible="{Binding ShowPeople}" FontSize="14" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" TextAlignment="Center" />
                 <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsVideo}">
                     <Slider x:Name="SeekBar" Minimum="0" Maximum="{Binding VideoLength}" Value="{Binding VideoPosition, Mode=OneWay}"
                             VerticalAlignment="Center" />
