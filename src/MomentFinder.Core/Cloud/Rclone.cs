@@ -253,6 +253,18 @@ public sealed partial class Rclone
         }
     }
 
+    /// <summary>Deletes a folder with everything in it; nothing to do when it is not there.</summary>
+    public async Task PurgeAsync(string remotePath, CancellationToken ct)
+    {
+        try
+        {
+            await RunAsync(["purge", remotePath], ct);
+        }
+        catch (RcloneException e) when (e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+        }
+    }
+
     /// <summary>Deletes these files (paths relative to the folder), then the folders left empty.</summary>
     public async Task DeleteFilesAsync(string folder, IReadOnlyCollection<string> files, CancellationToken ct)
     {

@@ -278,6 +278,8 @@ switch (args[0])
     case "backup" when args.Length >= 2 && args[1] == "run":
     {
         if (host.Cloud.BackupCloud is not { } cloud) return Fail("Choose the cloud for the library first (backup cloud <cloud id>)");
+        if (host.Db.GetSetting(MomentFinder.Sync.LibrarySync.SharedSetting) == "1")
+            return Fail("The library is shared: the shared library in the cloud is its backup");
         try
         {
             await host.Cloud.Backup.RunAsync(cloud, full: true, new Progress<string>(what => Console.Write($"\r  {what,-50}")), ct);

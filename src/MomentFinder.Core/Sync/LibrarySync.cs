@@ -95,7 +95,8 @@ public sealed class LibrarySync : IDisposable
             var root = Root(_cloud, cloud);
             await PushAsync(root, ct);
             // What this computer computed for shared photos goes up; the facts saying so go out with the next changes.
-            if (await Content.GiveAsync(ct) > 0) await PushAsync(root, ct);
+            var given = await Content.GiveAsync(ct);
+            if (given > 0) await PushAsync(root, ct);
             var taken = await PullAsync(root, ct);
             if (DateTime.UtcNow - _deviceWritten > TimeSpan.FromMinutes(10))
             {
@@ -106,6 +107,7 @@ public sealed class LibrarySync : IDisposable
             if (!long.TryParse(_db.GetSetting("snapshot_at"), out var at) ||
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - at > TimeSpan.FromDays(7).TotalMilliseconds)
                 await WriteSnapshotAsync(root, ct);
+            if (given == 0) await RemoveOwnBackupAsync(cloud, root, ct);
             LastSync = DateTimeOffset.UtcNow;
             LastError = null;
             StatusChanged?.Invoke(taken > 0 ? $"Took in {taken:N0} changes from the other computers" : "");
@@ -154,6 +156,33 @@ public sealed class LibrarySync : IDisposable
             var last = rows[^1].Seq;
             using (var c = _db.Open()) c.Execute("DELETE FROM outbox WHERE seq<=@last", new { last });
         }
+    }
+
+    // ---- the backup of each computer, from before ----
+
+    /// <summary>How long the backup this computer made before the library was shared stays, in case.</summary>
+    public TimeSpan KeepOwnBackup { get; set; } = TimeSpan.FromDays(3);
+
+    /// <summary>
+    /// Before the library was shared each computer kept a backup of it in a folder of its own. The shared library
+    /// holds all of it now, so once it has been in use a few days and everything this computer computed is in it,
+    /// that folder goes: it would only cost the space twice.
+    /// </summary>
+    private async Task RemoveOwnBackupAsync(CloudInfo cloud, string root, CancellationToken ct)
+    {
+        if (_db.GetSetting("own_backup_removed") == "1" || Content.Scene == null) return;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!long.TryParse(_db.GetSetting("shared_since"), out var since))
+        {
+            _db.SetSetting("shared_since", now.ToString());
+            since = now;
+        }
+        if (now - since < KeepOwnBackup.TotalMilliseconds) return;
+        using (var c = _db.Open())
+            if (c.ExecuteScalar<long>("SELECT COUNT(*) FROM outbox") > 0) return;
+        if ((await SnapshotsAsync(_cloud.Rclone, _cloud.BackupRoot(cloud), ct)).Count == 0) return;
+        await _cloud.Backup.RemoveAsync(cloud, ct);
+        _db.SetSetting("own_backup_removed", "1");
     }
 
     // ---- the library as a whole ----
@@ -235,6 +264,10 @@ public sealed class LibrarySync : IDisposable
                 await from.CopyToAsync(to, ct);
             await _cloud.Rclone.UploadAsync(gz, CloudService.Join(root, $"snapshot/{_db.Facts.Now()}.db.gz"), ct);
             _db.SetSetting("snapshot_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+            // The older summaries are of no use beside it; one before it stays for a computer that is joining from it.
+            var old = (await _cloud.Rclone.ListAsync(CloudService.Join(root, "snapshot"), 1, ct))
+                .Where(f => f.Path.EndsWith(".db.gz", StringComparison.Ordinal)).Select(f => f.Path).Order(StringComparer.Ordinal).SkipLast(2).ToList();
+            await _cloud.Rclone.DeleteFilesAsync(CloudService.Join(root, "snapshot"), old, ct);
         }
         finally
         {

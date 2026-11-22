@@ -95,4 +95,15 @@ public sealed class LibraryBackup
             }
         }
     }
+
+    /// <summary>This computer's backup in the cloud, and its copy of the access keys: gone (the shared library holds it all).</summary>
+    public async Task RemoveAsync(CloudInfo cloud, CancellationToken ct)
+    {
+        var folder = _cloud.Device.Folder;
+        if (string.IsNullOrWhiteSpace(_cloud.Device.Id)) throw new InvalidOperationException("This computer has no id.");
+        await _cloud.Rclone.PurgeAsync(CloudService.Join(_cloud.BackupRoot(cloud), folder), ct);
+        if (!cloud.Encrypted) await _cloud.Rclone.PurgeAsync(CloudService.Join(await _cloud.KeysRootAsync(cloud, ct), folder), ct);
+        using var c = _db.Open();
+        c.Execute("DELETE FROM setting WHERE key IN ('backup_last_at', 'backup_last_result', 'backup_tried_at')");
+    }
 }

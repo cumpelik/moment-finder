@@ -457,4 +457,51 @@ public class SyncTests
             try { Directory.Delete(cloudDir, true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public async Task TheBackupOfEachComputerFromBeforeGoesOnceTheLibraryIsShared()
+    {
+        Assert.SkipUnless(Cloud.Rclone.IsAvailable, "rclone is not installed");
+        var ct = TestContext.Current.CancellationToken;
+        var cloudDir = Path.Combine(Path.GetTempPath(), "momentfinder-shared-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cloudDir);
+        try
+        {
+            using var a = new TestLibrary();
+            a.AddPhoto("a.jpg");
+            await a.ScanAsync(a.AddSource());
+            var sync = await SharedAsync(a, cloudDir, ct);
+            a.Db.SetSetting(LibrarySync.SharedSetting, null);
+            var cloud = new Cloud.CloudService(a.Paths, a.Db, a.Repo);
+            await cloud.Backup.RunAsync(cloud.BackupCloud!, full: true, null, ct);
+            var own = Path.Combine(cloudDir, ".medialens", cloud.Device.Folder);
+            Assert.True(File.Exists(Path.Combine(own, "library.db")));
+            await sync.ShareAsync(null, ct);
+            using var scene = new Vectors.FlatVectorIndex(a.Db, Path.Combine(a.Paths.VectorDir, "scene.vec"), "test-model", 4, () => { });
+            sync.Content.Scene = scene;
+
+            // Kept for a few days, in case.
+            await sync.RunAsync(ct);
+            Assert.True(Directory.Exists(own));
+            sync.KeepOwnBackup = TimeSpan.Zero;
+            await sync.RunAsync(ct);
+            Assert.False(Directory.Exists(own));
+            Assert.Null(sync.LastError);
+            Assert.True(await sync.SharedLibraryExistsAsync(ct));
+
+            // Of the summaries the newest two stay.
+            for (var i = 0; i < 3; i++)
+            {
+                a.Db.SetSetting("snapshot_at", "0");
+                await Task.Delay(5, ct);
+                await sync.RunAsync(ct);
+            }
+            Assert.Equal(2, (await LibrarySync.SnapshotsAsync(cloud.Rclone, cloud.BackupRoot(cloud.BackupCloud!), ct)).Count);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(cloudDir, true); } catch (IOException) { }
+        }
+    }
 }

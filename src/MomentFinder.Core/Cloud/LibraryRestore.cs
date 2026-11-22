@@ -444,7 +444,11 @@ public sealed class LibraryRestore
             {
                 // The shared library: its cloud stays this computer's too. Where the computer that summed it up was
                 // in sending its own changes is its business; this one sends from the start.
-                c.Execute("DELETE FROM setting WHERE key IN ('backup_last_at', 'backup_last_result', 'backup_tried_at', 'journal_last_file')", transaction: tx);
+                // Its own backup from before (if it had one) is its own to remove, after its own few days.
+                c.Execute("""
+                    DELETE FROM setting WHERE key IN ('backup_last_at', 'backup_last_result', 'backup_tried_at', 'journal_last_file',
+                                                      'shared_since', 'own_backup_removed')
+                    """, transaction: tx);
                 c.Execute("DELETE FROM outbox", transaction: tx);
             }
             else

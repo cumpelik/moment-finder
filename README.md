@@ -69,6 +69,8 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   computer joins with the recovery string (or "Join the shared library" when it has the cloud already): it takes the
   newest summary of the library (`.medialens/shared/snapshot/`) and the changes since, and keeps its own folders
   with everything found in them and what was named on it. Folders only on one computer's disk stay its own.
+  The backup each computer kept of its library before (`.medialens/<computer>-<id>/`) is removed by that computer
+  a few days after it joined, once everything it computed is in the shared library.
   Each installation has its own place in a bucket (`media-lens-<id>`), so several libraries share one bucket.
 - **Moved files**: a photo or video moved or renamed (also to another source) is recognized by its content
   and keeps its thumbnail, people, buckets and analysis.
