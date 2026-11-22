@@ -165,20 +165,84 @@ public sealed class IdentityService
             _repo.SaveAssignments(changed);
             lock (_gained)
                 foreach (var d in changed.Where(d => d.PersonId != null))
-                {
-                    var (person, was) = (d.PersonId!.Value, before[d.Id]);
-                    void Add(Dictionary<long, HashSet<long>> to)
-                    {
-                        if (!to.TryGetValue(person, out var media)) to[person] = media = [];
-                        media.Add(d.MediaId);
-                    }
-                    if (was.Item1 != person) Add(_gained);
-                    if (d.AssignSource == AssignSource.SameDay && (was.Item1 != person || was.Item2 != AssignSource.SameDay)) Add(_settled);
-                }
+                    Reached(d, before[d.Id].Item1, before[d.Id].Item2);
             if (changed.Count > 0) Changed?.Invoke();
             return new Result(faces.Count, bodies.Count, all.Count(d => d.PersonId != null),
                 all.Count(d => d.SuggestPersonId != null), all.Where(d => d.Cluster != null).Select(d => d.Cluster).Distinct().Count());
         }
+    }
+
+    /// <summary>An answer reached this detection: counted for what is said when the matching is done (inside the lock of _gained).</summary>
+    private void Reached(DetectionRow d, long? wasPerson, AssignSource? wasSource)
+    {
+        var person = d.PersonId!.Value;
+        void Add(Dictionary<long, HashSet<long>> to)
+        {
+            if (!to.TryGetValue(person, out var media)) to[person] = media = [];
+            media.Add(d.MediaId);
+        }
+        if (wasPerson != person) Add(_gained);
+        if (d.AssignSource == AssignSource.SameDay && (wasPerson != person || wasSource != AssignSource.SameDay)) Add(_settled);
+    }
+
+    /// <summary>The faces the user named (by themselves or through their figure), as the last matching of the library had them.</summary>
+    private Prototypes? _named;
+
+    /// <summary>
+    /// The user just said who this detection is: its day is matched at once, by the faces named that day
+    /// (MatchSameDay), so the next photo of the series has its names when it is opened. The whole library follows
+    /// in the background (RecomputeSoon), which takes many seconds in a big one. Only what the day's named faces
+    /// settle is written; the guesses of the day stay as they are until the library is matched. It does not wait
+    /// for a matching of the library that runs meanwhile (that one writes only what it changes itself, and the
+    /// answer asks for another one after it). True when names changed.
+    /// </summary>
+    public bool MatchDayOf(long detectionId)
+    {
+        lock (_dayGate) return MatchDay(detectionId);
+    }
+
+    private readonly object _dayGate = new();
+
+    private bool MatchDay(long detectionId)
+    {
+        var day = _repo.DayOf(detectionId);
+        var faces = day.Where(d => d.Kind == DetectionKind.Face).ToList();
+        if (faces.Count == 0) return false;
+        var rejections = _repo.Rejections();
+        var before = faces.ToDictionary(f => f.Id, f => (f.PersonId, f.AssignSource, f.Confidence));
+        // As the matching of the library begins: only what the user said is known.
+        foreach (var f in faces.Where(f => !f.Confirmed))
+        {
+            f.PersonId = null;
+            f.AssignSource = null;
+            f.Confidence = null;
+        }
+        var ofFigures = FacesOfNamedFigures(faces, day.ToDictionary(d => d.Id), rejections);
+        var named = faces.Where(f => f.PersonId != null && (f.Confirmed || ofFigures.Contains(f.Id))).Select(f => f.Id).ToHashSet();
+        if (named.Count == 0) return false;
+        // Somebody named elsewhere may be closer still: against the named faces of the library as last matched
+        // (before the first matching: read once).
+        var known = _named;
+        if (known == null)
+        {
+            known = new Prototypes();
+            foreach (var f in _repo.KnownFaces(FaceExtend, MaxPrototypes).Where(f => f.Confirmed || f.AssignSource == AssignSource.Linked && f.Confidence >= 1))
+                known.Add(f.PersonId!.Value, f.Embedding);
+            _named = known;
+        }
+        MatchSameDay(faces, named, known.Copy(), rejections);
+        var settled = faces.Where(f => !f.Confirmed && f.PersonId != null && (f.PersonId, f.AssignSource, f.Confidence) != before[f.Id]).ToList();
+        if (settled.Count == 0) return false;
+        foreach (var f in settled)
+        {
+            f.Cluster = null;
+            f.SuggestPersonId = null;
+            f.SuggestScore = null;
+        }
+        _repo.SaveAssignments(settled);
+        lock (_gained)
+            foreach (var f in settled) Reached(f, before[f.Id].PersonId, before[f.Id].AssignSource);
+        return true;
     }
 
     private static (long?, AssignSource?, float?, long?, float?, long?) Snapshot(DetectionRow d) =>
@@ -193,6 +257,14 @@ public sealed class IdentityService
         {
             if (!ByPerson.TryGetValue(person, out var list)) ByPerson[person] = list = [];
             if (list.Count < MaxPrototypes) list.Add(e);
+        }
+
+        /// <summary>The same pictures in lists of their own: what is added to the copy is not added here.</summary>
+        public Prototypes Copy()
+        {
+            var copy = new Prototypes();
+            foreach (var (person, list) in ByPerson) copy.ByPerson[person] = [.. list];
+            return copy;
         }
 
         /// <summary>
@@ -331,6 +403,8 @@ public sealed class IdentityService
         var named = faces.Where(f => f.PersonId != null && (f.Confirmed || ofFigures.Contains(f.Id))).ToList();
         foreach (var f in named.OrderByDescending(f => f.Quality))
             protos.Add(f.PersonId!.Value, f.Embedding);
+        // Kept for the answer that comes next (MatchDayOf): the named faces only, before the matching adds its own.
+        _named = protos.Copy();
         if (protos.ByPerson.Count == 0) return;
         MatchSameDay(faces, named.Select(f => f.Id).ToHashSet(), protos, rejections);
 

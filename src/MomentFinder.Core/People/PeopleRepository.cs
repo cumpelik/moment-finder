@@ -362,6 +362,28 @@ public sealed class PeopleRepository
     /// <summary>All detections with their media's event and time, for the identity matching.</summary>
     public List<DetectionRow> LoadAll() => Load("1=1", null);
 
+    /// <summary>
+    /// The faces found on the day out this detection's photo or video belongs to (without a day out: in its folder)
+    /// and the figures the user named there, as LoadAll gives them: what an answer is matched against at once
+    /// (IdentityService.MatchDayOf).
+    /// </summary>
+    public List<DetectionRow> DayOf(long detectionId)
+    {
+        (long? EventId, long SourceId, string? RelPath) at;
+        using (var c = _db.Open())
+            at = c.QueryFirstOrDefault<(long?, long, string?)>(
+                "SELECT m.event_id, m.source_id, m.rel_path FROM detection d JOIN media m ON m.id=d.media_id WHERE d.id=@detectionId", new { detectionId });
+        if (at.RelPath == null) return [];
+        const string needed = "(d.kind=@face OR d.confirmed=1)";
+        var face = (int)DetectionKind.Face;
+        if (at.EventId is { } eventId) return Load($"m.event_id=@eventId AND {needed}", new { eventId, face });
+        var folder = at.RelPath[..(at.RelPath.LastIndexOfAny(['/', '\\']) + 1)];
+        return Load($"""
+            m.event_id IS NULL AND m.source_id=@SourceId AND substr(m.rel_path, 1, @n)=@folder
+            AND instr(substr(m.rel_path, @n + 1), '/')=0 AND instr(substr(m.rel_path, @n + 1), char(92))=0 AND {needed}
+            """, new { at.SourceId, folder, n = folder.Length, face });
+    }
+
     /// <summary>These detections, as LoadAll gives them (with what they look like and their day out).</summary>
     public List<DetectionRow> Load(IEnumerable<long> detectionIds) =>
         detectionIds.Distinct().Chunk(500).SelectMany(ids => Load("d.id IN @ids", new { ids })).ToList();

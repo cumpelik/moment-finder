@@ -213,10 +213,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (ShowPeople && mediaId == Current.Item.Id) LoadPeople();
     }
 
-    /// <summary>Who is who changed somewhere (an analysis finished, not an answer given here: that one says more).</summary>
+    /// <summary>
+    /// Who is who changed somewhere: an analysis finished, or the day of an answer given here got its names (while
+    /// the answer is still looked for in the rest of the library, the hint goes on saying so).
+    /// </summary>
     private void OnRematched()
     {
-        if (ShowPeople && _lookingFor == null) LoadPeople();
+        if (ShowPeople) LoadPeople();
     }
     [ObservableProperty] private bool _showPeople;
 
@@ -473,6 +476,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             stale ? "The people of this 360 video are being analyzed again. Open it later." :
             _detections.Count == 0 ? "No people found here (or the analysis has not got here yet)." :
             IsVideo && IsRunning && !_main.BoxesWhilePlaying ? "Pause the video to see who is who." :
+            // An answer is still being matched against the library: said on the photos opened meanwhile too.
+            _lookingFor is { } asked ? LookingText(asked.Name) :
             "Click a person to say who it is.";
         _peopleTimeBucket = -1;
         PeopleChanged?.Invoke();
@@ -630,7 +635,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public void NameDetection(long detectionId, string name)
     {
-        var person = _main.People.NameDetection(detectionId, name);
+        var person = _main.People.NameDetection(detectionId, name, dayNow: true);
         LoadPeople();
         // The named person can be chosen right away ("Only ...").
         _personMoments.Clear();
@@ -638,8 +643,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (person is not { } id) return;
         // The answer is matched against the whole library in the background: said now, and what it found when it is done.
         _lookingFor = (id, Current.Item.Id, name.Trim());
-        PeopleHint = $"Looking for {name.Trim()} in the other photos and videos...";
+        PeopleHint = LookingText(name.Trim());
     }
+
+    private static string LookingText(string name) => $"Looking for {name} in the other photos and videos...";
 
     /// <summary>One click on the tick of a guessed name ("David?"): yes, it is David.</summary>
     public void ConfirmGuess(long detectionId)
@@ -807,8 +814,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return;
         }
         // A photo that lives in the cloud is downloaded first: the wait says so, over its thumbnail (the people
-        // boxes are placed by fractions of the picture, so they fit the thumbnail too).
-        if (!Cloud.MediaFiles.IsLocal(entry.Item) && !_prefetch.ContainsKey(entry.Item.Id))
+        // boxes are placed by fractions of the picture, so they fit the thumbnail too). Also when its download
+        // began while the photo before it was looked at and is not done yet.
+        if (!Cloud.MediaFiles.IsLocal(entry.Item))
         {
             LoadingText = "Downloading from the cloud...";
             ShowThumbnail(entry.Item);

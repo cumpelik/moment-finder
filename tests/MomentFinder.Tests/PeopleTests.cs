@@ -597,6 +597,67 @@ public class PeopleTests
         Assert.Equal(2, Dapper.SqlMapper.ExecuteScalar<int>(c, "SELECT COUNT(*) FROM media WHERE event_id IS NOT NULL"));
     }
 
+    /// <summary>
+    /// An answer given in the viewer names its day at once: the next photo of the series has the name before the
+    /// whole library is matched again (many seconds in a big one). What the answer does not settle stays as it is.
+    /// </summary>
+    [Fact]
+    public async Task AnAnswerNamesItsDayAtOnce()
+    {
+        using var lib = new TestLibrary();
+        (string, string)[] times =
+        [
+            ("ben.jpg", "2023-01-01 10:00"), ("s0.jpg", "2024-02-10 10:00"), ("s1.jpg", "2024-02-10 10:01"), ("s2.jpg", "2024-02-10 10:02"),
+            ("ben_too.jpg", "2024-02-10 10:03"), ("later.jpg", "2024-06-10 10:00"),
+        ];
+        foreach (var (f, t) in times)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var anna = repo.CreatePerson("Anna");
+        var ben = repo.CreatePerson("Ben");
+        repo.Confirm(repo.ReplaceDetections(items["ben.jpg"], [Face(Emb(1))]), ben.Id);
+        var series = Enumerable.Range(0, 3)
+            .Select(i => repo.ReplaceDetections(items[$"s{i}.jpg"], [Face(Mix((0, 1), (6 + i, 0.1f)), link: 1), Body(Emb(5))])).ToList();
+        repo.ReplaceDetections(items["ben_too.jpg"], [Face(Mix((1, 1), (12, 0.1f)))]);
+        repo.ReplaceDetections(items["later.jpg"], [Face(Mix((0, 1), (13, 0.1f)))]);
+        DetectionRow FaceOf(string file) => repo.DetectionsOfMedia(items[file]).Single(d => d.Kind == DetectionKind.Face);
+        var identity = new IdentityService(repo);
+        identity.Recompute();
+        Assert.Null(FaceOf("s1.jpg").PersonId);
+        Assert.Equal((ben.Id, AssignSource.Face), (FaceOf("ben_too.jpg").PersonId, FaceOf("ben_too.jpg").AssignSource));
+
+        // In a photo the figure is what is clicked and named.
+        repo.Confirm([series[0][1]], anna.Id);
+        identity.MatchDayOf(series[0][1]);
+        Assert.Equal((anna.Id, AssignSource.Linked), (FaceOf("s0.jpg").PersonId, FaceOf("s0.jpg").AssignSource));
+        for (var i = 1; i < 3; i++)
+            Assert.Equal((anna.Id, AssignSource.SameDay), (FaceOf($"s{i}.jpg").PersonId, FaceOf($"s{i}.jpg").AssignSource));
+        // A guess of that day the answer says nothing about is not taken away meanwhile; another day waits for the library.
+        Assert.Equal((ben.Id, AssignSource.Face), (FaceOf("ben_too.jpg").PersonId, FaceOf("ben_too.jpg").AssignSource));
+        Assert.Null(FaceOf("later.jpg").PersonId);
+
+        // The whole library then: the day stays as it was named, and she is found on the other day.
+        identity.Recompute();
+        for (var i = 1; i < 3; i++)
+            Assert.Equal((anna.Id, AssignSource.SameDay), (FaceOf($"s{i}.jpg").PersonId, FaceOf($"s{i}.jpg").AssignSource));
+        Assert.Equal(anna.Id, FaceOf("later.jpg").PersonId);
+
+        // Right after the start (nothing matched in this run yet), and photos without a day out: their folder.
+        using (var c = lib.Db.Open())
+        {
+            c.Execute("UPDATE media SET event_id=NULL");
+            c.Execute("UPDATE detection SET person_id=NULL, assign_source=NULL, confidence=NULL WHERE confirmed=0");
+        }
+        new IdentityService(repo).MatchDayOf(series[0][1]);
+        for (var i = 1; i < 3; i++)
+            Assert.Equal((anna.Id, AssignSource.SameDay), (FaceOf($"s{i}.jpg").PersonId, FaceOf($"s{i}.jpg").AssignSource));
+        // The folder is the day now, and Ben was named in it too.
+        Assert.Equal((ben.Id, AssignSource.SameDay), (FaceOf("ben_too.jpg").PersonId, FaceOf("ben_too.jpg").AssignSource));
+    }
+
     [Fact]
     public void TrackerFollowsAppearanceAcrossFrames()
     {

@@ -597,7 +597,11 @@ public sealed partial class PeopleViewModel : ObservableObject
     }
 
     /// <summary>From the viewer: the user says who a box is (the seed for people in helmets). Returns the person.</summary>
-    public long? NameDetection(long detectionId, string name)
+    /// <param name="dayNow">
+    /// Said in the viewer, where the next photo of the series is one key away: the photos of that day get their
+    /// names at once, not when the whole library is matched again (many seconds in a big one).
+    /// </param>
+    public long? NameDetection(long detectionId, string name, bool dayNow = false)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var person = _host.People.FindOrCreatePerson(name);
@@ -607,7 +611,21 @@ public sealed partial class PeopleViewModel : ObservableObject
             _host.People.Reject(same, other);
         _host.People.Confirm([detectionId], person.Id);
         AfterChange();
+        if (dayNow) _ = Task.Run(() => MatchDay(detectionId));
         return person.Id;
+    }
+
+    /// <summary>The day of an answer, off the UI thread (a long day out takes a second); the viewer shows its names when it is done.</summary>
+    private void MatchDay(long detectionId)
+    {
+        try
+        {
+            if (_host.Identity.MatchDayOf(detectionId)) Avalonia.Threading.Dispatcher.UIThread.Post(() => Rematched?.Invoke());
+        }
+        catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException)
+        {
+            // The library is busy or away: the matching of the whole library, asked for by the same answer, names them.
+        }
     }
 
     /// <summary>"Not Greta" on a box: the name goes from the whole track and is never suggested for it again.</summary>
