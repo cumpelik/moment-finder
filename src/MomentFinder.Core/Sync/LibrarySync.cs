@@ -197,6 +197,38 @@ public sealed class LibrarySync : IDisposable
         _cloud.BackupCloud is { } cloud && (await SnapshotsAsync(_cloud.Rclone, _cloud.BackupRoot(cloud), ct)).Count > 0;
 
     /// <summary>
+    /// What this computer does about the family's library. Exists: it is in the cloud, this computer joins it.
+    /// StartHere: there is none yet and this computer's library is the one to start it from. Otherwise From is the
+    /// computer whose library will be it: this computer waits for it and then joins.
+    /// </summary>
+    public sealed record FamilyLibrary(bool Exists, bool StartHere, string? From);
+
+    /// <summary>A library a computer kept in the cloud longer ago than this is of a computer not in use any more.</summary>
+    public static readonly TimeSpan OldBackup = TimeSpan.FromDays(14);
+
+    /// <summary>
+    /// One recovery string, one library: nobody has to choose to share or join. When the cloud has no family's
+    /// library yet, of the libraries the computers keep in it the biggest (the most photos, faces and names) starts
+    /// it, so nothing analyzed is lost; the others join it and bring what was named on them. Every computer works it
+    /// out the same way from the same listing.
+    /// </summary>
+    public async Task<FamilyLibrary> FamilyLibraryAsync(CancellationToken ct)
+    {
+        if (_cloud.BackupCloud is not { } cloud) return new FamilyLibrary(false, false, null);
+        var root = _cloud.BackupRoot(cloud);
+        if ((await SnapshotsAsync(_cloud.Rclone, root, ct)).Count > 0) return new FamilyLibrary(true, false, null);
+        var mine = _cloud.Device.Folder;
+        var libraries = (await _cloud.Rclone.ListAsync(root, 2, ct))
+            .Where(f => f.Path.EndsWith("/" + LibraryBackup.DbName, StringComparison.Ordinal) && f.Path.Count(ch => ch == '/') == 1)
+            .Select(f => (Folder: f.Path.Split('/')[0], f.Size, f.ModTime))
+            .Where(l => l.Folder == mine || DateTimeOffset.UtcNow - l.ModTime < OldBackup)
+            .Select(l => (l.Folder, l.Size)).ToList();
+        if (libraries.All(l => l.Folder != mine)) libraries.Add((mine, new FileInfo(_paths.DbPath).Length));
+        var chosen = libraries.OrderByDescending(l => l.Size).ThenBy(l => l.Folder, StringComparer.Ordinal).First().Folder;
+        return new FamilyLibrary(false, chosen == mine, chosen.LastIndexOf('-') is > 0 and var dash ? chosen[..dash] : chosen);
+    }
+
+    /// <summary>
     /// This library becomes the shared library of its cloud: the other computers of the family join it. What it
     /// knows goes up as it is (a summary of the whole library, which files of its folders are in the cloud), nothing
     /// is computed again. Its own backup in the cloud stops: the shared library is the backup now.

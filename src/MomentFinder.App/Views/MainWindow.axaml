@@ -388,15 +388,15 @@
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.Active}">
                 <views:LibraryCopyCard DataContext="{Binding LibraryCopy}" />
             </Border>
-            <!-- Updated but not joined: this computer still shows a library of its own, other counts and names than the family's -->
-            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.JoinOffered}">
+            <!-- The family's library is not in the cloud yet and will start from another computer: this one waits for it -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.FamilyWaiting}">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="This computer does not use the family's shared library yet" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    <TextBlock TextWrapping="Wrap"
-                               Text="The cloud has the shared library, but this computer still shows its own: the folders in the cloud may show fewer photos here, and names given on the other computers are missing. Join it, and this computer shows the same as the others. Its own folders and what you named here come along. MomentFinder starts again when it is here." />
-                    <TextBlock Text="{Binding LibraryCopy.JoinStatus}" Classes="muted" TextWrapping="Wrap"
-                               IsVisible="{Binding LibraryCopy.JoinStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                    <Button Classes="accent" Command="{Binding LibraryCopy.JoinCommand}" HorizontalAlignment="Left" Padding="16,6">Join the shared library</Button>
+                    <TextBlock Text="This computer joins the family's library as soon as it is in the cloud" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding LibraryCopy.FamilyText}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding LibraryCopy.FamilyStatus}" Classes="muted" TextWrapping="Wrap"
+                               IsVisible="{Binding LibraryCopy.FamilyStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <Button Command="{Binding LibraryCopy.StartFamilyHereCommand}" HorizontalAlignment="Left" Padding="16,6"
+                            ToolTip.Tip="The other computers then join this computer's library, and keep what was named on them">Use this computer's library for the family instead</Button>
                 </StackPanel>
             </Border>
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.RestoredShown}">

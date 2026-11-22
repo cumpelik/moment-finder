@@ -49,25 +49,73 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
     public void Start(Recovery recovery, LibraryRestore.Found backup, bool thumbnails) => _restore.Start(recovery, backup, thumbnails);
 
     /// <summary>
-    /// The library's cloud has the family's shared library, and this computer still uses a library of its own (it
-    /// was updated, not joined): its photos, counts and names differ from the others'. Said in the main window at
-    /// every start until it joins, not only in Settings.
+    /// One recovery string, one library: this computer joins the family's library by itself, or starts it when its
+    /// library is the one to keep (LibrarySync.FamilyLibraryAsync). While it waits for the computer whose library
+    /// that is, the main window says so, with a way to start it from this one instead.
     /// </summary>
-    [ObservableProperty] private bool _joinOffered;
-    [ObservableProperty] private string _joinStatus = "";
+    [ObservableProperty] private bool _familyWaiting;
+    [ObservableProperty] private string _familyText = "";
+    [ObservableProperty] private string _familyStatus = "";
+    private bool _familyBusy;
 
-    public async Task OfferJoinAsync()
+    /// <summary>Asked at the start and every few minutes after, until this computer uses the family's library.</summary>
+    public async Task KeepFamilyLibraryAsync()
     {
-        if (_host.Sync.Enabled || _host.Cloud.BackupCloud == null || _restore.State != LibraryRestore.CopyState.None) return;
-        try
+        while (true)
         {
-            JoinOffered = await _host.Sync.SharedLibraryExistsAsync(CancellationToken.None) && _restore.State == LibraryRestore.CopyState.None;
-        }
-        catch (RcloneException)
-        {
-            // The cloud does not answer now: asked again at the next start.
+            if (_host.Sync.Enabled)
+            {
+                FamilyWaiting = false;
+                return;
+            }
+            if (!_familyBusy && _host.Cloud.BackupCloud != null && _restore.State == LibraryRestore.CopyState.None)
+            {
+                try
+                {
+                    var family = await _host.Sync.FamilyLibraryAsync(CancellationToken.None);
+                    if (_restore.State != LibraryRestore.CopyState.None || _host.Sync.Enabled) continue;
+                    if (family.Exists) await JoinAsync(CancellationToken.None);
+                    else if (family.StartHere) await StartFamilyAsync();
+                    else
+                    {
+                        FamilyText = $"The family's library will be the one of {family.From}: it has the most photos and names. " +
+                                     $"Start the newest MomentFinder on {family.From}, and this computer joins it by itself. " +
+                                     "This computer's own folders and what you named here come along.";
+                        FamilyWaiting = true;
+                    }
+                }
+                catch (Exception e) when (e is RcloneException or IOException or InvalidOperationException)
+                {
+                    // The cloud does not answer now: asked again in a while.
+                }
+            }
+            await Task.Delay(TimeSpan.FromMinutes(2));
         }
     }
+
+    private async Task StartFamilyAsync()
+    {
+        _familyBusy = true;
+        try
+        {
+            await _host.Sync.ShareAsync(new Progress<string>(what => FamilyStatus = $"Making this library the family's: {what}..."), CancellationToken.None);
+            _host.Sync.Wake();
+            FamilyWaiting = false;
+            FamilyStatus = "";
+        }
+        catch (Exception e) when (e is RcloneException or IOException or InvalidOperationException)
+        {
+            FamilyStatus = "This library could not become the family's now: " + CloudWorkViewModel.Plain(e.Message);
+        }
+        finally
+        {
+            _familyBusy = false;
+        }
+    }
+
+    /// <summary>The user wants the family's library started from this computer, not from the one chosen.</summary>
+    [RelayCommand]
+    private Task StartFamilyHere() => _familyBusy ? Task.CompletedTask : StartFamilyAsync();
 
     /// <summary>Starts copying the family's shared library from the library's own cloud; false when it is not there.</summary>
     public async Task<bool> JoinAsync(CancellationToken ct)
@@ -80,32 +128,13 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
         return true;
     }
 
-    [RelayCommand]
-    private async Task Join()
-    {
-        JoinStatus = "Looking for the shared library...";
-        try
-        {
-            if (await JoinAsync(CancellationToken.None))
-            {
-                JoinOffered = false;
-                JoinStatus = "";
-            }
-            else JoinStatus = "The shared library is not in the cloud any more.";
-        }
-        catch (Exception e) when (e is RcloneException or IOException)
-        {
-            JoinStatus = "The shared library cannot be reached now: " + CloudWorkViewModel.Plain(e.Message);
-        }
-    }
-
     private void Update()
     {
         var state = _restore.State;
         var computer = _restore.From is { Shared: true } ? "the family (the shared one)"
             : _restore.From?.Computer is { Length: > 0 } name ? name : "the other computer";
         Active = state != LibraryRestore.CopyState.None;
-        if (Active) JoinOffered = false;
+        if (Active) FamilyWaiting = false;
         Copying = state == LibraryRestore.CopyState.Copying;
         Ready = state == LibraryRestore.CopyState.Ready;
         Failed = state == LibraryRestore.CopyState.Failed;
