@@ -183,6 +183,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _rate = settings.Rate;
         _loop = settings.Loop;
         _showPeople = settings.ShowPeople;
+        _main.People.Answered += OnAnswered;
         _allChoices = momentChoices.ToList();
         _momentChoice = momentChoice;
         _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, settings.SlideSeconds)) };
@@ -406,9 +407,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         PeopleChanged?.Invoke();
     }
 
-    /// <summary>PersonId: who the box says (assigned or suggested), for "Not Greta".</summary>
+    /// <summary>
+    /// PersonId: who the box says (assigned or suggested), for "Not Greta". Guess: the name is the analysis' own
+    /// ("David?", "David??"), the user can say yes to it with one click.
+    /// </summary>
     public sealed record PeopleBox(long DetectionId, double X, double Y, double W, double H, string Label, bool Known, bool IsFace,
-        long? PersonId = null, string? PersonName = null);
+        long? PersonId = null, string? PersonName = null, bool Guess = false);
 
     /// <summary>Boxes to draw now, in content pixels: one per person.</summary>
     public List<PeopleBox> PeopleBoxes()
@@ -517,24 +521,59 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var inside = Math.Max(0, Math.Min(bx + bw, view.Width) - Math.Max(bx, 0)) * Math.Max(0, Math.Min(by + bh, view.Height) - Math.Max(by, 0));
             if (bw > view.Width * 0.6 || inside < bw * bh * 0.3) return null;
         }
-        var who = d.PersonId == null && face?.PersonId != null ? face : d;
+        // The face says who it is when the figure does not, and when the user named the face (a figure with a named
+        // face is no guess).
+        var who = !d.Confirmed && face is { PersonId: not null } && (face.Confirmed || d.PersonId == null) ? face : d;
         var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :
             who.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?";
         var personId = who.PersonId ?? who.SuggestPersonId;
+        var known = personId is { } id && _names.TryGetValue(id, out var name) ? name : null;
         return new PeopleBox(d.Id, bx, by, bw, bh, label,
-            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId,
-            personId is { } id && _names.TryGetValue(id, out var name) ? name : null);
+            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId, known, known != null && !who.Confirmed);
     }
 
     public IReadOnlyList<string> Names() => _main.People.PersonNames();
 
+    /// <summary>The person the user named last, the photo or video it was on, and the name as written.</summary>
+    private (long Person, long MediaId, string Name)? _lookingFor;
+
     public void NameDetection(long detectionId, string name)
     {
-        _main.People.NameDetection(detectionId, name);
+        var person = _main.People.NameDetection(detectionId, name);
         LoadPeople();
         // The named person can be chosen right away ("Only ...").
         _personMoments.Clear();
         if (IsVideo) SyncChoices();
+        if (person is not { } id) return;
+        // The answer is matched against the whole library in the background: said now, and what it found when it is done.
+        _lookingFor = (id, Current.Item.Id, name.Trim());
+        PeopleHint = $"Looking for {name.Trim()} in the other photos and videos...";
+    }
+
+    /// <summary>One click on the tick of a guessed name ("David?"): yes, it is David.</summary>
+    public void ConfirmGuess(long detectionId)
+    {
+        if (PeopleBoxes().FirstOrDefault(b => b.DetectionId == detectionId) is { Guess: true, PersonName: { } name })
+            NameDetection(detectionId, name);
+    }
+
+    /// <summary>
+    /// The matching after an answer is done: the names it changed show at once (also on the photo opened meanwhile),
+    /// and how far the last answer reached is said.
+    /// </summary>
+    private void OnAnswered(IReadOnlyDictionary<long, HashSet<long>>? gained)
+    {
+        var asked = _lookingFor;
+        _lookingFor = null;
+        if (!ShowPeople) return;
+        LoadPeople();
+        if (asked is not var (person, mediaId, name)) return;
+        var others = gained?.GetValueOrDefault(person)?.Count(m => m != mediaId) ?? 0;
+        PeopleHint = gained == null
+            ? $"The library is busy: {name} is looked for in the other photos and videos a little later."
+            : others == 0
+            ? $"{name}: no new photos or videos found this time."
+            : $"{name} is on {Format.Count(others, "more photo or video", "more photos and videos")} now.";
     }
 
     public void RejectDetection(long detectionId, long personId)
@@ -1072,6 +1111,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _main.People.Answered -= OnAnswered;
         _loadingTimer.Stop();
         _slideTimer.Stop();
         _positionTimer.Stop();

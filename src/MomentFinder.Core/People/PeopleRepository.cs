@@ -61,6 +61,8 @@ public sealed class DetectionRow
     public long? SuggestPersonId { get; set; }
     public float? SuggestScore { get; set; }
     public long? EventId { get; init; }
+    /// <summary>The folder of its photo or video, as a number per folder (LoadAll): what belongs together without a day out.</summary>
+    public long Folder { get; init; }
     public long TakenAt { get; init; }
     public float[] Embedding { get; set; } = [];
 }
@@ -356,14 +358,18 @@ public sealed class PeopleRepository
     {
         using var c = _db.Open();
         var rows = new List<DetectionRow>();
+        var folders = new Dictionary<(long Source, string Folder), long>();
         using var reader = c.ExecuteReader("""
             SELECT d.id, d.media_id, d.time_ms, d.kind, d.x, d.y, d.w, d.h, d.score, d.quality, d.track, d.linked_id,
                    d.cluster, d.person_id, d.assign_source, d.confidence, d.confirmed, d.suggest_person_id, d.suggest_score,
-                   m.event_id, m.taken_at, d.embedding
+                   m.event_id, m.taken_at, d.embedding, m.source_id, m.rel_path
             FROM detection d JOIN media m ON m.id=d.media_id WHERE m.missing=0
             """);
         while (reader.Read())
         {
+            var path = reader.GetString(23);
+            var key = (reader.GetInt64(22), path[..(path.LastIndexOfAny(['/', '\\']) + 1)]);
+            if (!folders.TryGetValue(key, out var folder)) folders[key] = folder = folders.Count;
             rows.Add(new DetectionRow
             {
                 Id = reader.GetInt64(0), MediaId = reader.GetInt64(1), TimeMs = reader.GetInt32(2),
@@ -379,6 +385,7 @@ public sealed class PeopleRepository
                 SuggestPersonId = reader.IsDBNull(17) ? null : reader.GetInt64(17),
                 SuggestScore = reader.IsDBNull(18) ? null : reader.GetFloat(18),
                 EventId = reader.IsDBNull(19) ? null : reader.GetInt64(19),
+                Folder = folder,
                 TakenAt = reader.GetInt64(20),
                 Embedding = FromBlob((byte[])reader.GetValue(21)),
             });
@@ -439,7 +446,6 @@ public sealed class PeopleRepository
         tx.Commit();
     }
 
-    /// <summary>"Not this person": the detection is freed and never offered for that person again.</summary>
     /// <summary>A detection with everything that is the same person in that moment: its video track and the faces on it.</summary>
     public List<long> SamePersonDetectionIds(long detectionId)
     {
@@ -462,6 +468,7 @@ public sealed class PeopleRepository
             new { detectionIds }).ToList();
     }
 
+    /// <summary>"Not this person": the detection is freed and never offered for that person again.</summary>
     public void Reject(IEnumerable<long> detectionIds, long personId)
     {
         var ids = detectionIds.ToList();

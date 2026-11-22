@@ -233,6 +233,74 @@ public class PeopleTests
         Assert.NotEqual(vendy.Id, child.SuggestPersonId);
     }
 
+    /// <summary>A unit vector made of the given axes: its similarity to a plain axis is that axis' weight.</summary>
+    private static float[] Mix(params (int Axis, float Weight)[] parts)
+    {
+        var v = new float[16];
+        foreach (var (axis, weight) in parts) v[axis] = weight;
+        var n = MathF.Sqrt(v.Sum(x => x * x));
+        for (var i = 0; i < v.Length; i++) v[i] /= n;
+        return v;
+    }
+
+    /// <summary>
+    /// Twenty alike photos of Greta from one afternoon, all taken for her brother (he has more named pictures, and
+    /// her own from other years are less alike). Naming her in one of them names the others: the box of a photo is
+    /// the figure, the face on it is hers with it, and a face named on that day decides. The brother, there on the
+    /// same day, stays himself.
+    /// </summary>
+    [Fact]
+    public async Task NamingOneOfASeriesNamesTheSeries()
+    {
+        using var lib = new TestLibrary();
+        var times = new Dictionary<string, string>();
+        for (var i = 0; i < 4; i++) times[$"david{i}.jpg"] = $"2023-0{i + 1}-10 10:00";
+        for (var i = 0; i < 3; i++) times[$"greta_old{i}.jpg"] = $"2022-0{i + 1}-10 10:00";
+        for (var i = 0; i < 5; i++) times[$"series/s{i}.jpg"] = $"2024-06-01 10:0{i}";
+        times["series/david_too.jpg"] = "2024-06-01 10:30";
+        times["elsewhere/alike.jpg"] = "2024-09-01 10:00";
+        foreach (var (f, t) in times)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var david = repo.CreatePerson("David");
+        var greta = repo.CreatePerson("Greta");
+        for (var i = 0; i < 4; i++) repo.Confirm(repo.ReplaceDetections(items[$"david{i}.jpg"], [Face(Mix((1, 1)))]), david.Id);
+        for (var i = 0; i < 3; i++) repo.Confirm(repo.ReplaceDetections(items[$"greta_old{i}.jpg"], [Face(Mix((2, 1)))]), greta.Id);
+        // Today she looks more like the pictures of her brother (0.66) than like her own older ones (0.56).
+        float[] Today(int i) => Mix((1, 0.66f), (2, 0.56f), (3, 0.5f), (6 + i, 0.1f));
+        var series = Enumerable.Range(0, 5)
+            .Select(i => repo.ReplaceDetections(items[$"s{i}.jpg"], [Face(Today(i), link: 1), Body(Emb(5))])).ToList();
+        repo.ReplaceDetections(items["david_too.jpg"], [Face(Mix((1, 1), (12, 0.1f)))]);
+        repo.ReplaceDetections(items["alike.jpg"], [Face(Today(7))]);
+        var identity = new IdentityService(repo) { AnswerDelay = TimeSpan.Zero };
+        identity.Recompute();
+        Assert.All(series, s => Assert.All(repo.DetectionsOfMedia(items[$"s{series.IndexOf(s)}.jpg"]), d => Assert.Equal(david.Id, d.PersonId)));
+
+        var answered = new TaskCompletionSource<IReadOnlyDictionary<long, HashSet<long>>>();
+        identity.Answered += gained => answered.TrySetResult(gained);
+        repo.Confirm([series[0][1]], greta.Id);
+        identity.RecomputeSoon();
+        var gained = await answered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        for (var i = 0; i < 5; i++)
+            Assert.All(repo.DetectionsOfMedia(items[$"s{i}.jpg"]), d => Assert.Equal(greta.Id, d.PersonId));
+        // Her brother on the same day is closer to his own pictures of other days than to her.
+        Assert.Equal(david.Id, repo.DetectionsOfMedia(items["david_too.jpg"]).Single().PersonId);
+        // Months later, the same look: the series stands for her now, so she is found there too.
+        Assert.Equal(greta.Id, repo.DetectionsOfMedia(items["alike.jpg"]).Single().PersonId);
+        Assert.Equal(Enumerable.Range(0, 5).Select(i => items[$"s{i}.jpg"]).Append(items["alike.jpg"]).Order(), gained[greta.Id].Order());
+
+        // Photos without a date make no day out: their folder is what belongs together.
+        using (var c = lib.Db.Open()) c.Execute("UPDATE media SET event_id=NULL");
+        identity.Recompute();
+        for (var i = 1; i < 5; i++)
+            Assert.All(repo.DetectionsOfMedia(items[$"s{i}.jpg"]), d => Assert.Equal(greta.Id, d.PersonId));
+        Assert.Equal(david.Id, repo.DetectionsOfMedia(items["david_too.jpg"]).Single().PersonId);
+    }
+
     /// <summary>Aggregates over no rows have no column types; every query must still work on a new library.</summary>
     [Fact]
     public void EmptyLibraryQueries()

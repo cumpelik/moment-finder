@@ -5,8 +5,10 @@ namespace MomentFinder.People;
 
 /// <summary>
 /// Who is on which detection, recomputed from what the user confirmed, in layers:
-/// 1. faces against the faces of named people (all years; confident new matches extend a person, so a
-///    child is followed as it grows), 2. a body linked to a face in the same picture, 3. everything on one
+/// 1. the clear face on a figure the user named is that person; faces against the faces named on the same day
+///    (the closest one decides), then against the faces of named people of all years (confident new matches
+///    extend a person, so a child is followed as it grows),
+///    2. a body linked to a face in the same picture, 3. everything on one
 ///    video track, 4. bodies in the same event (one day of skiing: same jacket and helmet) against bodies
 ///    already known, 5. tracks again. What stays unknown becomes a suggestion for the review queue,
 ///    remaining faces are grouped into unnamed clusters. Confirmed detections are never changed.
@@ -19,6 +21,11 @@ public sealed class IdentityService
     public float FaceExtend { get; set; } = 0.55f;
     public float FaceCluster { get; set; } = 0.5f;
     public float FaceMinQuality { get; set; } = 0.12f;
+    /// <summary>
+    /// A face this close to one the user named on the same day is that person. Lower than it sounds: other people
+    /// stay below ~0.36, and there are only the few named faces of that day to be close to by chance.
+    /// </summary>
+    public float FaceSameDay { get; set; } = 0.5f;
     // OSNet cosine similarity of whole people (clothes); only within an event, where clothes do not change.
     public float BodyAuto { get; set; } = 0.72f;
     public float BodySuggest { get; set; } = 0.6f;
@@ -36,6 +43,77 @@ public sealed class IdentityService
     public event Action? Changed;
 
     public sealed record Result(int Faces, int Bodies, int Assigned, int Suggestions, int Clusters);
+
+    /// <summary>
+    /// After answers of the user (the photos and videos each person was newly found on since the first of them):
+    /// raised on a background thread when the matching they asked for is done. Null: it could not be done now
+    /// (the library was busy or away).
+    /// </summary>
+    public event Action<IReadOnlyDictionary<long, HashSet<long>>?>? Answered;
+
+    /// <summary>A few answers given in a row are matched together.</summary>
+    public TimeSpan AnswerDelay { get; set; } = TimeSpan.FromMilliseconds(300);
+
+    private readonly object _soonGate = new();
+    private bool _soonRunning;
+    private bool _soonAgain;
+    private readonly Dictionary<long, HashSet<long>> _gained = [];
+
+    /// <summary>
+    /// The user said who somebody is: everything is matched again right away in the background, not when the
+    /// analysis of the library gets to it. Answers given while it runs are matched after it, together.
+    /// </summary>
+    public void RecomputeSoon()
+    {
+        lock (_soonGate)
+        {
+            if (_soonRunning)
+            {
+                _soonAgain = true;
+                return;
+            }
+            _soonRunning = true;
+            _soonAgain = false;
+        }
+        lock (_gained) _gained.Clear();
+        _ = Task.Run(async () =>
+        {
+            var failed = false;
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(AnswerDelay);
+                    lock (_soonGate) _soonAgain = false;
+                    try
+                    {
+                        Recompute();
+                        failed = false;
+                    }
+                    catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException)
+                    {
+                        // The library is busy or away: said to who asked, the next matching does it.
+                        failed = true;
+                    }
+                    lock (_soonGate)
+                    {
+                        if (_soonAgain) continue;
+                        _soonRunning = false;
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // Whatever it was: the next answer starts a matching again.
+                lock (_soonGate) _soonRunning = false;
+                throw;
+            }
+            Dictionary<long, HashSet<long>> gained;
+            lock (_gained) gained = _gained.ToDictionary(g => g.Key, g => g.Value.ToHashSet());
+            Answered?.Invoke(failed ? null : gained);
+        });
+    }
 
     public Result Recompute()
     {
@@ -61,7 +139,7 @@ public sealed class IdentityService
 
             var relinked = Relink(all);
             if (relinked.Count > 0) _repo.SaveLinks(relinked);
-            MatchFaces(faces, rejections);
+            MatchFaces(faces, FacesOfNamedFigures(faces, byId, rejections), rejections);
             LinkBodies(faces, byId);
             SpreadTracks(all);
             MatchOutfits(bodies, faces, rejections);
@@ -72,6 +150,12 @@ public sealed class IdentityService
 
             var changed = all.Where(d => !d.Confirmed && Snapshot(d) != before[d.Id]).ToList();
             _repo.SaveAssignments(changed);
+            lock (_gained)
+                foreach (var d in changed.Where(d => d.PersonId is { } p && before[d.Id].Item1 != p))
+                {
+                    if (!_gained.TryGetValue(d.PersonId!.Value, out var media)) _gained[d.PersonId.Value] = media = [];
+                    media.Add(d.MediaId);
+                }
             if (changed.Count > 0) Changed?.Invoke();
             return new Result(faces.Count, bodies.Count, all.Count(d => d.PersonId != null),
                 all.Count(d => d.SuggestPersonId != null), all.Where(d => d.Cluster != null).Select(d => d.Cluster).Distinct().Count());
@@ -133,22 +217,84 @@ public sealed class IdentityService
         }
     }
 
-    private void MatchFaces(List<DetectionRow> faces, Dictionary<long, HashSet<long>> rejections)
+    /// <summary>
+    /// The clear face on a figure the user named is that person. In a photo the box that is clicked and named is the
+    /// figure: without this the person would have no face to be found by in the other photos, however often named.
+    /// </summary>
+    private static HashSet<long> FacesOfNamedFigures(List<DetectionRow> faces, Dictionary<long, DetectionRow> byId,
+        Dictionary<long, HashSet<long>> rejections)
+    {
+        var named = new HashSet<long>();
+        foreach (var f in faces)
+        {
+            if (f.Confirmed || f.Quality < 0.3f || f.LinkedId is not { } bodyId || !byId.TryGetValue(bodyId, out var b)) continue;
+            if (!b.Confirmed || b.PersonId is not { } person || rejections.GetValueOrDefault(f.Id)?.Contains(person) == true) continue;
+            f.PersonId = person;
+            f.AssignSource = AssignSource.Linked;
+            f.Confidence = 1;
+            named.Add(f.Id);
+        }
+        return named;
+    }
+
+    /// <param name="ofFigures">Faces named through their figure (FacesOfNamedFigures): they count like the confirmed ones.</param>
+    private void MatchFaces(List<DetectionRow> faces, HashSet<long> ofFigures, Dictionary<long, HashSet<long>> rejections)
     {
         var protos = new Prototypes();
-        foreach (var f in faces.Where(f => f.Confirmed && f.PersonId != null).OrderByDescending(f => f.Quality))
+        var named = faces.Where(f => f.PersonId != null && (f.Confirmed || ofFigures.Contains(f.Id))).ToList();
+        foreach (var f in named.OrderByDescending(f => f.Quality))
             protos.Add(f.PersonId!.Value, f.Embedding);
         if (protos.ByPerson.Count == 0) return;
+        MatchSameDay(faces, named.Select(f => f.Id).ToHashSet(), protos, rejections);
 
-        var open = faces.Where(f => !f.Confirmed && f.Quality >= FaceMinQuality).ToList();
+        var open = faces.Where(f => !f.Confirmed && f.PersonId == null && f.Quality >= FaceMinQuality).ToList();
+        // The three closest pictures of every person for every open face (see Prototypes.Best) are kept between the
+        // rounds: a round compares only with the pictures the round before added, not with everything again.
+        var persons = protos.ByPerson.Keys.ToArray();
+        var lists = persons.Select(p => protos.ByPerson[p]).ToArray();
+        var compared = new int[persons.Length];
+        var closest = new float[open.Count][];
         // A few rounds: faces matched with high confidence join the prototypes, so years without a
         // confirmed face are bridged step by step (the 5 year old links to the 3 year old links to the baby).
         for (var round = 0; round < 3; round++)
         {
             var added = 0;
             var results = new (long Person, float Score, float Second)[open.Count];
+            var counts = lists.Select(l => l.Count).ToArray();
             Parallel.For(0, open.Count, i =>
-                results[i] = protos.Best(open[i].Embedding, rejections.GetValueOrDefault(open[i].Id)));
+            {
+                var e = open[i].Embedding;
+                var top = closest[i];
+                if (top == null)
+                {
+                    closest[i] = top = new float[persons.Length * 3];
+                    Array.Fill(top, float.MinValue);
+                }
+                var rejected = rejections.GetValueOrDefault(open[i].Id);
+                long best = 0;
+                float bestScore = -1, second = -1;
+                for (var p = 0; p < persons.Length; p++)
+                {
+                    var (a, b, c) = (p * 3, p * 3 + 1, p * 3 + 2);
+                    for (var k = compared[p]; k < counts[p]; k++)
+                    {
+                        var s = TensorPrimitives.Dot(e, lists[p][k]);
+                        if (s <= top[c]) continue;
+                        if (s > top[a]) (top[a], top[b], top[c]) = (s, top[a], top[b]);
+                        else if (s > top[b]) (top[b], top[c]) = (s, top[b]);
+                        else top[c] = s;
+                    }
+                    if (rejected != null && rejected.Contains(persons[p])) continue;
+                    var n = Math.Min(3, counts[p]);
+                    var score = 0f;
+                    for (var k = 0; k < n; k++) score += top[a + k];
+                    score /= n;
+                    if (score > bestScore) (best, bestScore, second) = (persons[p], score, bestScore);
+                    else if (score > second) second = score;
+                }
+                results[i] = (best, bestScore, second);
+            });
+            compared = counts;
             for (var i = 0; i < open.Count; i++)
             {
                 var f = open[i];
@@ -174,6 +320,70 @@ public sealed class IdentityService
                 }
             }
             if (added == 0) break;
+        }
+    }
+
+    /// <summary>
+    /// The same day (photos without a date: the same folder): a face the user named there is the best picture of
+    /// that person for the photos around it, the same age, hair and light. A face close to it is that person, though
+    /// the person's pictures of other years are less alike (in MatchFaces their average decides, and a brother or
+    /// sister with more pictures comes as close). So naming one photo of a series names the series. Not when
+    /// somebody else, named elsewhere, is closer still.
+    /// </summary>
+    private void MatchSameDay(List<DetectionRow> faces, HashSet<long> namedFaces, Prototypes protos, Dictionary<long, HashSet<long>> rejections)
+    {
+        var days = faces.GroupBy(f => f.EventId ?? -1 - f.Folder)
+            .Select(day => (Named: day.Where(f => namedFaces.Contains(f.Id)).Select(f => (Person: f.PersonId!.Value, f.Embedding)).ToList(),
+                Open: day.Where(f => f.PersonId == null && f.Quality >= FaceMinQuality).ToList()))
+            .Where(day => day.Named.Count > 0 && day.Open.Count > 0).ToList();
+        // A few rounds: a clear face found this way stands for the person too (turning the head step by step).
+        for (var round = 0; round < 3; round++)
+        {
+            var found = new List<(int Day, DetectionRow Face, long Person, float Score)>();
+            var scores = new Dictionary<long, float>();
+            for (var d = 0; d < days.Count; d++)
+                foreach (var f in days[d].Open)
+                {
+                    var rejected = rejections.GetValueOrDefault(f.Id);
+                    scores.Clear();
+                    foreach (var (person, e) in days[d].Named)
+                    {
+                        if (rejected != null && rejected.Contains(person) || e.Length != f.Embedding.Length) continue;
+                        var s = TensorPrimitives.Dot(f.Embedding, e);
+                        if (!scores.TryGetValue(person, out var had) || s > had) scores[person] = s;
+                    }
+                    long best = 0;
+                    float score = -1, second = -1;
+                    foreach (var (person, s) in scores)
+                    {
+                        if (s > score) (best, score, second) = (person, s, score);
+                        else if (s > second) second = s;
+                    }
+                    if (best != 0 && score >= FaceSameDay && score - second >= Margin) found.Add((d, f, best, score));
+                }
+            // Somebody else, named elsewhere, is closer still: left to the pictures of all the years.
+            var elsewhere = new bool[found.Count];
+            Parallel.For(0, found.Count, i =>
+            {
+                var (_, f, person, score) = found[i];
+                HashSet<long> others = rejections.TryGetValue(f.Id, out var rejected) ? [.. rejected, person] : [person];
+                elsewhere[i] = protos.Best(f.Embedding, others).Score > score;
+            });
+            var extended = false;
+            for (var i = 0; i < found.Count; i++)
+            {
+                if (elsewhere[i]) continue;
+                var (d, f, person, score) = found[i];
+                f.PersonId = person;
+                f.AssignSource = AssignSource.Face;
+                f.Confidence = score;
+                days[d].Open.Remove(f);
+                if (score < FaceExtend || f.Quality < 0.3f) continue;
+                days[d].Named.Add((person, f.Embedding));
+                protos.Add(person, f.Embedding);
+                extended = true;
+            }
+            if (!extended) break;
         }
     }
 
@@ -344,13 +554,7 @@ public sealed class IdentityService
         var centroids = new List<(long Id, float[] Sum, float[] Unit)>();
         foreach (var f in open)
         {
-            var best = -1;
-            var bestScore = FaceCluster;
-            for (var i = 0; i < centroids.Count; i++)
-            {
-                var s = TensorPrimitives.Dot(f.Embedding, centroids[i].Unit);
-                if (s > bestScore) { bestScore = s; best = i; }
-            }
+            var (best, _) = Closest(f.Embedding, centroids, FaceCluster);
             if (best < 0)
             {
                 // Only reasonably good faces start a group; a weak one may join but not lead.
@@ -365,6 +569,32 @@ public sealed class IdentityService
             TensorPrimitives.Divide(c.Sum, norm, c.Unit);
             f.Cluster = c.Id;
         }
+    }
+
+    /// <summary>
+    /// The group a face is closest to, above the limit (the first one of equally close ones); -1 when none is.
+    /// Thousands of groups (strangers in the background of a big library) are looked through on all cores.
+    /// </summary>
+    private static (int Index, float Score) Closest(float[] e, List<(long Id, float[] Sum, float[] Unit)> centroids, float above)
+    {
+        (int Index, float Score) Scan(int from, int to)
+        {
+            var (index, score) = (-1, above);
+            for (var i = from; i < to; i++)
+            {
+                var s = TensorPrimitives.Dot(e, centroids[i].Unit);
+                if (s > score) (index, score) = (i, s);
+            }
+            return (index, score);
+        }
+        const int Part = 256;
+        if (centroids.Count < 4 * Part) return Scan(0, centroids.Count);
+        var parts = new (int Index, float Score)[(centroids.Count + Part - 1) / Part];
+        Parallel.For(0, parts.Length, p => parts[p] = Scan(p * Part, Math.Min(centroids.Count, (p + 1) * Part)));
+        var best = (Index: -1, Score: above);
+        foreach (var part in parts)
+            if (part.Score > best.Score) best = part;
+        return best;
     }
 
     /// <summary>

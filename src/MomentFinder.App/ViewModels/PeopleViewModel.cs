@@ -197,14 +197,27 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         _host = host;
         _changed = changed;
+        host.Identity.Answered += gained =>
+        {
+            // Not done (the library was busy): the analysis does it when it gets to it.
+            if (gained == null) host.Indexer.RequestIdentity();
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => Answered?.Invoke(gained));
+        };
     }
+
+    /// <summary>
+    /// The matching after the user's answers is done: the photos and videos each person was newly found on, null
+    /// when it could not be done now (IdentityService.Answered, on the UI thread).
+    /// </summary>
+    public event Action<IReadOnlyDictionary<long, HashSet<long>>?>? Answered;
 
     private string CropPath(long detectionId) => CropFallback.Ensure(_host.Paths, _host.Db, detectionId);
 
     private void AfterChange()
     {
         _host.RefreshNames();
-        _host.Indexer.RequestIdentity();
+        // Right away, not when the analysis of the library gets to it: the user waits to see where the answer reaches.
+        _host.Identity.RecomputeSoon();
         _changed();
     }
 
@@ -539,10 +552,10 @@ public sealed partial class PeopleViewModel : ObservableObject
         AfterChange();
     }
 
-    /// <summary>From the viewer: the user says who a box is (the seed for people in helmets).</summary>
-    public void NameDetection(long detectionId, string name)
+    /// <summary>From the viewer: the user says who a box is (the seed for people in helmets). Returns the person.</summary>
+    public long? NameDetection(long detectionId, string name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return;
+        if (string.IsNullOrWhiteSpace(name)) return null;
         var person = _host.People.FindOrCreatePerson(name);
         // A correction: the person said before is not this one, on the whole track.
         var same = _host.People.SamePersonDetectionIds(detectionId);
@@ -550,6 +563,7 @@ public sealed partial class PeopleViewModel : ObservableObject
             _host.People.Reject(same, other);
         _host.People.Confirm([detectionId], person.Id);
         AfterChange();
+        return person.Id;
     }
 
     /// <summary>"Not Greta" on a box: the name goes from the whole track and is never suggested for it again.</summary>

@@ -60,7 +60,10 @@ public partial class PlayerView : UserControl
                 return;
             }
             _pressAt = e.GetPosition(Root);
-            _pressedBox = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Control>().Select(c => c.Tag).OfType<long>().FirstOrDefault();
+            var tags = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Control>().Select(c => c.Tag).ToList() ?? [];
+            // The tick of a guessed name sits in the name's label: it says yes, the rest of the box asks who it is.
+            _pressedTick = tags.OfType<GuessTick>().FirstOrDefault()?.DetectionId;
+            _pressedBox = _pressedTick != null ? null : tags.OfType<long>().FirstOrDefault();
             if (_vm is not { Is360: true }) return;
             _dragFrom = _pressAt;
             e.Pointer.Capture(Root);
@@ -74,8 +77,11 @@ public partial class PlayerView : UserControl
                 e.Pointer.Capture(null);
             }
             var moved = e.GetPosition(Root) - _pressAt;
-            if (_pressedBox is > 0 and var id && Math.Abs(moved.X) + Math.Abs(moved.Y) < 6) AskWho(id);
+            var clicked = Math.Abs(moved.X) + Math.Abs(moved.Y) < 6;
+            if (_pressedTick is { } guess && clicked) _vm?.ConfirmGuess(guess);
+            else if (_pressedBox is > 0 and var id && clicked) AskWho(id);
             _pressedBox = null;
+            _pressedTick = null;
         }, RoutingStrategies.Tunnel);
         // A double click on the picture; quick clicks on a control (one frame further) are not one.
         Root.DoubleTapped += (_, e) =>
@@ -211,7 +217,10 @@ public partial class PlayerView : UserControl
     /// name never gets cut by a narrow box. A click on the box or the name says who it is.
     /// </summary>
     /// <summary>The drawn box and name of each person, moved on every frame instead of being made again.</summary>
-    private readonly Dictionary<long, (Border Frame, Border Label, TextBlock Text)> _boxes = [];
+    private readonly Dictionary<long, (Border Frame, Border Label, TextBlock Text, Border Tick)> _boxes = [];
+
+    /// <summary>The tag of the tick in the label of a guessed name ("David?"): a click on it confirms the name.</summary>
+    private sealed record GuessTick(long DetectionId);
 
     private void DrawPeople()
     {
@@ -237,7 +246,7 @@ public partial class PlayerView : UserControl
                 PeopleLayer.Children.Add(drawn.Label);
             }
             var brush = new Avalonia.Media.SolidColorBrush(box.Known ? KnownColor : UnknownColor);
-            var (frame, label, text) = drawn;
+            var (frame, label, text, tick) = drawn;
             frame.Width = box.W;
             frame.Height = box.H;
             frame.CornerRadius = new CornerRadius(6 * scale);
@@ -248,6 +257,15 @@ public partial class PlayerView : UserControl
             label.Padding = new Thickness(8 * scale, 2 * scale);
             text.Text = box.Label;
             text.FontSize = 13 * scale;
+            tick.IsVisible = box.Guess;
+            if (box.Guess)
+            {
+                ((TextBlock)tick.Child!).FontSize = 13 * scale;
+                tick.CornerRadius = new CornerRadius(8 * scale);
+                tick.Padding = new Thickness(5 * scale, 0);
+                tick.Margin = new Thickness(6 * scale, 0, -4 * scale, 0);
+                ToolTip.SetTip(tick, $"Yes, it is {box.PersonName}");
+            }
             Canvas.SetLeft(frame, box.X);
             Canvas.SetTop(frame, box.Y);
             Canvas.SetLeft(label, box.X);
@@ -272,7 +290,7 @@ public partial class PlayerView : UserControl
         }
     }
 
-    private (Border Frame, Border Label, TextBlock Text) NewBox(long detectionId)
+    private (Border Frame, Border Label, TextBlock Text, Border Tick) NewBox(long detectionId)
     {
         var frame = new Border
         {
@@ -281,28 +299,35 @@ public partial class PlayerView : UserControl
             Cursor = new Cursor(StandardCursorType.Hand),
         };
         var text = new TextBlock { FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = Avalonia.Media.Brushes.Black };
+        var tick = new Border
+        {
+            Background = Avalonia.Media.Brushes.Black,
+            Tag = new GuessTick(detectionId),
+            Child = new TextBlock { Text = "\u2713", FontWeight = Avalonia.Media.FontWeight.Bold, Foreground = Avalonia.Media.Brushes.White },
+        };
         var label = new Border
         {
             BoxShadow = Avalonia.Media.BoxShadows.Parse("0 1 4 0 #80000000"),
             Cursor = new Cursor(StandardCursorType.Hand),
-            Child = text,
+            Child = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Children = { text, tick } },
         };
         ToolTip.SetTip(frame, "Click: who is it?");
         ToolTip.SetTip(label, "Click: who is it?");
         frame.Tag = detectionId;
         label.Tag = detectionId;
-        return (frame, label, text);
+        return (frame, label, text, tick);
     }
 
     private Point _pressAt;
     private long? _pressedBox;
+    private long? _pressedTick;
 
     private async void AskWho(long detectionId)
     {
         if (_vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) return;
         var wasRunning = vm.HoldForDialog();
         var box = vm.PeopleBoxes().FirstOrDefault(b => b.DetectionId == detectionId);
-        var (action, name) = await Dialogs.AskWhoAsync(owner, vm.Names(), box?.PersonName);
+        var (action, name) = await Dialogs.AskWhoAsync(owner, vm.Names(), box?.PersonName, box?.Guess == true);
         switch (action)
         {
             case Dialogs.WhoAction.Name: vm.NameDetection(detectionId, name!); break;

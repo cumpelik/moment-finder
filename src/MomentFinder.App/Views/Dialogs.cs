@@ -148,11 +148,16 @@ public static class Dialogs
 
     public enum WhoAction { Cancel, Name, NotThisPerson, Ignore }
 
+    /// <summary>The names given last, the newest first: offered as buttons, a series of photos is mostly of the same few people.</summary>
+    private static readonly List<string> LastNames = [];
+
     /// <summary>
     /// Who is a box: a name, or for a box that already has one "Not Greta" (a mistake), or "not a person" (a hand,
-    /// a snow cannon, a stranger: the box goes away for good).
+    /// a snow cannon, a stranger: the box goes away for good). A name the analysis only guessed (guess) is confirmed
+    /// with one button; the names given last are buttons too, nothing to type.
     /// </summary>
-    public static async Task<(WhoAction Action, string? Name)> AskWhoAsync(Window owner, IEnumerable<string> names, string? current)
+    public static async Task<(WhoAction Action, string? Name)> AskWhoAsync(Window owner, IEnumerable<string> names, string? current,
+        bool guess = false)
     {
         var box = new AutoCompleteBox
         {
@@ -165,16 +170,34 @@ public static class Dialogs
         var content = new StackPanel { Spacing = 8 };
         content.Children.Add(new TextBlock
         {
-            Text = current == null ? "Who is it? An existing name adds to that person." : $"Marked as {current}. Who is it really?",
+            Text = current == null ? "Who is it? An existing name adds to that person." :
+                guess ? $"The analysis thinks it is {current}. Is it?" : $"Marked as {current}. Who is it really?",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
         });
+        var quick = new WrapPanel();
+        content.Children.Add(quick);
         content.Children.Add(box);
-        var dialog = Build(current == null ? "Who is it?" : $"Not {current}?", content, out var ok, out var cancel, "OK");
+        var dialog = Build(current == null ? "Who is it?" : guess ? $"Is it {current}?" : $"Not {current}?", content, out var ok, out var cancel, "OK");
         void Close((WhoAction, string?) r)
         {
             result = r;
             dialog.Close();
         }
+        if (guess && current != null)
+        {
+            var yes = new Button { Content = $"Yes, it is {current}", Margin = new Avalonia.Thickness(0, 0, 8, 4) };
+            yes.Classes.Add("accent");
+            yes.Click += (_, _) => Close((WhoAction.Name, current));
+            quick.Children.Add(yes);
+        }
+        foreach (var last in LastNames.Where(n => n != current).Take(4))
+        {
+            var other = new Button { Content = last, Margin = new Avalonia.Thickness(0, 0, 8, 4) };
+            ToolTip.SetTip(other, $"It is {last}");
+            other.Click += (_, _) => Close((WhoAction.Name, last));
+            quick.Children.Add(other);
+        }
+        quick.IsVisible = quick.Children.Count > 0;
         var actions = new WrapPanel { Margin = new Avalonia.Thickness(0, 6, 0, 0) };
         if (current != null)
         {
@@ -197,6 +220,11 @@ public static class Dialogs
         dialog.Opened += (_, _) => box.Focus();
         await dialog.ShowDialog(owner);
         if (result.Item1 == WhoAction.Name && string.IsNullOrWhiteSpace(result.Item2)) return (WhoAction.Cancel, null);
+        if (result.Item1 == WhoAction.Name)
+        {
+            LastNames.Remove(result.Item2!.Trim());
+            LastNames.Insert(0, result.Item2.Trim());
+        }
         return (result.Item1, result.Item2?.Trim());
     }
 
