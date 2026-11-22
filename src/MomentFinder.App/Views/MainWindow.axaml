@@ -388,6 +388,17 @@
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.Active}">
                 <views:LibraryCopyCard DataContext="{Binding LibraryCopy}" />
             </Border>
+            <!-- Updated but not joined: this computer still shows a library of its own, other counts and names than the family's -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.JoinOffered}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="This computer does not use the family's shared library yet" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock TextWrapping="Wrap"
+                               Text="The cloud has the shared library, but this computer still shows its own: the folders in the cloud may show fewer photos here, and names given on the other computers are missing. Join it, and this computer shows the same as the others. Its own folders and what you named here come along. MomentFinder starts again when it is here." />
+                    <TextBlock Text="{Binding LibraryCopy.JoinStatus}" Classes="muted" TextWrapping="Wrap"
+                               IsVisible="{Binding LibraryCopy.JoinStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <Button Classes="accent" Command="{Binding LibraryCopy.JoinCommand}" HorizontalAlignment="Left" Padding="16,6">Join the shared library</Button>
+                </StackPanel>
+            </Border>
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding LibraryCopy.RestoredShown}">
                 <StackPanel Spacing="8">
                     <TextBlock Text="{Binding LibraryCopy.RestoredTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />

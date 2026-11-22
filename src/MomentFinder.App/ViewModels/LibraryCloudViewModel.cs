@@ -181,18 +181,8 @@ public sealed partial class LibraryCloudViewModel : CloudWorkViewModel
 
     /// <summary>This computer takes the family's shared library, and keeps its own folders and what was named here.</summary>
     [RelayCommand]
-    private Task Join() => _host.Cloud.BackupCloud is not { } cloud ? Task.CompletedTask : RunAsync("Looking for the shared library...", async ct =>
-    {
-        var recovery = RecoveryString.Parse(await _host.Cloud.RecoveryStringAsync(cloud, ct))!;
-        var shared = (await new LibraryRestore(_host.Paths).FindAsync(recovery, ct)).FirstOrDefault(f => f.Shared);
-        if (shared == null)
-        {
-            Status = "The shared library is not there any more.";
-            return;
-        }
-        Copy.Start(recovery, shared, thumbnails: false);
-        Status = "";
-    });
+    private Task Join() => RunAsync("Looking for the shared library...", async ct =>
+        Status = await Copy.JoinAsync(ct) ? "" : "The shared library is not there any more.");
 
     /// <summary>The library is not kept in the cloud any more; what is there stays.</summary>
     [RelayCommand]

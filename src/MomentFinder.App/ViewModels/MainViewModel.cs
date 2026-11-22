@@ -122,7 +122,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _sidebarVisible = host.Db.GetSetting("sidebar_hidden") != "1";
         LoadBrowseSettings();
 
-        LibraryCopy = new LibraryCopyViewModel(host.Restore, host.Db);
+        LibraryCopy = new LibraryCopyViewModel(host);
         CloudJobs = new CloudJobsViewModel(host.Jobs);
         // Uploaded, moved or deleted in the cloud: the photos shown follow.
         host.Jobs.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
@@ -169,6 +169,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _host.Mirrors.Start();
         _host.Jobs.Start();
         _host.Sync.Start();
+        _ = LibraryCopy.OfferJoinAsync();
         // A folder that changed is read again, and its backup follows, once it has been quiet for a while.
         _watcher = new FolderWatcher(_host.Repo);
         _watcher.FolderChanged += id =>

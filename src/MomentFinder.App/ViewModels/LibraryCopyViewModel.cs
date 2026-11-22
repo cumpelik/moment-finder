@@ -12,6 +12,7 @@ namespace MomentFinder.App.ViewModels;
 /// </summary>
 public sealed partial class LibraryCopyViewModel : ObservableObject
 {
+    private readonly LibraryHost _host;
     private readonly LibraryRestore _restore;
     private readonly Database _db;
 
@@ -33,18 +34,70 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
     [ObservableProperty] private string _restoredTitle = "";
     [ObservableProperty] private string _restoredText = "";
 
-    public LibraryCopyViewModel(LibraryRestore restore, Database db)
+    public LibraryCopyViewModel(LibraryHost host)
     {
-        _restore = restore;
-        _db = db;
-        restore.Changed += () => Dispatcher.UIThread.Post(Update);
+        _host = host;
+        _restore = host.Restore;
+        _db = host.Db;
+        _restore.Changed += () => Dispatcher.UIThread.Post(Update);
         // A copy that the end of MomentFinder interrupted goes on.
-        if (!restore.Resume()) Update();
+        if (!_restore.Resume()) Update();
         ShowRestored();
     }
 
     /// <summary>Starts copying a library found with a recovery string.</summary>
     public void Start(Recovery recovery, LibraryRestore.Found backup, bool thumbnails) => _restore.Start(recovery, backup, thumbnails);
+
+    /// <summary>
+    /// The library's cloud has the family's shared library, and this computer still uses a library of its own (it
+    /// was updated, not joined): its photos, counts and names differ from the others'. Said in the main window at
+    /// every start until it joins, not only in Settings.
+    /// </summary>
+    [ObservableProperty] private bool _joinOffered;
+    [ObservableProperty] private string _joinStatus = "";
+
+    public async Task OfferJoinAsync()
+    {
+        if (_host.Sync.Enabled || _host.Cloud.BackupCloud == null || _restore.State != LibraryRestore.CopyState.None) return;
+        try
+        {
+            JoinOffered = await _host.Sync.SharedLibraryExistsAsync(CancellationToken.None) && _restore.State == LibraryRestore.CopyState.None;
+        }
+        catch (RcloneException)
+        {
+            // The cloud does not answer now: asked again at the next start.
+        }
+    }
+
+    /// <summary>Starts copying the family's shared library from the library's own cloud; false when it is not there.</summary>
+    public async Task<bool> JoinAsync(CancellationToken ct)
+    {
+        if (_host.Cloud.BackupCloud is not { } cloud) return false;
+        var recovery = RecoveryString.Parse(await _host.Cloud.RecoveryStringAsync(cloud, ct))!;
+        var shared = (await new LibraryRestore(_host.Paths).FindAsync(recovery, ct)).FirstOrDefault(f => f.Shared);
+        if (shared == null) return false;
+        Start(recovery, shared, thumbnails: false);
+        return true;
+    }
+
+    [RelayCommand]
+    private async Task Join()
+    {
+        JoinStatus = "Looking for the shared library...";
+        try
+        {
+            if (await JoinAsync(CancellationToken.None))
+            {
+                JoinOffered = false;
+                JoinStatus = "";
+            }
+            else JoinStatus = "The shared library is not in the cloud any more.";
+        }
+        catch (Exception e) when (e is RcloneException or IOException)
+        {
+            JoinStatus = "The shared library cannot be reached now: " + CloudWorkViewModel.Plain(e.Message);
+        }
+    }
 
     private void Update()
     {
@@ -52,6 +105,7 @@ public sealed partial class LibraryCopyViewModel : ObservableObject
         var computer = _restore.From is { Shared: true } ? "the family (the shared one)"
             : _restore.From?.Computer is { Length: > 0 } name ? name : "the other computer";
         Active = state != LibraryRestore.CopyState.None;
+        if (Active) JoinOffered = false;
         Copying = state == LibraryRestore.CopyState.Copying;
         Ready = state == LibraryRestore.CopyState.Ready;
         Failed = state == LibraryRestore.CopyState.Failed;
