@@ -23,9 +23,10 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid x:Name="Root" Background="Black">
+    <Grid x:Name="Root" Background="Black" ClipToBounds="True">
         <!-- The picture and the people boxes share one coordinate space (pixels of the picture); the Viewbox fits it to the screen. -->
-        <Viewbox Stretch="Uniform">
+        <!-- The mouse wheel zooms it (the transform is set in code), from its top left corner -->
+        <Viewbox x:Name="Fit" Stretch="Uniform" RenderTransformOrigin="0,0">
             <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
                 <!-- A photo; or the thumbnail of a video from the cloud until its first frame is here -->
                 <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !VideoReady}" />

@@ -76,6 +76,7 @@ public partial class MainWindow : Window
         ShowGridItems();
         ApplyTileSize();
         ApplySidebar();
+        ApplySidebarSelection();
         ApplyGroupTree();
         // After the first layout, so one row of thumbnails can be measured.
         Avalonia.Threading.Dispatcher.UIThread.Post(ApplyPreviewPanel, DispatcherPriority.Loaded);
@@ -90,6 +91,7 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.GridItems)) ShowGridItems();
         if (e.PropertyName is nameof(MainViewModel.ShowPreviewPanel) or nameof(MainViewModel.PreviewMode)) ApplyPreviewPanel();
         if (e.PropertyName == nameof(MainViewModel.SidebarVisible)) ApplySidebar();
+        if (e.PropertyName == nameof(MainViewModel.SelectedSidebarItem)) ApplySidebarSelection();
         if (e.PropertyName == nameof(MainViewModel.ShowGroupTree)) ApplyGroupTree();
     }
 
@@ -374,8 +376,11 @@ public partial class MainWindow : Window
         window.Show(this);
     }
 
-    /// <summary>A click or an arrow in the grid: the panel shows that item (it only moves when the results are the same).</summary>
-    private void ShowInPanel(TileViewModel tile)
+    /// <summary>
+    /// A click or an arrow in the grid: the panel shows that item (it only moves when the results are the same).
+    /// When the panel itself was just asked for, nobody said play: a video waits on its first picture.
+    /// </summary>
+    private void ShowInPanel(TileViewModel tile, bool hold = false)
     {
         if (_vm is not { ShowPreviewPanel: true }) return;
         var index = _vm.Shown.IndexOf(tile);
@@ -385,14 +390,15 @@ public partial class MainWindow : Window
         {
             // Other results: a paused panel stays paused.
             var paused = _panelPlayer?.StaysPaused == true;
-            SetPanelPlayer(_vm.CreatePreview(index), paused);
+            SetPanelPlayer(_vm.CreatePreview(index), paused, hold && tile.IsVideo);
         }
     }
 
-    private void SetPanelPlayer(PlayerViewModel player, bool staysPaused = false)
+    private void SetPanelPlayer(PlayerViewModel player, bool staysPaused = false, bool hold = false)
     {
         ClosePanelPlayer();
         player.StaysPaused = staysPaused;
+        if (hold) player.PauseOnOpen = true;
         _panelPlayer = player;
         player.PropertyChanged += OnPanelPlayerChanged;
         player.CloseRequested += ClosePanelPlayer;
@@ -472,7 +478,7 @@ public partial class MainWindow : Window
         if (again != null && _vm.AnchorTile == null) _vm.Select(again, false, false);
         if (again is { } tile)
         {
-            ShowInPanel(tile);
+            ShowInPanel(tile, hold: true);
             Avalonia.Threading.Dispatcher.UIThread.Post(() => BringIntoView(tile), DispatcherPriority.Background);
         }
     }
@@ -508,6 +514,25 @@ public partial class MainWindow : Window
         var column = MainSplit.ColumnDefinitions[0];
         column.MinWidth = _vm.SidebarVisible ? minWidth : 0;
         column.Width = _vm.SidebarVisible ? new GridLength(Math.Max(minWidth, _vm.SavedSize("sidebar_width") ?? 250)) : new GridLength(0);
+    }
+
+    private bool _selectingSidebar;
+
+    /// <summary>The left panel is two lists (the people's names scroll by themselves) with one selection between them.</summary>
+    private void ApplySidebarSelection()
+    {
+        if (_vm == null) return;
+        var selected = _vm.SelectedSidebarItem;
+        _selectingSidebar = true;
+        Sidebar.SelectedItem = selected != null && _vm.SidebarItems.Contains(selected) ? selected : null;
+        SidebarPeople.SelectedItem = selected is SidebarEntry entry && _vm.SidebarPeople.Contains(entry) ? entry : null;
+        _selectingSidebar = false;
+    }
+
+    private void OnSidebarSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_selectingSidebar || _vm == null || e.AddedItems.Count == 0) return;
+        _vm.SelectedSidebarItem = e.AddedItems[0];
     }
 
     /// <summary>The groups' tree takes the width it was dragged to, or none when it is off.</summary>

@@ -40,7 +40,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>In a person's scope: the faces and figures instead of the photos.</summary>
     [ObservableProperty] private bool _showPersonFaces;
 
+    /// <summary>The left panel from the top: the library, the sources, the buckets and what there is to do about people.</summary>
     public ObservableCollection<object> SidebarItems { get; } = [];
+    /// <summary>The named people, under the rest in a list that scrolls by itself: there can be hundreds of them.</summary>
+    public ObservableCollection<SidebarEntry> SidebarPeople { get; } = [];
+    private IEnumerable<SidebarEntry> SidebarEntries => SidebarItems.OfType<SidebarEntry>().Concat(SidebarPeople);
     public ObservableCollection<Bucket> Buckets { get; } = [];
     public bool HasBuckets => Buckets.Count > 0;
 
@@ -270,7 +274,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _rebuilding = true;
         var selected = _scope;
         var activeId = ActiveBucket?.Id;
+        // The lists are made anew: what is selected is said again at the end, also when it is the same entry.
+        SelectedSidebarItem = null;
         SidebarItems.Clear();
+        SidebarPeople.Clear();
         var stats = _counts?.Stats;
         SidebarItems.Add(new SidebarEntry(SidebarKind.All, 0, "All photos and videos", stats?.Total.ToString("N0") ?? "",
             stats == null ? "" : $"{stats.Photos:N0} photos, {stats.Videos:N0} videos"));
@@ -300,6 +307,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (mirror != null && _host.Cloud.MoveRequested(mirror.Id)) SidebarItems.Add(CloneEntry(s, mirror));
         }
         IsLibraryEmpty = sources.Count == 0;
+        SidebarItems.Add(new SidebarHeader("BUCKETS", "New bucket", SidebarKind.Bucket));
+        Buckets.Clear();
+        foreach (var b in _host.Buckets.List())
+        {
+            Buckets.Add(b);
+            SidebarItems.Add(new SidebarEntry(SidebarKind.Bucket, b.Id, b.Name, b.Count.ToString("N0"), b.Name));
+        }
+        // The people come last: their names are a list of their own under the rest, so many of them push nothing away.
         var persons = _counts?.Persons ?? [];
         var groups = _counts?.Groups ?? 0;
         var suggestions = _counts?.Suggestions ?? 0;
@@ -311,17 +326,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             SidebarItems.Add(new SidebarEntry(SidebarKind.Review, 0, "Review suggestions", _counts == null ? "" : suggestions.ToString("N0"),
                 "The analysis is not sure: confirm or reject, one key per answer"));
             foreach (var p in persons)
-                SidebarItems.Add(new SidebarEntry(SidebarKind.Person, p.Id, p.Name, p.MediaCount.ToString("N0"), p.Name));
-        }
-        SidebarItems.Add(new SidebarHeader("BUCKETS", "New bucket", SidebarKind.Bucket));
-        Buckets.Clear();
-        foreach (var b in _host.Buckets.List())
-        {
-            Buckets.Add(b);
-            SidebarItems.Add(new SidebarEntry(SidebarKind.Bucket, b.Id, b.Name, b.Count.ToString("N0"), b.Name));
+                SidebarPeople.Add(new SidebarEntry(SidebarKind.Person, p.Id, p.Name, p.MediaCount.ToString("N0"), p.Name));
         }
         // A clone that is done is a source of the same id (the folder here got a new one).
-        var restored = selected == null ? null : SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == selected.Kind && e.Id == selected.Id)
+        var restored = selected == null ? null : SidebarEntries.FirstOrDefault(e => e.Kind == selected.Kind && e.Id == selected.Id)
             ?? (selected.Kind == SidebarKind.Clone ? SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == SidebarKind.Source && e.Id == selected.Id) : null);
         ActiveBucket = activeId is { } id ? Buckets.FirstOrDefault(b => b.Id == id) : null;
         OnPropertyChanged(nameof(HasBuckets));
@@ -470,7 +478,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             // Headers are not scopes; stay where we were.
             var scope = _scope;
-            Dispatcher.UIThread.Post(() => SelectedSidebarItem = SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == scope?.Kind && e.Id == scope.Id));
+            Dispatcher.UIThread.Post(() => SelectedSidebarItem = SidebarEntries.FirstOrDefault(e => e.Kind == scope?.Kind && e.Id == scope.Id));
             return;
         }
         if (newValue is not SidebarEntry entry) return;
@@ -935,6 +943,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         _searchDebounce.Stop();
         return RunSearchAsync(keepSelection: false);
+    }
+
+    /// <summary>The cross in the search box: everything of the place shows again, at once.</summary>
+    [RelayCommand]
+    private Task ClearSearch()
+    {
+        SearchText = "";
+        return SearchNow();
     }
 
     private async Task RunSearchAsync(bool keepSelection)

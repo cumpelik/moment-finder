@@ -38,13 +38,15 @@ public partial class PlayerView : UserControl
         Root.PointerMoved += OnPointerMoved;
         Root.PointerWheelChanged += (_, e) =>
         {
-            // A 360 picture zooms; otherwise the wheel goes through the items. Not over an open list.
+            // The wheel zooms, at the mouse (a 360 picture changes its field of view); it never goes to another item.
+            // Not over an open list.
             if (e.Source is not Visual over || !Root.IsVisualAncestorOf(over)) return;
             if (_vm is { Is360: true } vm) vm.Look(0, 0, e.Delta.Y > 0 ? 0.9 : 1.1);
-            else if (e.Delta.Y > 0) _vm?.Previous();
-            else if (e.Delta.Y < 0) _vm?.Next();
+            else if (over != Overlay && !Overlay.IsVisualAncestorOf(over) && e.Delta.Y != 0) ZoomAt(e.GetPosition(Root), e.Delta.Y > 0 ? 1.25 : 0.8);
+            e.Handled = true;
         };
-        // Dragging a 360 picture turns the view (like grabbing the scene).
+        Fit.SizeChanged += (_, _) => SetZoom(_zoom, _pan);
+        // Dragging a 360 picture turns the view (like grabbing the scene); dragging a zoomed picture moves it.
         // A box is asked about on release, so a drag that starts on a person still turns a 360 view.
         Root.AddHandler(PointerPressedEvent, (_, e) =>
         {
@@ -64,7 +66,7 @@ public partial class PlayerView : UserControl
             // The tick of a guessed name sits in the name's label: it says yes, the rest of the box asks who it is.
             _pressedTick = tags.OfType<GuessTick>().FirstOrDefault()?.DetectionId;
             _pressedBox = _pressedTick != null ? null : tags.OfType<long>().FirstOrDefault();
-            if (_vm is not { Is360: true }) return;
+            if (_vm is not { Is360: true } && _zoom == 1) return;
             _dragFrom = _pressAt;
             e.Pointer.Capture(Root);
         }, RoutingStrategies.Tunnel);
@@ -157,6 +159,45 @@ public partial class PlayerView : UserControl
         if (e.PropertyName is nameof(PlayerViewModel.LoopStartMs) or nameof(PlayerViewModel.LoopEndMs) or nameof(PlayerViewModel.Loop)
             or nameof(PlayerViewModel.VideoLength) or nameof(PlayerViewModel.HasLoopPart))
             LayoutLoop();
+        // Another photo or video shows whole again.
+        if (e.PropertyName == nameof(PlayerViewModel.Index)) SetZoom(1, default);
+    }
+
+    // ---- zooming with the mouse wheel ----
+
+    private const double MaxZoom = 8;
+    private double _zoom = 1;
+    /// <summary>Where the top left corner of the zoomed view is.</summary>
+    private Point _pan;
+
+    /// <summary>Zooms in or out so that the place under the mouse stays under it.</summary>
+    private void ZoomAt(Point at, double factor)
+    {
+        var zoom = Math.Clamp(_zoom * factor, 1, MaxZoom);
+        var under = (at - _pan) / _zoom;
+        SetZoom(zoom, at - under * zoom);
+    }
+
+    private void SetZoom(double zoom, Point pan)
+    {
+        var room = Fit.Bounds.Size;
+        var fit = _vm is { ContentWidth: > 0, ContentHeight: > 0 } ? Math.Min(room.Width / _vm.ContentWidth, room.Height / _vm.ContentHeight) : 0;
+        _zoom = fit > 0 ? zoom : 1;
+        _pan = _zoom == 1 ? default
+            : new Point(Hold(pan.X, _zoom, room.Width, _vm!.ContentWidth * fit), Hold(pan.Y, _zoom, room.Height, _vm.ContentHeight * fit));
+        Fit.RenderTransform = _zoom == 1 ? null : new Avalonia.Media.MatrixTransform(new Matrix(_zoom, 0, 0, _zoom, _pan.X, _pan.Y));
+        if (_vm?.ShowPeople == true) DrawPeople();
+    }
+
+    /// <summary>
+    /// One direction of the zoomed picture: while it is smaller than the room it stays in the middle, and once
+    /// it is bigger its edges never come inside (no black beside a picture that could fill the place).
+    /// </summary>
+    private static double Hold(double pan, double zoom, double room, double picture)
+    {
+        // The black beside the fitted picture, zoomed with it.
+        var edge = (room - picture) / 2 * zoom;
+        return picture * zoom <= room ? room * (1 - zoom) / 2 : Math.Clamp(pan, room - edge - picture * zoom, -edge);
     }
 
     /// <summary>In a panel: the controls always show and there is no close button.</summary>
@@ -181,6 +222,7 @@ public partial class PlayerView : UserControl
             _vm.PropertyChanged -= OnVmChanged;
         }
         _vm = DataContext as PlayerViewModel;
+        SetZoom(1, default);
         VideoImage.Source = null;
         PeopleLayer.Children.Clear();
         _boxes.Clear();
@@ -232,7 +274,7 @@ public partial class PlayerView : UserControl
         }
         // Boxes are drawn in the picture's pixels and scaled with it: one screen pixel is this many of them,
         // so lines and names keep the same size on screen for any video and window.
-        var shown = Math.Min(Root.Bounds.Width / _vm.ContentWidth, Root.Bounds.Height / _vm.ContentHeight);
+        var shown = Math.Min(Root.Bounds.Width / _vm.ContentWidth, Root.Bounds.Height / _vm.ContentHeight) * _zoom;
         var scale = shown > 0 ? 1 / shown : 1;
         var seen = new HashSet<long>();
         foreach (var box in _vm.PeopleBoxes())
@@ -347,6 +389,12 @@ public partial class PlayerView : UserControl
             var at = e.GetPosition(Root);
             var degreesPerPixel = vm.ViewFov / Math.Max(1, Root.Bounds.Width);
             vm.Look(-(at.X - from.X) * degreesPerPixel, (at.Y - from.Y) * degreesPerPixel);
+            _dragFrom = at;
+        }
+        else if (_dragFrom is { } grabbed)
+        {
+            var at = e.GetPosition(Root);
+            SetZoom(_zoom, _pan + (at - grabbed));
             _dragFrom = at;
         }
         var p = e.GetPosition(this);

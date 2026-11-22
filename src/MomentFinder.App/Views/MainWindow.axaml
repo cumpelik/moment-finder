@@ -101,9 +101,14 @@
         <Grid x:Name="MainSplit" ColumnDefinitions="250,Auto,*">
         <Border Grid.Column="0" Background="{DynamicResource SidebarBackgroundBrush}" IsVisible="{Binding SidebarVisible}"
                 BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0">
-            <ListBox x:Name="Sidebar" Classes="sidebar" ItemsSource="{Binding SidebarItems}"
-                     SelectedItem="{Binding SelectedSidebarItem}" Margin="0,8">
-                <ListBox.DataTemplates>
+            <!-- The named people are a list of their own that takes the rest and scrolls by itself: many of them push nothing away -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="120" />
+                </Grid.RowDefinitions>
+                <Grid.DataTemplates>
                     <DataTemplate DataType="vm:SidebarHeader">
                         <Grid ColumnDefinitions="*,Auto" Margin="0,10,0,0">
                             <TextBlock Classes="heading" Text="{Binding Title}" Margin="0" VerticalAlignment="Center" />
@@ -149,8 +154,19 @@
                             </Button>
                         </Grid>
                     </DataTemplate>
-                </ListBox.DataTemplates>
-            </ListBox>
+                </Grid.DataTemplates>
+                <!-- On the panel's edge: the button that hides it (shown again with the one at the left end of the toolbar) -->
+                <Grid ColumnDefinitions="*,Auto" Margin="4,4,2,0">
+                    <TextBlock Classes="heading" Text="LIBRARY" Margin="10,0" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Classes="icon" Command="{Binding ToggleSidebarCommand}" ToolTip.Tip="Hide this panel">
+                        <mi:MaterialIcon Kind="ChevronDoubleLeft" />
+                    </Button>
+                </Grid>
+                <ListBox x:Name="Sidebar" Grid.Row="1" Classes="sidebar" ItemsSource="{Binding SidebarItems}"
+                         SelectionChanged="OnSidebarSelectionChanged" Margin="0,2,0,0" />
+                <ListBox x:Name="SidebarPeople" Grid.Row="2" Classes="sidebar" ItemsSource="{Binding SidebarPeople}"
+                         SelectionChanged="OnSidebarSelectionChanged" Margin="0,0,0,8" />
+            </Grid>
         </Border>
 
         <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="4" ResizeDirection="Columns" Background="Transparent"
@@ -161,20 +177,34 @@
             <Border Grid.Row="0" Background="{DynamicResource ToolbarBackgroundBrush}" Padding="10,8"
                     BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto">
-                    <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" MaxWidth="800" HorizontalAlignment="Stretch">
-                    <Button Grid.Column="0" Classes="toolbar" Command="{Binding ToggleSidebarCommand}" Margin="0,0,8,0" VerticalAlignment="Center"
-                            ToolTip.Tip="Show / hide the left panel">
-                        <mi:MaterialIcon Kind="DockLeft" />
+                    <DockPanel Grid.Column="0">
+                    <!-- Only while the left panel is hidden, at the edge it comes back from: it is hidden with the button on its own edge -->
+                    <Button DockPanel.Dock="Left" Classes="toolbar" Command="{Binding ToggleSidebarCommand}" Margin="-4,0,8,0" VerticalAlignment="Center"
+                            IsVisible="{Binding !SidebarVisible}" ToolTip.Tip="Show the left panel: the library, the sources, the buckets and the people">
+                        <mi:MaterialIcon Kind="ChevronDoubleRight" />
                     </Button>
-                    <TextBox x:Name="SearchBox" Grid.Column="1" Text="{Binding SearchText}" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                    <!-- The search box grows with the window up to a width that is still read at a glance -->
+                    <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="580" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="SearchBox" Grid.Column="0" Text="{Binding SearchText}" HorizontalAlignment="Stretch" VerticalAlignment="Center"
                              PlaceholderText="Search: skier, beach at sunset 2023, video birthday..." KeyDown="OnSearchKeyDown">
                         <TextBox.InnerLeftContent>
                             <mi:MaterialIcon Kind="Magnify" Margin="8,0,0,0" Classes="muted" />
                         </TextBox.InnerLeftContent>
+                        <TextBox.InnerRightContent>
+                            <Button Classes="icon" Command="{Binding ClearSearchCommand}" Focusable="False" Margin="0,0,2,0"
+                                    IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                    ToolTip.Tip="Clear the search (Esc)">
+                                <mi:MaterialIcon Kind="Close" />
+                            </Button>
+                        </TextBox.InnerRightContent>
                     </TextBox>
                     <!-- When: years, months of the year, or any days -->
                     <!-- A fixed width: the panel below must not move while months are clicked -->
-                    <Button Grid.Column="2" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <Button Grid.Column="1" Classes="toolbar" Classes.active="{Binding IsDateFiltered}" Margin="8,0,0,0" VerticalAlignment="Center"
                             Width="215" HorizontalContentAlignment="Left" ToolTip.Tip="Only photos and videos from a time span">
                         <DockPanel>
                             <mi:MaterialIcon Kind="CalendarMonthOutline" Margin="0,0,6,0" />
@@ -232,6 +262,7 @@
                         </Button.Flyout>
                     </Button>
                     </Grid>
+                    </DockPanel>
                     <Button Grid.Column="1" Classes="toolbar" Command="{Binding PlayAllCommand}" Margin="12,0,0,0"
                             ToolTip.Tip="Play all (P): the selection, or the whole result">
                         <StackPanel Orientation="Horizontal" Spacing="6">

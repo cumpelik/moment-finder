@@ -115,7 +115,8 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
 
 | Viewer | |
 |---|---|
-| Left / Right, wheel | previous / next |
+| Left / Right | previous / next |
+| wheel | zoom at the mouse (drag the zoomed picture to move it) |
 | Space | pause, play |
 | Shift+Left / Right | seek 10 s |
 | Up / Down | volume |
