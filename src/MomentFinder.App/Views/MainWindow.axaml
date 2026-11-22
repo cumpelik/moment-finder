@@ -119,9 +119,7 @@
                                     <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
                                     <MenuItem Header="Cloud..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
-                                    <MenuItem Header="Upload files here..." Click="OnHereUploadFiles" IsVisible="{Binding CanUpload}" />
-                                    <MenuItem Header="Upload a folder here..." Click="OnHereUploadFolder" IsVisible="{Binding CanUpload}" />
-                                    <MenuItem Header="Copy here from another storage..." Click="OnHereImport" IsVisible="{Binding CanUpload}" />
+                                    <MenuItem Header="Upload here..." Click="OnHereUpload" IsVisible="{Binding CanUpload}" />
                                     <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding IsAway}" />
                                     <MenuItem Header="Make read-only..." Click="OnMakeReadOnly" IsVisible="{Binding CanMakeReadOnly}"
                                               ToolTip.Tip="Nothing in it can be deleted, moved or added from MomentFinder, and it cannot be removed from the library, until read-only is turned off with a password" />
@@ -339,20 +337,12 @@
                 </StackPanel>
                 <!-- A folder that lives in the cloud: what can be done in it -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsCloudScope}">
-                    <Button Classes="toolbar"
-                            ToolTip.Tip="Put photos and videos into this folder in the cloud: from this computer, or from another storage. Files and folders can also be dragged here from the file manager.">
+                    <Button Classes="toolbar" Classes.active="{Binding UploadPanel}" Command="{Binding ToggleUploadCommand}"
+                            ToolTip.Tip="Put photos and videos into this folder in the cloud: its folders show as a tree on the left, this computer's files (or another storage's) on the right, and you drag them where they should be">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <mi:MaterialIcon Kind="CloudUploadOutline" />
                             <TextBlock Text="Upload" />
-                            <mi:MaterialIcon Kind="ChevronDown" Width="14" Height="14" />
                         </StackPanel>
-                        <Button.Flyout>
-                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                                <MenuItem Header="Files from this computer..." Click="OnUploadFiles" />
-                                <MenuItem Header="A folder from this computer..." Click="OnUploadFolder" />
-                                <MenuItem Header="From another storage (another bucket, OneDrive, Google Drive)..." Click="OnImport" />
-                            </MenuFlyout>
-                        </Button.Flyout>
                     </Button>
                     <Button Classes="toolbar" Click="OnMoveSelection" ToolTip.Tip="Move the selected photos and videos to another folder in the cloud">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -439,7 +429,7 @@
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->
             <!-- Thumbnails, and the viewer under or right of them; the code arranges the rows and columns by the mode -->
             <!-- The groups' tree (when chosen), and the thumbnails of the chosen place -->
-            <Grid x:Name="TreeSplit" Grid.Row="2" ColumnDefinitions="0,Auto,*" IsVisible="{Binding IsGridMode}">
+            <Grid x:Name="TreeSplit" Grid.Row="2" ColumnDefinitions="0,Auto,*,Auto" IsVisible="{Binding IsGridMode}">
             <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0" IsVisible="{Binding ShowGroupTree}">
                 <TreeView x:Name="GroupTreeView" ItemsSource="{Binding GroupRoots}" SelectedItem="{Binding SelectedGroup}" Margin="4,0,0,8">
                     <TreeView.Styles>
@@ -447,16 +437,22 @@
                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                             <Setter Property="MinHeight" Value="28" />
                         </Style>
+                        <!-- Something is dragged over the folder: it would go here -->
+                        <Style Selector="DockPanel.treerow">
+                            <Setter Property="Background" Value="Transparent" />
+                        </Style>
+                        <Style Selector="DockPanel.treerow.droptarget">
+                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                        </Style>
                     </TreeView.Styles>
                     <TreeView.ItemTemplate>
                         <TreeDataTemplate DataType="vm:GroupNode" ItemsSource="{Binding Children}">
-                            <DockPanel Background="Transparent">
+                            <DockPanel Classes="treerow" Classes.droptarget="{Binding IsDropTarget}">
                                 <!-- A folder that lives in the cloud: what can be done with it -->
                                 <DockPanel.ContextMenu>
                                     <ContextMenu IsVisible="{Binding CanUpload}">
-                                        <MenuItem Header="Upload files here..." Click="OnHereUploadFiles" />
-                                        <MenuItem Header="Upload a folder here..." Click="OnHereUploadFolder" />
-                                        <MenuItem Header="Copy here from another storage..." Click="OnHereImport" />
+                                        <MenuItem Header="Upload here..." Click="OnHereUpload" />
+                                        <MenuItem Header="New folder here..." Click="OnTreeNewFolder" />
                                         <MenuItem Header="Move this folder..." Click="OnTreeMoveFolder" IsVisible="{Binding CanChangeFolder}" />
                                         <MenuItem Header="Rename this folder..." Click="OnTreeRenameFolder" IsVisible="{Binding CanChangeFolder}" />
                                         <MenuItem Header="Delete this folder..." Click="OnTreeDeleteFolder" IsVisible="{Binding CanChangeFolder}" />
@@ -494,6 +490,23 @@
                 <views:PlayerView x:Name="Preview" IsVisible="False" DataContext="{x:Null}" />
             </Panel>
             </Grid>
+            <!-- The upload view: this computer's files (or another storage's), dragged onto a folder on the left -->
+            <Border Grid.Column="3" Width="430" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1,0,0,0"
+                    IsVisible="{Binding ShowUploadPanel}">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="10,2,6,6">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Upload" FontSize="16" FontWeight="SemiBold" />
+                            <!-- While something is dragged the same lines say where it would go: nothing below moves -->
+                            <TextBlock Classes="small" TextWrapping="Wrap" MinHeight="46" Text="{Binding UploadHint}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Classes="icon" Command="{Binding ToggleUploadCommand}" VerticalAlignment="Top" ToolTip.Tip="Close the upload view">
+                            <mi:MaterialIcon Kind="Close" />
+                        </Button>
+                    </Grid>
+                    <views:FileBrowserPanel x:Name="Browser" DataContext="{Binding Browser}" />
+                </DockPanel>
+            </Border>
             </Grid>
 
             <!-- Who is this: everybody without a name, groups of faces and people without a visible face -->

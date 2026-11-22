@@ -8,10 +8,8 @@ namespace MomentFinder.App.ViewModels;
 
 public enum PutKind
 {
-    /// <summary>Files and folders of this computer.</summary>
+    /// <summary>Files and folders of this computer (dropped in from the file manager).</summary>
     Upload,
-    /// <summary>A folder of another storage.</summary>
-    Import,
     /// <summary>Photos and videos of the library that are in the cloud.</summary>
     MoveFiles,
     /// <summary>A whole folder of a source in the cloud.</summary>
@@ -32,9 +30,9 @@ public sealed partial class PlaceNode(long sourceId, string folder, string title
 }
 
 /// <summary>
-/// What goes where in the cloud, before it starts: files of this computer or a folder of another storage uploaded
-/// into a folder of the library that lives in the cloud, or photos and folders of the library moved to another
-/// place there. The work itself is a job in the background (CloudJobs); this window only says what and where.
+/// What goes where in the cloud, before it starts: files of this computer dropped into the window, or photos and
+/// folders of the library moved to another place there. The work itself is a job in the background (CloudJobs);
+/// this window only says what and where.
 /// </summary>
 public sealed partial class CloudPutViewModel : CloudWorkViewModel
 {
@@ -48,33 +46,19 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
     public string Title => Kind switch
     {
         PutKind.Upload => "Upload to the cloud",
-        PutKind.Import => "Copy from another storage",
         PutKind.MoveFiles => "Move to another folder",
         _ => "Move the folder",
     };
-    public string ActText => Kind switch
-    {
-        PutKind.Upload => "Upload",
-        PutKind.Import => "Copy",
-        _ => "Move",
-    };
-    public bool IsImport => Kind == PutKind.Import;
-    public bool HasWhat => !IsImport;
-    public string WhereTitle => IsImport ? "3. Where it goes" : "Where it goes";
+    public string ActText => Kind == PutKind.Upload ? "Upload" : "Move";
 
     /// <summary>What was chosen, in words.</summary>
     public string WhatText { get; } = "";
-
-    /// <summary>The other storage and the folder in it (the same browsing as adding a folder of a storage to the library).</summary>
-    public AddCloudFolderViewModel Origin { get; }
 
     public ObservableCollection<PlaceNode> Places { get; } = [];
     public bool NoPlaces => Places.Count == 0;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(WhereText), nameof(CanAct))] private PlaceNode? _selectedPlace;
     /// <summary>A new folder inside the chosen place (may have several parts: "2024/Ski").</summary>
     [ObservableProperty, NotifyPropertyChangedFor(nameof(WhereText), nameof(CanAct))] private string _newFolder = "";
-    private bool _newFolderTyped;
-    private string _proposed = "";
 
     /// <summary>The job was added: the window closes, the main window shows how far it is.</summary>
     public event Action? Started;
@@ -84,19 +68,6 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
         _host = host;
         Kind = kind;
         WhatText = what;
-        Origin = new AddCloudFolderViewModel(host, browse: kind == PutKind.Import);
-        Origin.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName is not (nameof(AddCloudFolderViewModel.Path) or nameof(AddCloudFolderViewModel.PlaceText))) return;
-            // The folder gets its name here too, until the user types another.
-            if (IsImport && !_newFolderTyped)
-            {
-                _proposed = Origin.Path.Length == 0 ? "" : Origin.Path[(Origin.Path.LastIndexOf('/') + 1)..];
-                NewFolder = _proposed;
-            }
-            OnPropertyChanged(nameof(WhereText));
-            OnPropertyChanged(nameof(CanAct));
-        };
         foreach (var source in host.Jobs.Changeable())
         {
             var top = new PlaceNode(source.Id, "", source.Name, source.Name);
@@ -136,8 +107,6 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
         return new CloudPutViewModel(host, PutKind.Upload, what, sourceId, folder) { _paths = paths };
     }
 
-    public static CloudPutViewModel Import(LibraryHost host, long? sourceId, string? folder) => new(host, PutKind.Import, "", sourceId, folder);
-
     public static CloudPutViewModel MoveFiles(LibraryHost host, IReadOnlyList<(long SourceId, string RelPath)> files, long? sourceId, string? folder) =>
         new(host, PutKind.MoveFiles, Format.Count(files.Count, "selected photo or video", "selected photos and videos"), sourceId, folder) { _files = files };
 
@@ -154,11 +123,6 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
 
     protected override void Reload() { }
 
-    partial void OnNewFolderChanged(string value)
-    {
-        if (value != _proposed) _newFolderTyped = true;
-    }
-
     /// <summary>The folder inside the source everything goes into.</summary>
     private string Into => SelectedPlace is not { } place ? "" : CloudService.Join(place.Folder, CloudService.CleanFolder(NewFolder));
 
@@ -172,7 +136,7 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
         _ => false,
     };
 
-    public bool CanAct => SelectedPlace != null && !AlreadyThere && (!IsImport || Origin.CanAdd);
+    public bool CanAct => SelectedPlace != null && !AlreadyThere;
 
     public string WhereText
     {
@@ -187,8 +151,6 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
             return Kind switch
             {
                 PutKind.Upload => $"It goes into {into}. A folder keeps its name and what is inside it." + never,
-                PutKind.Import => (Origin.CanAdd ? $"What is in {Origin.PlaceText} is copied into {into}." : $"It is copied into {into}.") +
-                                  " The other storage stays as it is." + never,
                 PutKind.MoveFiles => $"They move into {into}, with everything known of them (people, buckets)." + never,
                 _ => $"It becomes {Words(place, CloudService.Join(Into, Name(_fromFolder)))}, with everything known of its photos (people, buckets)." + never,
             };
@@ -211,14 +173,6 @@ public sealed partial class CloudPutViewModel : CloudWorkViewModel
             {
                 case PutKind.Upload:
                     _host.Jobs.Upload(place.SourceId, Into, _paths);
-                    break;
-                case PutKind.Import:
-                    if (!Origin.CanAdd)
-                    {
-                        Status = "Go into the folder to copy (click it).";
-                        return;
-                    }
-                    _host.Jobs.Import(place.SourceId, Into, Origin.Remote, $"{Origin.PlaceText} ({Origin.StorageName})");
                     break;
                 case PutKind.MoveFiles:
                     foreach (var from in _files.GroupBy(f => f.SourceId))

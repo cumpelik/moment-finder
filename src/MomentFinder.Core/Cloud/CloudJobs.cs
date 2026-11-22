@@ -51,7 +51,7 @@ public sealed record JobSpec
     public long? From { get; init; }
     /// <summary>Move, delete: a whole folder of it (with everything in it, not only photos and videos)...</summary>
     public string? FromFolder { get; init; }
-    /// <summary>...or these files.</summary>
+    /// <summary>...or these files. Import: only these files of Remote (by name), not everything in it.</summary>
     public List<string>? Files { get; init; }
     /// <summary>Where it goes inside the target ("" is its top); for a moved folder, where the folder itself is afterwards.</summary>
     public string Folder { get; init; } = "";
@@ -180,7 +180,21 @@ public sealed class CloudJobs : IDisposable
     {
         var target = Checked(targetId);
         folder = CloudService.CleanFolder(folder);
+        var place = CloudService.Join(target.Remote!, folder);
+        if (place == remote || place.StartsWith(remote.TrimEnd('/') + "/", StringComparison.Ordinal))
+            throw new InvalidOperationException("A folder cannot be copied into itself.");
         return Add(JobKinds.Import, $"Copy {from} to {Place(target, folder)}", targetId, new JobSpec { Remote = remote, Folder = folder });
+    }
+
+    /// <summary>Single files of a folder of another storage go into a folder of the cloud source.</summary>
+    public long ImportFiles(long targetId, string folder, string remote, IReadOnlyList<string> names, string from)
+    {
+        var target = Checked(targetId);
+        if (names.Count == 0) throw new InvalidOperationException("Nothing was chosen.");
+        folder = CloudService.CleanFolder(folder);
+        var what = names.Count == 1 ? $"\"{names[0]}\"" : $"{names.Count:N0} files";
+        return Add(JobKinds.Import, $"Copy {what} from {from} to {Place(target, folder)}", targetId,
+            new JobSpec { Remote = remote, Files = names.ToList(), Folder = folder });
     }
 
     /// <summary>These files of a cloud source go into a folder of the same or another cloud source.</summary>
@@ -520,6 +534,16 @@ public sealed class CloudJobs : IDisposable
                     }
                 }
                 break;
+            case JobKinds.Import when spec.Files is { } names:
+            {
+                // Single files of that folder: what the storage says of them (a name that is not there fails by itself).
+                var wanted = names.ToHashSet(StringComparer.Ordinal);
+                var there = (await Rclone.ListAsync(spec.Remote!, 1, ct)).Where(f => wanted.Contains(f.Path)).ToDictionary(f => f.Path, StringComparer.Ordinal);
+                foreach (var name in names.Distinct())
+                    rows.Add((name, CloudService.Join(spec.Folder, name), there.GetValueOrDefault(name)?.Size ?? 0,
+                        there.GetValueOrDefault(name)?.ModTime.ToUnixTimeMilliseconds() ?? 0));
+                break;
+            }
             case JobKinds.Import:
                 foreach (var f in await Rclone.ListAsync(spec.Remote!, ct))
                     if (!LibraryScanner.IsIgnored(f.Path))
@@ -667,6 +691,12 @@ public sealed class CloudJobs : IDisposable
                     f.Size = info.Length;
                     f.Mtime = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds();
                 }
+                // Asked for by name from another storage and not found there (rclone would pass it over in silence).
+                else if (job.Kind == JobKinds.Import && spec.Files != null && f.Mtime == 0)
+                {
+                    away.Add(f);
+                    continue;
+                }
                 var me = new RemoteFile(f.Target, f.Size, DateTimeOffset.FromUnixTimeMilliseconds(f.Mtime));
                 // There already (from before, or from a try that was cut): under its name or one with a number.
                 if (f.Mtime > 0 && Versions(f.Target).TakeWhile(there.ContainsKey).FirstOrDefault(v => FolderSync.Same(there[v], me)) is { } found &&
@@ -681,7 +711,7 @@ public sealed class CloudJobs : IDisposable
                 f.Target = to;
                 todo.Add(f);
             }
-            SetFiles(away, JobFileStates.Failed, _ => "The file is not on this computer any more.");
+            SetFiles(away, JobFileStates.Failed, _ => upload ? "The file is not on this computer any more." : "The file is not in that storage any more.");
             if (same.Count > 0)
             {
                 // A moved file that is at its new place already (a try that was cut after the cloud did it): the one

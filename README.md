@@ -50,10 +50,12 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **A folder in the cloud as a source** (SOURCES +, Folder in the cloud): photos put into a storage by other means
   (its own app, another program) are added from there, browsing its folders; files are fetched when needed.
-- **Changing a folder that lives in the cloud** (its buttons above the photos, a right click on photos, on a folder
-  of the tree or on the source; files and folders can be dragged in from the file manager): upload files and whole
-  folders from this computer, copy a folder from another storage (another bucket, a OneDrive, a Google Drive), move
-  photos and whole folders (also to another cloud folder of the library, and rename a folder), delete them. Each is
+- **Changing a folder that lives in the cloud**. Upload (its button above the photos): the folders of the source
+  show as a tree on the left and a browser of this computer (or of another storage: another bucket, a OneDrive, a
+  Google Drive) on the right; files and whole folders are dragged from it onto the folder they should be in, or onto
+  a new one (right click in the tree). Files dragged in from the file manager go the same way. Photos are moved by
+  dragging them onto a folder of the tree (or Move), whole folders are moved, renamed and deleted from the tree's
+  menu, photos deleted with Delete. Each is
   done in the background, file by file, several at once: a break goes on where it stopped, a file that did not go is
   kept with its reason and tried again, and what still does not go waits in the list (status bar, and a line above
   the photos). Nothing is written over: the same file is left, another one of that name goes beside it as

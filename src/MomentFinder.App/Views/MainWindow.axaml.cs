@@ -42,10 +42,17 @@ public partial class MainWindow : Window
         };
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         GridScroll.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
+        GridScroll.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
+        GridScroll.AddHandler(PointerReleasedEvent, (_, _) => _tilePress = null, RoutingStrategies.Tunnel);
         // Files and folders dragged in from the file manager are uploaded to a folder in the cloud.
         DragDrop.SetAllowDrop(this, true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         AddHandler(DragDrop.DropEvent, OnDrop);
+        Browser.ConnectRequested += () =>
+        {
+            if (_vm != null) ShowOverlay(new ConnectStoragePanel(_vm.CreateConnectStorageViewModel()));
+        };
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -741,36 +748,18 @@ public partial class MainWindow : Window
         _ => null,
     };
 
-    private async Task UploadFilesAsync((long SourceId, string Folder)? where)
+    /// <summary>The upload view opens at that folder: files are dragged into it from the browser.</summary>
+    private void OnHereUpload(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "The files to upload", AllowMultiple = true });
-        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
-        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, where)));
+        if (_vm != null && HereOf(sender) is { } where) _vm.OpenUpload(where);
     }
 
-    private async Task UploadFolderAsync((long SourceId, string Folder)? where)
+    private async void OnTreeNewFolder(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "The folder to upload (with everything inside)", AllowMultiple = true });
-        var paths = folders.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
-        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, where)));
-    }
-
-    private async void OnUploadFiles(object? sender, RoutedEventArgs e) => await UploadFilesAsync(_vm?.CurrentCloudFolder());
-    private async void OnUploadFolder(object? sender, RoutedEventArgs e) => await UploadFolderAsync(_vm?.CurrentCloudFolder());
-
-    private void OnImport(object? sender, RoutedEventArgs e)
-    {
-        if (_vm != null) ShowOverlay(new CloudPutPanel(_vm.PutImport(_vm.CurrentCloudFolder())));
-    }
-
-    private async void OnHereUploadFiles(object? sender, RoutedEventArgs e) => await UploadFilesAsync(HereOf(sender));
-    private async void OnHereUploadFolder(object? sender, RoutedEventArgs e) => await UploadFolderAsync(HereOf(sender));
-
-    private void OnHereImport(object? sender, RoutedEventArgs e)
-    {
-        if (_vm != null) ShowOverlay(new CloudPutPanel(_vm.PutImport(HereOf(sender))));
+        if (_vm == null || HereOf(sender) is not { } where) return;
+        var name = await Dialogs.PromptAsync(this, $"New folder in {_vm.PlaceWords(where)}", "Its name (it is made in the cloud with the first file put into it)", "");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (_vm.NewFolder(where, name) is { } error) await Dialogs.InfoAsync(this, "New folder", error);
     }
 
     private async void OnMoveSelection(object? sender, RoutedEventArgs e)
@@ -808,7 +797,7 @@ public partial class MainWindow : Window
     private async void OnTreeRenameFolder(object? sender, RoutedEventArgs e)
     {
         if (_vm == null || (sender as Control)?.DataContext is not GroupNode { CanChangeFolder: true } folder) return;
-        var name = await Dialogs.PromptAsync(this, "Rename the folder", "The folder's new name (it is renamed in the cloud, for every computer of the library)", folder.Title);
+        var name = await Dialogs.PromptAsync(this, "Rename the folder", "Its new name (in the cloud, for every computer of the library)", folder.Title);
         if (string.IsNullOrWhiteSpace(name) || name.Trim() == folder.Title) return;
         if (_vm.RenameFolder(folder, name) is { } error) await Dialogs.InfoAsync(this, "Rename the folder", error);
     }
@@ -826,9 +815,36 @@ public partial class MainWindow : Window
     /// <summary>The right click was on a photo: the menu is about the selection (the clicked photo, when it was not selected).</summary>
     private bool _menuOnTile;
 
+    /// <summary>Photos dragged out of the grid: the selection moves to the folder they are dropped onto (it stays inside the application).</summary>
+    private static readonly DataFormat<string> TilesFormat = DataFormat.CreateInProcessFormat<string>("momentfinder-tiles");
+    private PointerPressedEventArgs? _tilePress;
+    private TileViewModel? _pressedTile;
+    private Point _tilePressedAt;
+
+    /// <summary>A photo pressed and pulled away is dragged, with the rest of the selection when it is part of it.</summary>
+    private async void OnGridPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_vm == null || _tilePress is not { } press || _pressedTile is not { } tile) return;
+        var moved = e.GetPosition(GridScroll) - _tilePressedAt;
+        if (Math.Abs(moved.X) < 10 && Math.Abs(moved.Y) < 10) return;
+        _tilePress = null;
+        if (!tile.IsSelected) _vm.Select(tile, false, false);
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.Create(TilesFormat, "selection"));
+        await DragDrop.DoDragDropAsync(press, data, DragDropEffects.Move);
+    }
+
     private void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!e.GetCurrentPoint(GridScroll).Properties.IsRightButtonPressed) return;
+        var point = e.GetCurrentPoint(GridScroll).Properties;
+        _tilePress = null;
+        if (point.IsLeftButtonPressed && e.KeyModifiers == KeyModifiers.None && TileOf(e) is { } pressed)
+        {
+            _tilePress = e;
+            _pressedTile = pressed;
+            _tilePressedAt = e.GetPosition(GridScroll);
+        }
+        if (!point.IsRightButtonPressed) return;
         var tile = TileOf(e);
         _menuOnTile = tile != null;
         if (_vm != null && tile is { IsSelected: false }) _vm.Select(tile, false, false);
@@ -848,27 +864,81 @@ public partial class MainWindow : Window
         TileMenuWhy.Header = new TextBlock { Text = problem, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 340 };
     }
 
-    /// <summary>The folder in the cloud under the pointer: a source in the sidebar, a folder of the tree, or the one shown.</summary>
-    private (long SourceId, string Folder)? DropTarget(DragEventArgs e)
+    /// <summary>
+    /// The folder in the cloud under the pointer. Named: a source in the sidebar or a folder of the tree (the user
+    /// pointed at it); otherwise, over the photos, the folder shown.
+    /// </summary>
+    private ((long SourceId, string Folder) Where, GroupNode? Node, bool Named)? DropTarget(DragEventArgs e)
     {
-        if (_vm == null) return null;
+        if (_vm == null || Overlay.IsVisible) return null;
         foreach (var visual in (e.Source as Visual)?.GetSelfAndVisualAncestors() ?? [])
         {
-            if (visual is ListBoxItem { DataContext: SidebarEntry { CanUpload: true } entry }) return (entry.Id, "");
-            if (visual is TreeViewItem { DataContext: GroupNode { CanUpload: true, SourceId: { } id } node }) return (id, node.Folder);
+            if (visual is ListBoxItem { DataContext: SidebarEntry entry }) return entry.CanUpload ? ((entry.Id, ""), null, true) : null;
+            if (visual is TreeViewItem { DataContext: GroupNode node })
+                return node is { CanUpload: true, SourceId: { } id } ? ((id, node.Folder), node, true) : null;
+            if (ReferenceEquals(visual, BrowseArea)) return _vm.CurrentCloudFolder() is { } here ? (here, _vm.CurrentCloudNode, false) : null;
         }
-        return _vm.CurrentCloudFolder();
+        return null;
     }
 
-    private void OnDragOver(object? sender, DragEventArgs e) =>
-        e.DragEffects = !Overlay.IsVisible && e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+    private GroupNode? _dropNode;
 
-    private void OnDrop(object? sender, DragEventArgs e)
+    /// <summary>The folder things would go into shows it, and the upload view says it in words.</summary>
+    private void MarkDrop(GroupNode? node, string hint)
     {
+        if (_vm != null) _vm.DropHint = hint;
+        if (ReferenceEquals(_dropNode, node)) return;
+        if (_dropNode != null) _dropNode.IsDropTarget = false;
+        _dropNode = node;
+        if (node != null) node.IsDropTarget = true;
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        var target = DropTarget(e);
+        if (e.DataTransfer.Contains(TilesFormat))
+        {
+            // Photos of the library: onto a folder the user points at, when they can be moved at all.
+            var move = _vm != null && target is { Named: true } && _vm.SelectionProblem() == null;
+            e.DragEffects = move ? DragDropEffects.Move : DragDropEffects.None;
+            MarkDrop(move ? target?.Node : null, "");
+            return;
+        }
+        var own = e.DataTransfer.Contains(BrowseDrag.Format);
+        // From the browser: onto a folder. From the file manager: anywhere (where it goes is asked when no folder was pointed at).
+        var can = _vm != null && !Overlay.IsVisible && (own ? target != null : e.DataTransfer.Contains(DataFormat.File));
+        e.DragEffects = can ? DragDropEffects.Copy : DragDropEffects.None;
+        MarkDrop(can ? target?.Node : null, can && target is { } t ? $"Drop: it goes into {_vm!.PlaceWords(t.Where)}." : "");
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e) => MarkDrop(null, "");
+
+    private async void OnDrop(object? sender, DragEventArgs e)
+    {
+        var target = DropTarget(e);
+        MarkDrop(null, "");
         if (_vm == null || Overlay.IsVisible) return;
-        var paths = e.DataTransfer.TryGetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().ToList() ?? [];
-        // Where it goes is asked before anything starts (and chosen there, when it was not dropped onto a folder in the cloud).
-        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, DropTarget(e))));
+        string? error = null;
+        if (e.DataTransfer.Contains(TilesFormat))
+        {
+            if (target is not { Named: true } to || _vm.SelectionProblem() != null) return;
+            var count = _vm.SelectedCount;
+            // A photo is easily pulled by mistake: said first, with where it would go.
+            if (await Dialogs.ConfirmAsync(this, "Move",
+                    $"Move {(count == 1 ? "the selected photo or video" : $"the {count:N0} selected photos and videos")} into {_vm.PlaceWords(to.Where)}?"))
+                error = _vm.MoveSelection(to.Where);
+        }
+        else if (e.DataTransfer.TryGetValue(BrowseDrag.Format) is { } drag)
+        {
+            if (target is { } t) error = _vm.Drop(drag, t.Where);
+        }
+        else if (e.DataTransfer.TryGetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().ToList() is { Count: > 0 } paths)
+        {
+            // Onto a folder: it starts. Elsewhere: where it goes is asked first.
+            if (target is { Named: true } named) error = _vm.Drop(paths, named.Where);
+            else ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, target?.Where)));
+        }
+        if (error != null) await Dialogs.InfoAsync(this, "It did not start", error);
     }
 
     private async void OnExportBucket(object? sender, RoutedEventArgs e)

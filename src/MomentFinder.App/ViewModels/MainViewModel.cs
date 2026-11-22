@@ -319,6 +319,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // Read-only turned on or off: what can be done in the folder shown changes with it.
         if (SelectedSidebarItem is SidebarEntry now) _scope = now;
         OnPropertyChanged(nameof(IsCloudScope));
+        OnPropertyChanged(nameof(ShowUploadPanel));
     }
 
     /// <summary>The progress of clones and of folders being added to a cloud folder, by MirrorScheduler's keys.</summary>
@@ -467,6 +468,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsBucketScope));
         OnPropertyChanged(nameof(IsCloudScope));
         OnPropertyChanged(nameof(IsPersonScope));
+        // Another place than a folder in the cloud: the upload view has nothing to show there.
+        if (UploadPanel && !IsCloudScope) UploadPanel = false;
+        OnPropertyChanged(nameof(ShowUploadPanel));
         if (!same) ShowPersonFaces = false;
         OnPropertyChanged(nameof(IsGridMode));
         OnPropertyChanged(nameof(ShowGroupTree));
@@ -521,7 +525,111 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public CloudPutViewModel PutUpload(IReadOnlyList<string> paths, (long SourceId, string Folder)? where) =>
         CloudPutViewModel.Upload(_host, paths, where?.SourceId, where?.Folder);
 
-    public CloudPutViewModel PutImport((long SourceId, string Folder)? where) => CloudPutViewModel.Import(_host, where?.SourceId, where?.Folder);
+    // ---- uploading by dragging: the folders' tree on the left, a browser of this computer (or another storage) on the right ----
+
+    /// <summary>The upload view is on: the folders of the source as a tree, and the browser to drag from beside the photos.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowUploadPanel))] private bool _uploadPanel;
+    public bool ShowUploadPanel => UploadPanel && IsCloudScope;
+    /// <summary>This computer's folders and files, or another storage's; made when first shown.</summary>
+    [ObservableProperty] private FileBrowserViewModel? _browser;
+    /// <summary>While something is dragged: where it would go.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(UploadHint))] private string _dropHint = "";
+    /// <summary>What the upload view says above the browser: how it works, or where the dragged things would go.</summary>
+    public string UploadHint => DropHint.Length > 0 ? DropHint
+        : "Drag files or folders from here onto a folder on the left (or onto the photos: into the folder shown). It starts at once and runs in the background.";
+    /// <summary>How the photos were shown before the upload view turned the folders' tree on.</summary>
+    private (GroupOption By, bool Tree)? _beforeUpload;
+
+    [RelayCommand]
+    private void ToggleUpload() => UploadPanel = !UploadPanel;
+
+    partial void OnUploadPanelChanged(bool value)
+    {
+        if (value)
+        {
+            Browser ??= new FileBrowserViewModel(_host);
+            // Where things are dropped: the folders as a tree.
+            _beforeUpload = (GroupBy, GroupTree);
+            GroupBy = GroupOptions.First(o => o.Mode == GroupMode.Folder);
+            GroupTree = true;
+        }
+        else if (_beforeUpload is { } before)
+        {
+            GroupTree = before.Tree;
+            GroupBy = before.By;
+            _beforeUpload = null;
+        }
+    }
+
+    /// <summary>Opens the upload view at a folder (from the menu of a source or of a folder in the tree).</summary>
+    public void OpenUpload((long SourceId, string Folder) where)
+    {
+        if (SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == SidebarKind.Source && e.Id == where.SourceId) is not { CanUpload: true } entry) return;
+        _selectFolder = where;
+        SelectedSidebarItem = entry;
+        UploadPanel = true;
+        RebuildGroups();
+    }
+
+    /// <summary>A new folder in the tree; it is made in the cloud when the first file is put into it.</summary>
+    public string? NewFolder((long SourceId, string Folder) parent, string name)
+    {
+        name = CloudService.CleanFolder(name);
+        if (name.Length == 0) return "Type the folder's name.";
+        var folder = CloudService.Join(parent.Folder, name);
+        _newFolders.Add((parent.SourceId, folder));
+        _selectFolder = (parent.SourceId, folder);
+        RebuildGroups();
+        return null;
+    }
+
+    public ConnectStorageViewModel CreateConnectStorageViewModel()
+    {
+        var vm = new ConnectStorageViewModel(_host);
+        vm.Connected += cloud => Browser?.Connected(cloud);
+        return vm;
+    }
+
+    /// <summary>The folder of the tree that is shown now, when things can be dropped into it.</summary>
+    public GroupNode? CurrentCloudNode => ShowGroupTree && SelectedGroup is { CanUpload: true } node ? node : null;
+
+    /// <summary>A place in words: "Photos / 2024 / Ski".</summary>
+    public string PlaceWords((long SourceId, string Folder) where)
+    {
+        var name = _sources.FirstOrDefault(s => s.Id == where.SourceId)?.Name ?? "";
+        return where.Folder.Length == 0 ? name : $"{name} / {where.Folder.Replace("/", " / ")}";
+    }
+
+    /// <summary>Dragged out of the browser and dropped onto a folder: uploaded (or copied from the other storage) there, in the background.</summary>
+    public string? Drop(BrowseDrag drag, (long SourceId, string Folder) where) => Try(() =>
+    {
+        if (drag.Cloud is not { } cloud)
+        {
+            _host.Jobs.Upload(where.SourceId, where.Folder, drag.Entries.Select(e => e.LocalPath!).ToList());
+            return;
+        }
+        // A folder of the other storage goes with its name, like a folder of this computer; files go straight in.
+        foreach (var folder in drag.Entries.Where(e => e.IsFolder))
+            _host.Jobs.Import(where.SourceId, CloudService.Join(where.Folder, folder.Name), CloudService.Join(drag.Remote, folder.Name),
+                $"{drag.Where}/{folder.Name} ({cloud.Name})".TrimStart('/'));
+        var files = drag.Entries.Where(e => !e.IsFolder).Select(e => e.Name).ToList();
+        if (files.Count > 0) _host.Jobs.ImportFiles(where.SourceId, where.Folder, drag.Remote, files, $"{drag.Where} ({cloud.Name})");
+    });
+
+    /// <summary>The selected photos dragged onto a folder (after the user confirmed it): they move there.</summary>
+    public string? MoveSelection((long SourceId, string Folder) where) => Try(() =>
+    {
+        foreach (var from in SelectedTiles().Select(t => t.Item).DistinctBy(i => i.Id).GroupBy(i => i.SourceId))
+        {
+            // Those that are in that folder already stay.
+            var files = from.Select(i => i.RelPath).Where(p => from.Key != where.SourceId || CloudService.Join(where.Folder, p[(p.LastIndexOf('/') + 1)..]) != p).ToList();
+            if (files.Count > 0) _host.Jobs.Move(from.Key, files, where.SourceId, where.Folder);
+        }
+    });
+
+    /// <summary>Files dragged in from the file manager onto a folder: uploaded there.</summary>
+    public string? Drop(IReadOnlyList<string> paths, (long SourceId, string Folder) where) =>
+        Try(() => _host.Jobs.Upload(where.SourceId, where.Folder, paths));
 
     public CloudPutViewModel PutMoveFolder(GroupNode folder) => CloudPutViewModel.MoveFolder(_host, folder.SourceId!.Value, folder.Folder);
 

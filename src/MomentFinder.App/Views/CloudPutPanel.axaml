@@ -3,8 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
-             xmlns:v="clr-namespace:MomentFinder.App.Views"
-             xmlns:c="clr-namespace:MomentFinder.Cloud;assembly=MomentFinder.Core"
              x:Class="MomentFinder.App.Views.CloudPutPanel"
              x:DataType="vm:CloudPutViewModel"
              MaxWidth="780" VerticalAlignment="Center">
@@ -29,68 +27,16 @@
         </Border>
         <ScrollViewer>
             <StackPanel Margin="24,24,24,16" Spacing="16">
-                <Border Classes="card" Padding="18" IsVisible="{Binding HasWhat}">
+                <Border Classes="card" Padding="18">
                     <StackPanel Spacing="8">
                         <TextBlock Classes="section" Text="What" />
                         <TextBlock Text="{Binding WhatText}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
-                <!-- From another storage: which one, and the folder in it -->
-                <Panel IsVisible="{Binding IsImport}">
-                <StackPanel Spacing="16" DataContext="{Binding Origin}" x:DataType="vm:AddCloudFolderViewModel">
-                    <Border Classes="card" Padding="18">
-                        <StackPanel Spacing="12">
-                            <TextBlock Classes="section" Text="1. Which storage" />
-                            <TextBlock Classes="muted" TextWrapping="Wrap"
-                                       Text="Photos and videos that are in another storage (another bucket, a OneDrive, a Google Drive) are copied from there into a folder of the library. They stay in the other storage too." />
-                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding HasClouds}">
-                                <TextBlock VerticalAlignment="Center" Text="Connected storage" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding Destinations}" SelectedItem="{Binding Destination}" HorizontalAlignment="Stretch" />
-                            </Grid>
-                            <StackPanel Spacing="12" IsVisible="{Binding IsNewStorage}">
-                                <v:StorageForm x:Name="NewStorage" />
-                                <Button Command="{Binding ConnectCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Connect and show its folders</Button>
-                            </StackPanel>
-                            <TextBlock Text="{Binding Status}" TextWrapping="Wrap"
-                                       IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                        </StackPanel>
-                    </Border>
-                    <Border Classes="card" Padding="18" IsVisible="{Binding IsBrowsing}">
-                        <StackPanel Spacing="10">
-                            <TextBlock Classes="section" Text="2. Which folder" />
-                            <DockPanel>
-                                <Button DockPanel.Dock="Left" Command="{Binding UpCommand}" IsEnabled="{Binding CanGoUp}" Margin="0,0,10,0"
-                                        ToolTip.Tip="One folder up">
-                                    <mi:MaterialIcon Kind="ArrowUp" />
-                                </Button>
-                                <TextBlock Text="{Binding PlaceText}" VerticalAlignment="Center" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                            </DockPanel>
-                            <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="220">
-                                <Panel>
-                                    <ListBox x:Name="FolderList" ItemsSource="{Binding Folders}" Background="Transparent" SelectionChanged="OnFolderChosen">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate x:DataType="c:StorageFolder">
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <mi:MaterialIcon Kind="FolderOutline" />
-                                                    <TextBlock Text="{Binding Title}" />
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                    <TextBlock Classes="muted" Margin="12,10" IsVisible="{Binding NoFolders}" Text="No folders inside: this one is copied with the files in it." />
-                                </Panel>
-                            </Border>
-                            <TextBlock Classes="muted" TextWrapping="Wrap"
-                                       Text="Click a folder to go into it. The folder you are in is copied, with the folders inside it." />
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
-                </Panel>
-
                 <Border Classes="card" Padding="18">
                     <StackPanel Spacing="10">
-                        <TextBlock Classes="section" Text="{Binding WhereTitle}" />
+                        <TextBlock Classes="section" Text="Where it goes" />
                         <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="260" IsVisible="{Binding !NoPlaces}">
                             <TreeView ItemsSource="{Binding Places}" SelectedItem="{Binding SelectedPlace}">
                                 <TreeView.Styles>

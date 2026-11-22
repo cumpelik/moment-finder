@@ -242,6 +242,16 @@ public class CloudJobsTests
         Assert.Equal(["From the old storage/2019/a.jpg", "From the old storage/2019/b.jpg", "From the old storage/c.jpg"], w.Shown(photos.Id));
         // The other storage is as it was.
         Assert.True(File.Exists(Path.Combine(oldDir, "Pictures", "c.jpg")));
+
+        // Single files of a folder there, by name: only those, straight into the folder.
+        var some = w.Jobs.ImportFiles(photos.Id, "Picked", CloudService.Join(old.Remote, "Pictures/2019"), ["b.jpg", "gone.jpg"], "Pictures/2019 of Old");
+        await w.Jobs.RunAsync(some, ct);
+        job = w.Jobs.Get(some)!;
+        Assert.Equal((2, 1, 1), (job.Total, job.Done, job.Failed));
+        Assert.True(w.Has("Photos/Picked/b.jpg") && !w.Has("Photos/Picked/a.jpg"));
+        Assert.Equal("gone.jpg", Assert.Single(w.Jobs.FailedFiles(some)).Origin);
+        // A folder of the library's own storage is never copied into itself.
+        Assert.Throws<InvalidOperationException>(() => w.Jobs.Import(photos.Id, "Inside", photos.Remote!, "itself"));
     }
 
     [Fact]

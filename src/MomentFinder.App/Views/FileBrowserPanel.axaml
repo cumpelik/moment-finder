@@ -1,0 +1,58 @@
+<!-- Beside a folder in the cloud: what is dragged from here onto a folder of the library is uploaded there -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             x:Class="MomentFinder.App.Views.FileBrowserPanel"
+             x:DataType="vm:FileBrowserViewModel">
+    <DockPanel Margin="10,0,10,8">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+            <ComboBox ItemsSource="{Binding Places}" SelectedItem="{Binding Place}" HorizontalAlignment="Stretch"
+                      ToolTip.Tip="Where the files are: this computer, or a storage that is connected" />
+            <Button Grid.Column="1" Click="OnConnect" Margin="6,0,0,0"
+                    ToolTip.Tip="Connect another storage (another bucket, a OneDrive, a Google Drive) to copy from it">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <mi:MaterialIcon Kind="CloudPlusOutline" />
+                    <TextBlock Text="Another storage..." />
+                </StackPanel>
+            </Button>
+        </Grid>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+            <Button DockPanel.Dock="Left" Classes="icon" Command="{Binding UpCommand}" IsEnabled="{Binding CanGoUp}" Margin="0,0,6,0"
+                    ToolTip.Tip="One folder up">
+                <mi:MaterialIcon Kind="ArrowUp" />
+            </Button>
+            <Button DockPanel.Dock="Right" Classes="icon" Command="{Binding RefreshCommand}" Margin="6,0,0,0" ToolTip.Tip="Look again">
+                <mi:MaterialIcon Kind="Refresh" />
+            </Button>
+            <TextBlock Text="{Binding PlaceText}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="PrefixCharacterEllipsis"
+                       ToolTip.Tip="{Binding PlaceText}" />
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Bottom" Classes="muted small" TextWrapping="Wrap" Margin="0,8,0,0"
+                   Text="Double click opens a folder. Ctrl or Shift selects more. A dragged folder goes with its name and everything inside it." />
+        <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4">
+            <Panel>
+                <ListBox x:Name="List" ItemsSource="{Binding Entries}" SelectionMode="Multiple" Background="Transparent"
+                         DoubleTapped="OnDoubleTapped">
+                    <ListBox.Styles>
+                        <Style Selector="ListBoxItem">
+                            <Setter Property="Padding" Value="8,4" />
+                            <Setter Property="MinHeight" Value="28" />
+                        </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="vm:BrowseEntry">
+                            <DockPanel Background="Transparent">
+                                <mi:MaterialIcon DockPanel.Dock="Left" Kind="{Binding Icon}" Margin="0,0,8,0" />
+                                <TextBlock DockPanel.Dock="Right" Classes="muted small" Text="{Binding Detail}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Name}" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Classes="muted" Margin="12,10" TextWrapping="Wrap" Text="{Binding Status}" IsHitTestVisible="False"
+                           IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            </Panel>
+        </Border>
+    </DockPanel>
+</UserControl>

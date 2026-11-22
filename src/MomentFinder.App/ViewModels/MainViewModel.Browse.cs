@@ -46,6 +46,8 @@ public sealed partial class GroupNode(string key, string title) : ObservableObje
     public bool CanUpload { get; init; }
     /// <summary>And it can be moved, renamed or deleted itself (not the source as a whole).</summary>
     public bool CanChangeFolder => CanUpload && Folder.Length > 0;
+    /// <summary>Something is being dragged over it: it would go here.</summary>
+    [ObservableProperty] private bool _isDropTarget;
     [ObservableProperty] private string _count = "";
     [ObservableProperty] private bool _isExpanded;
 
@@ -103,7 +105,8 @@ public sealed partial class MainViewModel
 
     partial void OnGroupTreeChanged(bool value)
     {
-        _host.Db.SetSetting("group_tree", value ? "1" : "0");
+        // The upload view turns the folders' tree on for itself: that is not the user's choice to keep.
+        if (_beforeUpload == null) _host.Db.SetSetting("group_tree", value ? "1" : "0");
         ShowChosenGroups();
         ResultsReset?.Invoke();
     }
@@ -119,7 +122,8 @@ public sealed partial class MainViewModel
     private void ShowChosenGroups()
     {
         if (!IsGrouped) return;
-        var groups = GroupTree && SelectedGroup != null ? SelectedGroup.Groups : _allGroups;
+        // A folder without photos (new, or only folders in it) is a place in the tree, not a title in the grid.
+        var groups = (GroupTree && SelectedGroup != null ? SelectedGroup.Groups : _allGroups).Where(g => g.Tiles.Count > 0).ToList();
         ShowGrid(TileGrid.Grouped(groups), groups.SelectMany(g => g.Tiles).ToList());
     }
 
@@ -145,8 +149,31 @@ public sealed partial class MainViewModel
             GroupRoots = roots;
             SelectedGroup = fresh.FirstOrDefault(n => n.Key == chosen) ?? roots.FirstOrDefault();
         }
+        if (_selectFolder is { } wanted)
+        {
+            var nodes = GroupRoots.SelectMany(r => r.SelfAndBelow()).ToList();
+            if (nodes.FirstOrDefault(n => n.SourceId == wanted.SourceId && n.Folder == wanted.Folder) is { } node)
+            {
+                _selectFolder = null;
+                foreach (var above in nodes.Where(n => node.Key.StartsWith(n.Key + "\u0001", StringComparison.Ordinal))) above.IsExpanded = true;
+                SelectedGroup = node;
+            }
+        }
         _applyingTree = false;
         ShowChosenGroups();
+    }
+
+    /// <summary>The folder to choose in the tree once it is there (it was just made, or asked for from a menu).</summary>
+    private (long SourceId, string Folder)? _selectFolder;
+    /// <summary>Folders made here that have nothing in them yet: places in the tree until something is put into them.</summary>
+    private readonly HashSet<(long SourceId, string Folder)> _newFolders = [];
+
+    /// <summary>The places of the folders' tree that have no photos: the cloud source shown (so it can be dropped onto) and new folders.</summary>
+    private List<(long SourceId, string Folder)> EmptyFolders()
+    {
+        var places = _newFolders.Where(f => _changeable.Contains(f.SourceId) && (CurrentScope is not { Kind: SidebarKind.Source } scope || scope.Id == f.SourceId)).ToList();
+        if (CurrentScope is { Kind: SidebarKind.Source, CanUpload: true } source) places.Add((source.Id, ""));
+        return places;
     }
 
     /// <summary>The tree of the groups' paths; each place collects the groups under it.</summary>
@@ -187,7 +214,7 @@ public sealed partial class MainViewModel
 
     partial void OnGroupByChanged(GroupOption value)
     {
-        _host.Db.SetSetting("group_by", value.Mode.ToString());
+        if (_beforeUpload == null) _host.Db.SetSetting("group_by", value.Mode.ToString());
         RebuildGroups();
         ResultsReset?.Invoke();
     }
@@ -214,9 +241,10 @@ public sealed partial class MainViewModel
         var tiles = Tiles.ToList();
         var mode = GroupBy.Mode;
         var changeable = _changeable;
+        var empty = EmptyFolders();
         var (groups, roots) = await Task.Run(() =>
         {
-            var groups = BuildGroups(tiles, mode);
+            var groups = BuildGroups(tiles, mode, empty);
             return (groups, BuildTree(groups, changeable));
         });
         if (version != _groupsVersion) return;
@@ -224,7 +252,7 @@ public sealed partial class MainViewModel
         ApplyGroups(groups, roots);
     }
 
-    private List<TileGroup> BuildGroups(List<TileViewModel> tiles, GroupMode mode)
+    private List<TileGroup> BuildGroups(List<TileViewModel> tiles, GroupMode mode, List<(long SourceId, string Folder)> empty)
     {
         var culture = CultureInfo.CurrentCulture;
         string Items(int n) => Format.Count(n, "item", "items");
@@ -234,8 +262,12 @@ public sealed partial class MainViewModel
             // The folders as they are on the disk or in the cloud; the source's name too when several are shown.
             var sources = _host.Repo.ListSources().ToDictionary(s => s.Id, s => s.Name);
             var several = tiles.Select(t => t.Item.SourceId).Distinct().Count() > 1;
-            groups = tiles
+            var byFolder = tiles
                 .GroupBy(t => (t.Item.SourceId, Folder: t.Item.RelPath.Contains('/') ? t.Item.RelPath[..t.Item.RelPath.LastIndexOf('/')] : ""))
+                .ToDictionary(g => g.Key, g => g.ToList());
+            // Places without photos that are in the tree all the same: the source itself, folders just made.
+            foreach (var place in empty) byFolder.TryAdd(place, []);
+            groups = byFolder
                 .Select(g =>
                 {
                     var source = sources.GetValueOrDefault(g.Key.SourceId, "");
@@ -246,7 +278,7 @@ public sealed partial class MainViewModel
                     return (Title: title, Path: path, Group: g);
                 })
                 .OrderBy(x => x.Title, StringComparer.Create(culture, CompareOptions.IgnoreCase))
-                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList(), x.Path) { SourceId = x.Group.Key.SourceId })
+                .Select(x => new TileGroup(x.Title, Items(x.Group.Value.Count), x.Group.Value, x.Path) { SourceId = x.Group.Key.SourceId })
                 .ToList();
         }
         else if (mode == GroupMode.Person)

@@ -153,6 +153,17 @@ public sealed partial class Rclone
         }
     }
 
+    /// <summary>What is right in a folder: its folders and its files.</summary>
+    public sealed record Entry(string Name, bool IsFolder, long Size, DateTimeOffset ModTime);
+
+    public async Task<List<Entry>> EntriesAsync(string remotePath, CancellationToken ct)
+    {
+        using var doc = JsonDocument.Parse(await RunAsync(["lsjson", "--no-mimetype", "--max-depth", "1", remotePath], ct));
+        return doc.RootElement.EnumerateArray().Select(e => new Entry(e.GetProperty("Name").GetString()!, e.GetProperty("IsDir").GetBoolean(),
+            Math.Max(0, e.GetProperty("Size").GetInt64()),
+            DateTimeOffset.TryParse(e.GetProperty("ModTime").GetString(), CultureInfo.InvariantCulture, out var time) ? time : default)).ToList();
+    }
+
     public async Task<List<string>> DirsAsync(string remotePath, CancellationToken ct)
     {
         try

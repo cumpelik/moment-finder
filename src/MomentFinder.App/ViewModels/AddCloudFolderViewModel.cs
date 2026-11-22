@@ -34,10 +34,6 @@ public sealed partial class AddCloudFolderViewModel : CloudWorkViewModel
     public string PlaceText => _root.Length == 0 ? "" : $"{_root[(_root.IndexOf(':') + 1)..]}/{Path}".TrimEnd('/');
     public string AddText => CanAdd ? $"Adds the folder {PlaceText} to the library." : "Go into the folder with your photos (click it).";
 
-    /// <summary>The folder shown, as rclone reaches it.</summary>
-    public string Remote => CloudService.Join(_root, Path);
-    public string StorageName => _cloud?.Name ?? "";
-
     [ObservableProperty] private string _name = "";
     private bool _nameTyped;
     private string _proposed = "";
@@ -51,8 +47,7 @@ public sealed partial class AddCloudFolderViewModel : CloudWorkViewModel
     /// <summary>The folder is in the library: the window closes, the sidebar shows it.</summary>
     public event Action<long>? Added;
 
-    /// <summary>browse: looks into the first storage at once (not when the window may never show this part).</summary>
-    public AddCloudFolderViewModel(LibraryHost host, bool browse = true)
+    public AddCloudFolderViewModel(LibraryHost host)
     {
         _host = host;
         Form = new StorageFormViewModel("");
@@ -63,7 +58,7 @@ public sealed partial class AddCloudFolderViewModel : CloudWorkViewModel
         }
         HasClouds = Destinations.Count > 0;
         Destinations.Add(new CloudChoice("Another storage (fill it in below)", null));
-        if (browse) Destination = Destinations[0];
+        Destination = Destinations[0];
     }
 
     protected override void Reload() { }
