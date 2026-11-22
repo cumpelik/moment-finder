@@ -443,13 +443,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (now > lastFrame) now = lastFrame;
         var interval = People.PeopleAnalyzer.FrameIntervalMs(Current.Item.DurationMs ?? 0);
         var boxes = new List<PeopleBox>();
-        // Who each track is: a confirmed detection first, then any assigned, then a suggestion.
+        // Who each track is: a confirmed detection first, then one settled by that day, any assigned, a suggestion.
         var tracks = new List<(List<People.TrackBox> Path, People.DetectionRow Who)>();
         foreach (var (track, path) in _paths)
         {
             var dets = _detections.Where(d => d.Track == track).ToList();
             if (dets.Count == 0) continue;
-            var who = dets.OrderByDescending(d => d.Confirmed).ThenByDescending(d => d.PersonId != null).ThenByDescending(d => d.SuggestPersonId != null)
+            var who = dets.OrderByDescending(d => d.Confirmed).ThenByDescending(Settled).ThenByDescending(d => d.PersonId != null).ThenByDescending(d => d.SuggestPersonId != null)
                 .ThenByDescending(d => d.Kind == Analysis.DetectionKind.Body).ThenByDescending(d => d.Quality).First();
             if (who.PersonId is { } p && _hidden.Contains(p)) continue;
             tracks.Add((path, who));
@@ -527,16 +527,23 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             var inside = Math.Max(0, Math.Min(bx + bw, view.Width) - Math.Max(bx, 0)) * Math.Max(0, Math.Min(by + bh, view.Height) - Math.Max(by, 0));
             if (bw > view.Width * 0.6 || inside < bw * bh * 0.3) return null;
         }
-        // The face says who it is when the figure does not, and when the user named the face (a figure with a named
-        // face is no guess).
-        var who = !d.Confirmed && face is { PersonId: not null } && (face.Confirmed || d.PersonId == null) ? face : d;
-        var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (who.Confirmed ? "" : "?") :
+        // The face says who it is when the figure does not, and when the face's name is settled (a figure with such
+        // a face is no guess).
+        var who = !d.Confirmed && face is { PersonId: not null } && (Settled(face) || d.PersonId == null) ? face : d;
+        var settled = Settled(who);
+        var label = who.PersonId is { } p && _names.TryGetValue(p, out var n) ? n + (settled ? "" : "?") :
             who.SuggestPersonId is { } s && _names.TryGetValue(s, out var sn) ? sn + "??" : "Who?";
         var personId = who.PersonId ?? who.SuggestPersonId;
         var known = personId is { } id && _names.TryGetValue(id, out var name) ? name : null;
         return new PeopleBox(d.Id, bx, by, bw, bh, label,
-            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId, known, known != null && !who.Confirmed);
+            who.PersonId != null, d.Kind == Analysis.DetectionKind.Face, personId, known, known != null && !settled);
     }
+
+    /// <summary>
+    /// No guess: the user said who it is, or a face the user named on the same day did (one answer stands for the
+    /// day's series; no "?" and nothing to confirm).
+    /// </summary>
+    private static bool Settled(People.DetectionRow d) => d.Confirmed || d.PersonId != null && d.AssignSource == People.AssignSource.SameDay;
 
     /// <summary>For the dialog that asks who a box is: its picture and the known people, the most likely first.</summary>
     public Task<WhoQuestion> AskAsync(long detectionId) => _main.People.AskBoxAsync(detectionId);
@@ -568,19 +575,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     /// The matching after an answer is done: the names it changed show at once (also on the photo opened meanwhile),
     /// and how far the last answer reached is said.
     /// </summary>
-    private void OnAnswered(IReadOnlyDictionary<long, HashSet<long>>? gained)
+    private void OnAnswered(People.IdentityService.Reach? reach)
     {
         var asked = _lookingFor;
         _lookingFor = null;
         if (!ShowPeople) return;
         LoadPeople();
         if (asked is not var (person, mediaId, name)) return;
-        var others = gained?.GetValueOrDefault(person)?.Count(m => m != mediaId) ?? 0;
-        PeopleHint = gained == null
-            ? $"The library is busy: {name} is looked for in the other photos and videos a little later."
-            : others == 0
-            ? $"{name}: no new photos or videos found this time."
-            : $"{name} is on {Format.Count(others, "more photo or video", "more photos and videos")} now.";
+        var found = reach?.Found.GetValueOrDefault(person)?.Where(m => m != mediaId).ToHashSet() ?? [];
+        // Named before as a guess, and settled now by this answer: the rest of the day's series.
+        var settled = reach?.Settled.GetValueOrDefault(person)?.Count(m => m != mediaId && !found.Contains(m)) ?? 0;
+        PeopleHint = reach == null ? $"The library is busy: {name} is looked for in the other photos and videos a little later."
+            : found.Count > 0 ? $"{name} is on {Format.Count(found.Count, "more photo or video", "more photos and videos")} now."
+            : settled > 0 ? $"{name}: also on {Format.Count(settled, "more photo", "more photos")} of that day, no need to confirm them."
+            : $"{name}: no new photos or videos found this time.";
     }
 
     public void RejectDetection(long detectionId, long personId)

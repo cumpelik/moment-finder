@@ -7,7 +7,7 @@ using MomentFinder.Sync;
 
 namespace MomentFinder.People;
 
-/// <summary>How an identity got to a detection; the order is also the trust order.</summary>
+/// <summary>How an identity got to a detection (the numbers are stored; which one is trusted more: IdentityService.OncePerPicture).</summary>
 public enum AssignSource
 {
     User = 1,
@@ -15,6 +15,12 @@ public enum AssignSource
     Linked = 3,
     Track = 4,
     Outfit = 5,
+    /// <summary>
+    /// A face like one the user named on the same day (IdentityService.MatchSameDay): the user's one answer stands
+    /// for the series, so it is shown as settled, not as a guess. Not stored as the user's word: it follows that
+    /// answer when it is corrected.
+    /// </summary>
+    SameDay = 6,
 }
 
 public sealed class Person
@@ -371,9 +377,14 @@ public sealed class PeopleRepository
                        ORDER BY (confirmed=1 OR assign_source=@linked) DESC, quality DESC) AS n
             FROM detection
             WHERE kind=@face AND person_id IS NOT NULL
-              AND (confirmed=1 OR (assign_source=@linked AND confidence>=1) OR (assign_source=@byFace AND confidence>=@sure AND quality>=0.3)))
+              AND (confirmed=1 OR (assign_source=@linked AND confidence>=1)
+                   OR (assign_source IN (@byFace, @sameDay) AND confidence>=@sure AND quality>=0.3)))
           WHERE n<=@ofEach)
-        """, new { face = (int)DetectionKind.Face, linked = (int)AssignSource.Linked, byFace = (int)AssignSource.Face, sure, ofEach });
+        """, new
+    {
+        face = (int)DetectionKind.Face, linked = (int)AssignSource.Linked, byFace = (int)AssignSource.Face,
+        sameDay = (int)AssignSource.SameDay, sure, ofEach,
+    });
 
     /// <summary>The figures of known people on these days out, except the detections asked about (who else was there, in what clothes).</summary>
     public List<DetectionRow> KnownFiguresOf(IReadOnlyCollection<long> eventIds, IReadOnlyCollection<long> exceptDetectionIds) =>

@@ -212,10 +212,10 @@ public sealed partial class PeopleViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The matching after the user's answers is done: the photos and videos each person was newly found on, null
-    /// when it could not be done now (IdentityService.Answered, on the UI thread).
+    /// The matching after the user's answers is done: how far they reached, null when it could not be done now
+    /// (IdentityService.Answered, on the UI thread).
     /// </summary>
-    public event Action<IReadOnlyDictionary<long, HashSet<long>>?>? Answered;
+    public event Action<IdentityService.Reach?>? Answered;
 
     private string CropPath(long detectionId) => CropFallback.Ensure(_host.Paths, _host.Db, detectionId);
 
@@ -510,6 +510,7 @@ public sealed partial class PeopleViewModel : ObservableObject
             {
                 Caption = d.Confirmed ? "confirmed" : d.AssignSource switch
                 {
+                    AssignSource.SameDay => $"like a named face of that day {d.Confidence:0.00}",
                     AssignSource.Face => $"face {d.Confidence:0.00}",
                     AssignSource.Linked => "body of the face",
                     AssignSource.Track => "same video track",

@@ -279,11 +279,12 @@ public class PeopleTests
         identity.Recompute();
         Assert.All(series, s => Assert.All(repo.DetectionsOfMedia(items[$"s{series.IndexOf(s)}.jpg"]), d => Assert.Equal(david.Id, d.PersonId)));
 
-        var answered = new TaskCompletionSource<IReadOnlyDictionary<long, HashSet<long>>>();
-        identity.Answered += gained => answered.TrySetResult(gained);
+        var answered = new TaskCompletionSource<IdentityService.Reach?>();
+        identity.Answered += reach => answered.TrySetResult(reach);
         repo.Confirm([series[0][1]], greta.Id);
         identity.RecomputeSoon();
-        var gained = await answered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var reach = await answered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.NotNull(reach);
 
         for (var i = 0; i < 5; i++)
             Assert.All(repo.DetectionsOfMedia(items[$"s{i}.jpg"]), d => Assert.Equal(greta.Id, d.PersonId));
@@ -291,7 +292,12 @@ public class PeopleTests
         Assert.Equal(david.Id, repo.DetectionsOfMedia(items["david_too.jpg"]).Single().PersonId);
         // Months later, the same look: the series stands for her now, so she is found there too.
         Assert.Equal(greta.Id, repo.DetectionsOfMedia(items["alike.jpg"]).Single().PersonId);
-        Assert.Equal(Enumerable.Range(0, 5).Select(i => items[$"s{i}.jpg"]).Append(items["alike.jpg"]).Order(), gained[greta.Id].Order());
+        Assert.Equal(Enumerable.Range(0, 5).Select(i => items[$"s{i}.jpg"]).Append(items["alike.jpg"]).Order(), reach.Found[greta.Id].Order());
+        // The rest of that day's series is settled by the one answer (no guess to confirm); the other day is a guess.
+        for (var i = 1; i < 5; i++)
+            Assert.Equal(AssignSource.SameDay, repo.DetectionsOfMedia(items[$"s{i}.jpg"]).Single(d => d.Kind == DetectionKind.Face).AssignSource);
+        Assert.Equal(AssignSource.Face, repo.DetectionsOfMedia(items["alike.jpg"]).Single().AssignSource);
+        Assert.Equal(Enumerable.Range(1, 4).Select(i => items[$"s{i}.jpg"]).Order(), reach.Settled[greta.Id].Order());
 
         // Photos without a date make no day out: their folder is what belongs together.
         using (var c = lib.Db.Open()) c.Execute("UPDATE media SET event_id=NULL");

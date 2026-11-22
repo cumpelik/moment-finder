@@ -45,11 +45,16 @@ public sealed class IdentityService
     public sealed record Result(int Faces, int Bodies, int Assigned, int Suggestions, int Clusters);
 
     /// <summary>
-    /// After answers of the user (the photos and videos each person was newly found on since the first of them):
-    /// raised on a background thread when the matching they asked for is done. Null: it could not be done now
-    /// (the library was busy or away).
+    /// How far answers of the user reached, by person: the photos and videos the person was newly found on, and
+    /// those where the name is settled now by a face named that day (it was a guess, or not there, before).
     /// </summary>
-    public event Action<IReadOnlyDictionary<long, HashSet<long>>?>? Answered;
+    public sealed record Reach(IReadOnlyDictionary<long, HashSet<long>> Found, IReadOnlyDictionary<long, HashSet<long>> Settled);
+
+    /// <summary>
+    /// After answers of the user (how far they reached since the first of them): raised on a background thread
+    /// when the matching they asked for is done. Null: it could not be done now (the library was busy or away).
+    /// </summary>
+    public event Action<Reach?>? Answered;
 
     /// <summary>A few answers given in a row are matched together.</summary>
     public TimeSpan AnswerDelay { get; set; } = TimeSpan.FromMilliseconds(300);
@@ -58,6 +63,7 @@ public sealed class IdentityService
     private bool _soonRunning;
     private bool _soonAgain;
     private readonly Dictionary<long, HashSet<long>> _gained = [];
+    private readonly Dictionary<long, HashSet<long>> _settled = [];
 
     /// <summary>
     /// The user said who somebody is: everything is matched again right away in the background, not when the
@@ -75,7 +81,11 @@ public sealed class IdentityService
             _soonRunning = true;
             _soonAgain = false;
         }
-        lock (_gained) _gained.Clear();
+        lock (_gained)
+        {
+            _gained.Clear();
+            _settled.Clear();
+        }
         _ = Task.Run(async () =>
         {
             var failed = false;
@@ -109,9 +119,10 @@ public sealed class IdentityService
                 lock (_soonGate) _soonRunning = false;
                 throw;
             }
-            Dictionary<long, HashSet<long>> gained;
-            lock (_gained) gained = _gained.ToDictionary(g => g.Key, g => g.Value.ToHashSet());
-            Answered?.Invoke(failed ? null : gained);
+            Reach reach;
+            lock (_gained)
+                reach = new Reach(_gained.ToDictionary(g => g.Key, g => g.Value.ToHashSet()), _settled.ToDictionary(g => g.Key, g => g.Value.ToHashSet()));
+            Answered?.Invoke(failed ? null : reach);
         });
     }
 
@@ -151,10 +162,16 @@ public sealed class IdentityService
             var changed = all.Where(d => !d.Confirmed && Snapshot(d) != before[d.Id]).ToList();
             _repo.SaveAssignments(changed);
             lock (_gained)
-                foreach (var d in changed.Where(d => d.PersonId is { } p && before[d.Id].Item1 != p))
+                foreach (var d in changed.Where(d => d.PersonId != null))
                 {
-                    if (!_gained.TryGetValue(d.PersonId!.Value, out var media)) _gained[d.PersonId.Value] = media = [];
-                    media.Add(d.MediaId);
+                    var (person, was) = (d.PersonId!.Value, before[d.Id]);
+                    void Add(Dictionary<long, HashSet<long>> to)
+                    {
+                        if (!to.TryGetValue(person, out var media)) to[person] = media = [];
+                        media.Add(d.MediaId);
+                    }
+                    if (was.Item1 != person) Add(_gained);
+                    if (d.AssignSource == AssignSource.SameDay && (was.Item1 != person || was.Item2 != AssignSource.SameDay)) Add(_settled);
                 }
             if (changed.Count > 0) Changed?.Invoke();
             return new Result(faces.Count, bodies.Count, all.Count(d => d.PersonId != null),
@@ -443,7 +460,7 @@ public sealed class IdentityService
                 if (elsewhere[i]) continue;
                 var (d, f, person, score) = found[i];
                 f.PersonId = person;
-                f.AssignSource = AssignSource.Face;
+                f.AssignSource = AssignSource.SameDay;
                 f.Confidence = score;
                 days[d].Open.Remove(f);
                 if (score < FaceExtend || f.Quality < 0.3f) continue;
@@ -563,7 +580,8 @@ public sealed class IdentityService
     {
         static int Rank(AssignSource? s) => s switch
         {
-            AssignSource.User => 5, AssignSource.Face => 4, AssignSource.Linked => 3, AssignSource.Track => 2, AssignSource.Outfit => 1, _ => 0,
+            AssignSource.User => 6, AssignSource.SameDay => 5, AssignSource.Face => 4, AssignSource.Linked => 3, AssignSource.Track => 2,
+            AssignSource.Outfit => 1, _ => 0,
         };
         foreach (var frame in all.GroupBy(d => (d.MediaId, d.TimeMs)))
         {
