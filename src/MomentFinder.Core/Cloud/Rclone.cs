@@ -209,14 +209,22 @@ public sealed partial class Rclone
 
     public Task DownloadAsync(string remoteFile, string localPath, CancellationToken ct) => DownloadAsync(remoteFile, localPath, null, ct);
 
-    /// <summary>One file; with progress, from rclone's statistics (a large file says how far it is).</summary>
-    public async Task DownloadAsync(string remoteFile, string localPath, IProgress<CopyProgress>? progress, CancellationToken ct)
+    /// <summary>
+    /// One file; with progress, from rclone's statistics (a large file says how far it is). Streams above one fetch
+    /// parts of the file at once: one connection to IDrive e2 gives 5-11 MB/s and sometimes stalls for seconds
+    /// (13 MB in 0.7-4.5 s), eight give 13 MB in 0.7-1.4 s.
+    /// </summary>
+    public async Task DownloadAsync(string remoteFile, string localPath, IProgress<CopyProgress>? progress, CancellationToken ct,
+        int streams = 1)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
         var tmp = localPath + ".part";
-        if (progress == null) await RunAsync(["copyto", remoteFile, tmp], ct);
+        List<string> args = ["copyto", remoteFile, tmp];
+        if (streams > 1)
+            args.AddRange(["--multi-thread-cutoff", "1M", "--multi-thread-streams", streams.ToString(CultureInfo.InvariantCulture)]);
+        if (progress == null) await RunAsync(args, ct);
         else
-            await RunAsync(["copyto", remoteFile, tmp, "--stats", "1s", "--stats-one-line", "--stats-log-level", "NOTICE"], ct, line =>
+            await RunAsync([.. args, "--stats", "1s", "--stats-one-line", "--stats-log-level", "NOTICE"], ct, line =>
             {
                 if (ParseStats(line) is { } p) progress.Report(p);
             });

@@ -71,7 +71,9 @@ public static class MediaFiles
             {
                 if (!IsCached(item))
                 {
-                    await _rclone.DownloadAsync(item.Remote, item.FullPath, progress, ct);
+                    // Somebody waits: several connections at once. The background keeps to one each, so it does
+                    // not take the line from the viewer.
+                    await _rclone.DownloadAsync(item.Remote, item.FullPath, progress, ct, waited ? 8 : 1);
                     Fetched?.Invoke(item.Id);
                 }
             }

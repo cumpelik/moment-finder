@@ -607,8 +607,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             await Show360PhotoAsync(entry, version);
             return;
         }
-        // A photo that lives in the cloud is downloaded first: the wait says so.
-        if (!Cloud.MediaFiles.IsLocal(entry.Item) && !_prefetch.ContainsKey(entry.Item.Id)) LoadingText = "Downloading from the cloud...";
+        // A photo that lives in the cloud is downloaded first: the wait says so, over its thumbnail (the people
+        // boxes are placed by fractions of the picture, so they fit the thumbnail too).
+        if (!Cloud.MediaFiles.IsLocal(entry.Item) && !_prefetch.ContainsKey(entry.Item.Id))
+        {
+            LoadingText = "Downloading from the cloud...";
+            ShowThumbnail(entry.Item);
+        }
         var decoded = await DecodeAsync(entry.Item);
         if (version != _loadVersion) return;
         if (decoded == null)
@@ -627,6 +632,23 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             PeopleChanged?.Invoke();
         }
         if (AutoPlay) _slideTimer.Start();
+    }
+
+    private void ShowThumbnail(MediaItem item)
+    {
+        if (_main.Thumbnails.ExistingPath(item.Id) is not { } path) return;
+        try
+        {
+            var thumb = new Bitmap(path);
+            Photo = thumb;
+            ContentWidth = thumb.PixelSize.Width;
+            ContentHeight = thumb.PixelSize.Height;
+            PeopleChanged?.Invoke();
+        }
+        catch (Exception)
+        {
+            // A broken thumbnail: the photo comes without it.
+        }
     }
 
     private Task<DecodedImage?> DecodeAsync(MediaItem item)

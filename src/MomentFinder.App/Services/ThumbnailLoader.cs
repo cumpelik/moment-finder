@@ -23,6 +23,9 @@ public sealed class ThumbnailLoader
         _paths = paths;
     }
 
+    /// <summary>The item's thumbnail when it is made already; null otherwise (nothing is made or downloaded for it).</summary>
+    public string? ExistingPath(long mediaId) => _paths.ThumbPath(mediaId) is var path && File.Exists(path) ? path : null;
+
     /// <summary>A video found by a search shows the matching frame (atMs), not its usual first-second frame.</summary>
     public async Task<Bitmap?> LoadAsync(MediaItem item, int atMs, CancellationToken ct)
     {
