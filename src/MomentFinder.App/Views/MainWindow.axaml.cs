@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Which version runs is in sight: after an update the title says the new one.
+        Title = MomentFinder.App.Services.AppVersion.Title;
         Repeater.Layout = _tileLayout;
         Repeater.ItemTemplate = new TileTemplates((IDataTemplate)Resources["TileTemplate"]!, (IDataTemplate)Resources["GroupTitleTemplate"]!);
         Repeater.ElementPrepared += OnTilePrepared;
