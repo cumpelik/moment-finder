@@ -270,4 +270,27 @@ public class LibraryTests
             Directory.GetFiles(plain).Select(Path.GetFileName).Order());
         Assert.Equal("someone else's file", File.ReadAllText(Path.Combine(plain, "IMG_2.jpg")));
     }
+
+    [Fact]
+    public void APreferenceOfTheWindowDoesNotWaitForAnotherWrite()
+    {
+        using var lib = new TestLibrary();
+        lib.Db.SetSetting("group_by", "Folder");
+
+        // Something writes to the library for long (the people matching, the other computers' changes).
+        using var busy = lib.Db.Open();
+        using var writing = busy.BeginTransaction();
+        var asked = System.Diagnostics.Stopwatch.StartNew();
+        lib.Db.SetSettingSoon("group_by", "Day");
+        lib.Db.SetSettingSoon("group_by", "Month");
+        Assert.True(asked.ElapsedMilliseconds < 1000, $"the window waited {asked.ElapsedMilliseconds} ms");
+        // Known at once, although not written yet.
+        Assert.Equal("Month", lib.Db.GetSetting("group_by"));
+        Assert.Equal("Folder", Dapper.SqlMapper.ExecuteScalar<string>(busy, "SELECT value FROM setting WHERE key='group_by'", transaction: writing));
+
+        writing.Commit();
+        lib.Db.FlushSettings();
+        Assert.Equal("Month", Dapper.SqlMapper.ExecuteScalar<string>(busy, "SELECT value FROM setting WHERE key='group_by'"));
+        Assert.Equal("Month", lib.Db.GetSetting("group_by"));
+    }
 }

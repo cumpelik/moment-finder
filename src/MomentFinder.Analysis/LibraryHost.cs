@@ -127,6 +127,7 @@ public sealed class LibraryHost : IDisposable
 
     public void Dispose()
     {
+        Db.FlushSettings();
         Indexer.Dispose();
         Mirrors.Dispose();
         Jobs.Dispose();

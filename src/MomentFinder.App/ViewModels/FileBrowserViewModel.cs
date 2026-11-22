@@ -124,7 +124,7 @@ public sealed partial class FileBrowserViewModel : ObservableObject
             else
             {
                 entries = await Task.Run(() => path.Length == 0 ? Start() : Local(path));
-                if (path.Length > 0) _host.Db.SetSetting(PathSetting, path);
+                if (path.Length > 0) _host.Db.SetSettingSoon(PathSetting, path);
             }
         }
         catch (Exception e) when (e is RcloneException or IOException or UnauthorizedAccessException or InvalidOperationException)

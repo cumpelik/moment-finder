@@ -337,8 +337,60 @@ public sealed class Database
 
     public string? GetSetting(string key)
     {
+        lock (_unwritten)
+            if (_unwritten.TryGetValue(key, out var value)) return value;
         using var c = Open();
         return c.ExecuteScalar<string?>("SELECT value FROM setting WHERE key=@key", new { key });
+    }
+
+    /// <summary>Preferences changed in the window and not written yet: read from here meanwhile.</summary>
+    private readonly Dictionary<string, string?> _unwritten = [];
+    private Task _writingSettings = Task.CompletedTask;
+
+    /// <summary>
+    /// A preference changed in the window (the grouping, the size of a panel): known at once, written in the
+    /// background. The window never waits for another write to the library to end: the people matching or the
+    /// other computers' changes can be written for many seconds, and the window would stand still that long.
+    /// </summary>
+    public void SetSettingSoon(string key, string? value)
+    {
+        lock (_unwritten)
+        {
+            _unwritten[key] = value;
+            _writingSettings = _writingSettings.ContinueWith(_ => WriteSetting(key), TaskScheduler.Default);
+        }
+    }
+
+    private void WriteSetting(string key)
+    {
+        string? value;
+        lock (_unwritten)
+            if (!_unwritten.TryGetValue(key, out value)) return;
+        // Busy for longer than a connection waits: again, for a minute. What cannot be written stays known until the app closes.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                SetSetting(key, value);
+                break;
+            }
+            catch (SqliteException e) when (e.SqliteErrorCode is 5 or 6 && attempt < 12) { }
+            catch (SqliteException)
+            {
+                return;
+            }
+        }
+        // Changed again meanwhile: that value has its own turn after this one.
+        lock (_unwritten)
+            if (_unwritten.TryGetValue(key, out var now) && now == value) _unwritten.Remove(key);
+    }
+
+    /// <summary>Before the app closes: the preferences still waiting are written (not for longer than a moment).</summary>
+    public void FlushSettings()
+    {
+        Task writing;
+        lock (_unwritten) writing = _writingSettings;
+        writing.Wait(TimeSpan.FromSeconds(10));
     }
 
     public void SetSetting(string key, string? value)

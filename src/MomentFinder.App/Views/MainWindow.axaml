@@ -333,7 +333,13 @@
 
             <!-- Result line; a bucket gets its own actions -->
             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="12,8,12,4" IsVisible="{Binding !IsPeopleScreen}">
-                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                <!-- Reading or grouping the results takes longer than a moment: said in place of their count -->
+                <TextBlock Classes="muted" Text="{Binding ResultSummary}" VerticalAlignment="Center" TextWrapping="Wrap"
+                           IsVisible="{Binding !ResultsLoading}" />
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" IsVisible="{Binding ResultsLoading}">
+                    <TextBlock Classes="muted" Text="Loading..." VerticalAlignment="Center" />
+                    <ProgressBar IsIndeterminate="True" Width="160" VerticalAlignment="Center" />
+                </StackPanel>
                 <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsPersonScope}">
                     <ToggleButton IsChecked="{Binding ShowPersonFaces}" ToolTip.Tip="The faces and figures recognized as this person: check and correct them">
                         <StackPanel Orientation="Horizontal" Spacing="6">

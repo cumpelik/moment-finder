@@ -856,7 +856,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     partial void OnActiveBucketChanged(Bucket? value)
     {
         if (_rebuilding) return;
-        if (!_starting) _host.Db.SetSetting("active_bucket", value?.Id.ToString());
+        if (!_starting) _host.Db.SetSettingSoon("active_bucket", value?.Id.ToString());
         MarkBucketMembership();
     }
 
@@ -974,7 +974,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         return SearchNow();
     }
 
+    /// <summary>The results are being read or grouped for longer than a moment: the grid says so.</summary>
+    [ObservableProperty] private bool _resultsLoading;
+    private int _loads;
+
+    private void LoadStarted()
+    {
+        _loads++;
+        // Not for a blink: only what takes long enough to wonder whether anything happens.
+        DispatcherTimer.RunOnce(() => ResultsLoading = _loads > 0, TimeSpan.FromMilliseconds(250));
+    }
+
+    private void LoadEnded()
+    {
+        if (--_loads == 0) ResultsLoading = false;
+    }
+
     private async Task RunSearchAsync(bool keepSelection)
+    {
+        // What the user asked for is waited for; a refresh while the library is being read is not.
+        if (!keepSelection) LoadStarted();
+        try
+        {
+            await SearchAsync(keepSelection);
+        }
+        finally
+        {
+            if (!keepSelection) LoadEnded();
+        }
+    }
+
+    private async Task SearchAsync(bool keepSelection)
     {
         _searchCts?.Cancel();
         var cts = _searchCts = new CancellationTokenSource();
@@ -1254,7 +1284,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void RememberPlayback(double rate, bool loop) => (_playbackRate, _loopVideos) = (rate, loop);
 
     /// <summary>Who is who stays on for the next viewer and the next start, until it is switched off.</summary>
-    public void RememberShowPeople(bool on) => _host.Db.SetSetting("show_people", on ? "1" : "0");
+    public void RememberShowPeople(bool on) => _host.Db.SetSettingSoon("show_people", on ? "1" : "0");
 
     /// <summary>People boxes follow the people in a playing video, or show only on a paused one.</summary>
     public bool BoxesWhilePlaying
@@ -1262,7 +1292,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         get => _host.Db.GetSetting("boxes_playing") != "0";
         set
         {
-            _host.Db.SetSetting("boxes_playing", value ? "1" : "0");
+            _host.Db.SetSettingSoon("boxes_playing", value ? "1" : "0");
             OnPropertyChanged();
             OnPropertyChanged(nameof(BoxesOnlyPaused));
         }
@@ -1274,7 +1304,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         set => BoxesWhilePlaying = !value;
     }
 
-    public void SaveVolume(int volume) => _host.Db.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
+    public void SaveVolume(int volume) => _host.Db.SetSettingSoon("volume", volume.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>A video found by a description: how long it plays from the matching frame.</summary>
     private const int MatchMomentMs = 12_000;
@@ -1288,7 +1318,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         return (personIds, names, !string.IsNullOrWhiteSpace(query.Text) && _host.Search.CanSearchText);
     }
 
-    partial void OnVideoHighlightsOnlyChanged(bool value) => _host.Db.SetSetting("video_highlights", value ? "1" : "0");
+    partial void OnVideoHighlightsOnlyChanged(bool value) => _host.Db.SetSettingSoon("video_highlights", value ? "1" : "0");
 
     /// <summary>The viewer remembers whether the user wants whole videos or only the found moments.</summary>
     public void RememberMoments(bool onlyMoments) => VideoHighlightsOnly = onlyMoments;
@@ -1302,7 +1332,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public bool IsPreviewBelow => PreviewMode == PreviewMode.Below;
     public bool IsPreviewRight => PreviewMode == PreviewMode.Right;
 
-    partial void OnPreviewModeChanged(PreviewMode value) => _host.Db.SetSetting("open_in", value.ToString().ToLowerInvariant());
+    partial void OnPreviewModeChanged(PreviewMode value) => _host.Db.SetSettingSoon("open_in", value.ToString().ToLowerInvariant());
 
     [RelayCommand]
     private void SetPreviewMode(PreviewMode mode) => PreviewMode = mode;
@@ -1310,7 +1340,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The left panel can be hidden for more room; its width is the user's.</summary>
     [ObservableProperty] private bool _sidebarVisible;
 
-    partial void OnSidebarVisibleChanged(bool value) => _host.Db.SetSetting("sidebar_hidden", value ? "0" : "1");
+    partial void OnSidebarVisibleChanged(bool value) => _host.Db.SetSettingSoon("sidebar_hidden", value ? "0" : "1");
 
     [RelayCommand]
     private void ToggleSidebar() => SidebarVisible = !SidebarVisible;
@@ -1319,7 +1349,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public double? SavedSize(string key) =>
         double.TryParse(_host.Db.GetSetting(key), CultureInfo.InvariantCulture, out var v) && v > 0 ? v : null;
 
-    public void SaveSize(string key, double value) => _host.Db.SetSetting(key, value.ToString("0", CultureInfo.InvariantCulture));
+    public void SaveSize(string key, double value) => _host.Db.SetSettingSoon(key, value.ToString("0", CultureInfo.InvariantCulture));
 
     /// <summary>The panel shows this item of the results; arrows and clicks in the grid move it.</summary>
     public PlayerViewModel CreatePreview(int index) => CreatePlayer(Shown, index, autoPlay: false);

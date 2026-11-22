@@ -106,7 +106,7 @@ public sealed partial class MainViewModel
     partial void OnGroupTreeChanged(bool value)
     {
         // The upload view turns the folders' tree on for itself: that is not the user's choice to keep.
-        if (_beforeUpload == null) _host.Db.SetSetting("group_tree", value ? "1" : "0");
+        if (_beforeUpload == null) _host.Db.SetSettingSoon("group_tree", value ? "1" : "0");
         ShowChosenGroups();
         ResultsReset?.Invoke();
     }
@@ -214,7 +214,7 @@ public sealed partial class MainViewModel
 
     partial void OnGroupByChanged(GroupOption value)
     {
-        if (_beforeUpload == null) _host.Db.SetSetting("group_by", value.Mode.ToString());
+        if (_beforeUpload == null) _host.Db.SetSettingSoon("group_by", value.Mode.ToString());
         RebuildGroups();
         ResultsReset?.Invoke();
     }
@@ -242,11 +242,21 @@ public sealed partial class MainViewModel
         var mode = GroupBy.Mode;
         var changeable = _changeable;
         var empty = EmptyFolders();
-        var (groups, roots) = await Task.Run(() =>
+        List<TileGroup> groups;
+        List<GroupNode> roots;
+        LoadStarted();
+        try
         {
-            var groups = BuildGroups(tiles, mode, empty);
-            return (groups, BuildTree(groups, changeable));
-        });
+            (groups, roots) = await Task.Run(() =>
+            {
+                var groups = BuildGroups(tiles, mode, empty);
+                return (groups, BuildTree(groups, changeable));
+            });
+        }
+        finally
+        {
+            LoadEnded();
+        }
         if (version != _groupsVersion) return;
         OnPropertyChanged(nameof(ShowGroupTree));
         ApplyGroups(groups, roots);
