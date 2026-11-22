@@ -152,6 +152,29 @@ public sealed class MediaRepository
         tx.Commit();
     }
 
+    /// <summary>
+    /// Photos and videos without a date of their own take the date their folders or file name say (Media.PathDate),
+    /// when the file's time is not in it: read before that was done, or said by a computer that does not do it yet.
+    /// The same on every computer of a shared library (the path decides). Returns how many were dated.
+    /// </summary>
+    public int DateByFolderNames()
+    {
+        using var c = _db.Open();
+        var dated = c.Query<(long Id, string RelPath, long TakenAt, long Mtime, bool? FromFile, int Kind, bool HasCamera, bool InCloud)>("""
+                SELECT m.id, m.rel_path, m.taken_at, m.mtime, m.taken_from_file, m.kind, m.camera IS NOT NULL, s.kind='cloud'
+                FROM media m JOIN source s ON s.id=m.source_id WHERE m.taken_from_file IS NULL OR m.taken_from_file=1
+                """)
+            .Where(m => Media.MediaProbe.Undated(m.FromFile, m.TakenAt, m.Mtime, m.InCloud, m.Kind == (int)MediaKind.Photo, m.HasCamera))
+            .Select(m => (m.Id, TakenAt: Media.PathDate.TakenAt(m.RelPath, m.TakenAt)))
+            .Where(m => m.TakenAt != null).ToList();
+        if (dated.Count == 0) return 0;
+        using var tx = c.BeginTransaction();
+        foreach (var (id, takenAt) in dated)
+            c.Execute("UPDATE media SET taken_at=@takenAt, taken_from_file=1 WHERE id=@id", new { id, takenAt }, tx);
+        tx.Commit();
+        return dated.Count;
+    }
+
     /// <summary>A row with the same content as a scanned file, and where it is (was).</summary>
     public sealed class SameFile
     {

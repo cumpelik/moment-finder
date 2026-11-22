@@ -30,7 +30,7 @@ public static class MediaProbe
             var probe = await FFmpeg.ProbeAsync(fullPath, ct);
             var dated = probe?.CreationTime is { } ct2 && ct2.Year > 1971 ? ct2 : (DateTime?)null;
             return new ScannedFile(relPath, kind, info.Length, mtime, hash,
-                dated is { } d ? ToTakenAt(d) : fallbackTaken,
+                dated is { } d ? ToTakenAt(d) : PathDate.TakenAt(relPath, fallbackTaken) ?? fallbackTaken,
                 probe?.Width, probe?.Height, probe?.DurationMs, probe?.Lat, probe?.Lon, probe?.Camera, TakenFromFile: dated == null);
         }
 
@@ -85,12 +85,33 @@ public static class MediaProbe
         }
 
         return new ScannedFile(relPath, kind, info.Length, mtime, hash,
-            taken is { Year: > 1971 } t ? ToTakenAt(t) : fallbackTaken, width, height, null, lat, lon, camera,
+            taken is { Year: > 1971 } t ? ToTakenAt(t) : PathDate.TakenAt(relPath, fallbackTaken) ?? fallbackTaken, width, height, null, lat, lon, camera,
             TakenFromFile: taken is not { Year: > 1971 });
     }
 
     public static long ToTakenAt(DateTime wallClock) =>
         (long)(DateTime.SpecifyKind(wallClock, DateTimeKind.Utc) - DateTime.UnixEpoch).TotalMilliseconds;
+
+    /// <summary>
+    /// The capture time is the file's own time (the wall clock of its modification time): the photo had no date
+    /// of its own. The two differ by the time zone only (whole quarters of an hour).
+    /// </summary>
+    public static bool IsFileTime(long takenAt, long mtime)
+    {
+        const long quarter = 15 * 60 * 1000;
+        var offset = takenAt - mtime;
+        if (Math.Abs(offset) > 14 * 4 * quarter) return false;
+        var rest = ((offset % quarter) + quarter) % quarter;
+        return Math.Min(rest, quarter - rest) <= 2000;
+    }
+
+    /// <summary>
+    /// A photo or video without a date of its own. Known since it is kept (fromFile); for what was read before
+    /// that: dated by the file's time, of a file in the cloud (its time is when it was uploaded) or of a photo
+    /// without a camera.
+    /// </summary>
+    public static bool Undated(bool? fromFile, long takenAt, long mtime, bool inCloud, bool photo, bool hasCamera) =>
+        fromFile ?? (IsFileTime(takenAt, mtime) && (inCloud || photo && !hasCamera));
 
     /// <summary>Size + first and last 64 KiB: finds the same file after a move or in another source without reading all of it.</summary>
     public static string QuickHash(string path, long length)

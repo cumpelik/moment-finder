@@ -99,8 +99,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (IsPersonScope && !ShowPersonFaces) _ = RunSearchAsync(keepSelection: true);
             if (IsPersonScope && ShowPersonFaces && CurrentScope is { } p) People.LoadPerson(p.Id);
             if (IsGroupsMode) People.LoadClusters();
-            // The matching finished after the review opened: the new suggestions are there now.
-            if (IsReviewMode && !People.HasReview) People.LoadReview();
+            // The matching changed the guesses: the questions after the one on screen follow.
+            if (IsReviewMode) People.RefreshReview();
         });
         _searchDebounce = new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) =>
         {

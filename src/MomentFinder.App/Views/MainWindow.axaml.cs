@@ -196,8 +196,7 @@ public partial class MainWindow : Window
                 case Key.Y: _vm.People.ReviewYesCommand.Execute(null); break;
                 case Key.N: _vm.People.ReviewNoCommand.Execute(null); break;
                 case Key.S or Key.Right: _vm.People.ReviewSkipCommand.Execute(null); break;
-                case Key.O: _ = ReviewOtherAsync(); break;
-                case Key.W: ShowReviewWholePhoto(); break;
+                case Key.A: _vm.People.ReviewCrossAllCommand.Execute(null); break;
                 default: return;
             }
             e.Handled = true;
@@ -645,13 +644,23 @@ public partial class MainWindow : Window
         if (_vm != null && (sender as Control)?.DataContext is CropViewModel card) _vm.OpenMedia(card.MediaId, card.TimeMs, showPeople: true);
     }
 
-    private async void OnReviewOther(object? sender, RoutedEventArgs e) => await ReviewOtherAsync();
-
-    private void OnReviewWholePhoto(object? sender, RoutedEventArgs e) => ShowReviewWholePhoto();
-
-    private void ShowReviewWholePhoto()
+    /// <summary>A picture of the review was clicked: it is not the person asked about (clicked again: it is).</summary>
+    private void OnReviewTapped(object? sender, TappedEventArgs e)
     {
-        if (_vm?.People.ReviewMoment is { } m) _vm.OpenMedia(m.MediaId, m.TimeMs, showPeople: true);
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.People.ReviewToggle(crop);
+    }
+
+    private async void OnReviewOther(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || (sender as Control)?.DataContext is not CropViewModel crop) return;
+        var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskReviewAsync(crop));
+        if (name != null) _vm.People.ReviewOther(crop, name);
+    }
+
+    /// <summary>The photo (or the video at that moment) with the boxes, when the picture alone is too small to tell.</summary>
+    private void OnReviewWholePhoto(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.OpenMedia(crop.MediaId, crop.TimeMs, showPeople: true);
     }
 
     private void OnShowClusterPhotos(object? sender, RoutedEventArgs e)
@@ -668,13 +677,6 @@ public partial class MainWindow : Window
         }
         var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskSelectedAsync());
         if (!string.IsNullOrWhiteSpace(name)) _vm.People.MoveSelectedTo(name);
-    }
-
-    private async Task ReviewOtherAsync()
-    {
-        if (_vm == null) return;
-        var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskReviewAsync());
-        if (name != null) _vm.People.ReviewOther(name);
     }
 
     private void OnCropTapped(object? sender, TappedEventArgs e)

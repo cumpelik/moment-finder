@@ -21,8 +21,13 @@ public sealed partial class CropViewModel : ObservableObject
     public long Count { get; init; }
     public string Caption { get; init; } = "";
 
+    /// <summary>Everything the picture stands for (the review: a figure of a video is its whole track).</summary>
+    public IReadOnlyList<long> DetectionIds { get; init; } = [];
+
     [ObservableProperty] private Bitmap? _image;
     [ObservableProperty] private bool _isSelected;
+    /// <summary>In the review: the user said this one is not the person asked about.</summary>
+    [ObservableProperty] private bool _isNot;
 
     public CropViewModel(long detectionId, long mediaId, DetectionKind kind)
     {
@@ -100,17 +105,13 @@ public sealed class FigureSection(string title, string count, List<CropViewModel
 }
 
 /// <summary>
-/// The people screens: unnamed groups of faces to name, the review queue ("Is this Tomáš?"), and the
-/// faces of one person to correct. Every answer goes to the database and the matching runs again in the background.
+/// The people screens: unnamed groups of faces to name, the review ("Is this Tomáš?", his guessed pictures
+/// together), and the faces of one person to correct. Every answer goes to the database and the matching runs again in the background.
 /// </summary>
 public sealed partial class PeopleViewModel : ObservableObject
 {
     private readonly LibraryHost _host;
     private readonly Action _changed;
-    private List<DetectionRow> _queue = [];
-    private int _queueIndex;
-    /// <summary>All the open suggestions when the queue was read (the queue holds the surest of them).</summary>
-    private long _queueOf;
     private Dictionary<long, string> _names = [];
 
     [ObservableProperty] private ObservableCollection<CropViewModel> _clusters = [];
@@ -185,19 +186,18 @@ public sealed partial class PeopleViewModel : ObservableObject
     [ObservableProperty] private string _clustersSummary = "";
     [ObservableProperty] private bool _hasClusters;
     [ObservableProperty] private bool _hasFigures;
-    [ObservableProperty] private CropViewModel? _reviewCrop;
-    [ObservableProperty] private Bitmap? _reviewContext;
     [ObservableProperty] private string _reviewQuestion = "";
     [ObservableProperty] private string _reviewProgress = "";
     [ObservableProperty] private bool _hasReview;
     [ObservableProperty] private string _reviewDetail = "";
-    /// <summary>The context image size and the reviewed detection's box in its pixels.</summary>
-    [ObservableProperty] private double _contextWidth;
-    [ObservableProperty] private double _contextHeight;
-    [ObservableProperty] private double _boxLeft;
-    [ObservableProperty] private double _boxTop;
-    [ObservableProperty] private double _boxWidth;
-    [ObservableProperty] private double _boxHeight;
+    /// <summary>The pictures of the question on screen: the guesses for one person.</summary>
+    [ObservableProperty] private ObservableCollection<CropViewModel> _reviewCrops = [];
+    /// <summary>The person as known already, to compare with (figures: what the person wore that day).</summary>
+    [ObservableProperty] private ObservableCollection<CropViewModel> _reviewKnown = [];
+    [ObservableProperty] private string _reviewKnownText = "";
+    [ObservableProperty] private bool _hasReviewKnown;
+    [ObservableProperty] private string _reviewYesText = "Yes (Y)";
+    [ObservableProperty] private string _reviewCrossAllText = "Cross out all (A)";
     [ObservableProperty] private Person? _person;
     [ObservableProperty] private string _personSummary = "";
 
@@ -247,10 +247,8 @@ public sealed partial class PeopleViewModel : ObservableObject
     /// <summary>Who a box in the viewer may be: its whole video track and the faces on it say.</summary>
     public Task<WhoQuestion> AskBoxAsync(long detectionId) => AskAsync(_host.People.SamePersonDetectionIds(detectionId), detectionId);
 
-    /// <summary>Who else the question in review may be, when it is not who the analysis thought.</summary>
-    public Task<WhoQuestion> AskReviewAsync() => HasReview
-        ? AskAsync([_queue[_queueIndex].Id], _queue[_queueIndex].Id, _queue[_queueIndex].SuggestPersonId)
-        : Task.FromResult(new WhoQuestion(PersonNames(), 0, null));
+    /// <summary>Who else a picture of the review may be, when it is not who the analysis thought.</summary>
+    public Task<WhoQuestion> AskReviewAsync(CropViewModel crop) => AskAsync(crop.DetectionIds, crop.DetectionId, _page?.PersonId);
 
     /// <summary>Who the selected pictures of the person shown may be instead.</summary>
     public Task<WhoQuestion> AskSelectedAsync()
@@ -273,9 +271,6 @@ public sealed partial class PeopleViewModel : ObservableObject
     /// <summary>The photos of an unnamed group, to see the whole pictures (a face crop alone can be too small to tell).</summary>
     public List<(long MediaId, int TimeMs)> ClusterMoments(CropViewModel card) =>
         card.Cluster is { } cluster ? _host.People.ClusterMoments(cluster, 30) : [];
-
-    /// <summary>The photo (or the video moment) of the question in review.</summary>
-    public (long MediaId, int TimeMs)? ReviewMoment => HasReview ? (_queue[_queueIndex].MediaId, _queue[_queueIndex].TimeMs) : null;
 
     private int _clustersVersion;
 
@@ -371,139 +366,265 @@ public sealed partial class PeopleViewModel : ObservableObject
 
     // ---- review ----
 
+    /// <summary>
+    /// One question of the review: guesses for one person shown together and answered at once. Faces: the person's
+    /// surest guesses. Figures: the ones taken for the person on one day out by the clothes (their day is what they
+    /// are compared in). A unit is one picture of the question: a detection, or a figure's whole track in a video.
+    /// </summary>
+    private sealed record ReviewPage(long PersonId, DetectionKind Kind, long? EventId, List<List<DetectionRow>> Units)
+    {
+        public float Score => Units[0][0].SuggestScore ?? 0;
+        public IEnumerable<long> Ids => Units.SelectMany(u => u).Select(d => d.Id);
+    }
+
+    /// <summary>How many pictures one question shows: about a screen of them.</summary>
+    private const int PageSize = 30;
+
+    private List<ReviewPage> _pages = [];
+    private int _pageIndex;
+    private ReviewPage? _page;
+    private int _reviewVersion;
+    /// <summary>Answered or skipped since the review was opened: not asked again until it is opened again.</summary>
+    private readonly HashSet<long> _passed = [];
+    private bool _skipped;
+    private (int Faces, int Figures) _open;
+
+    /// <summary>The review was opened: everything open is asked, the skipped ones too.</summary>
     public void LoadReview()
     {
-        _names = _host.People.ListPersons(true).ToDictionary(p => p.Id, p => p.Name);
-        _queue = _host.People.Suggestions(200);
-        _queueOf = Math.Max(_host.People.SuggestionCount(), _queue.Count);
-        _queueIndex = 0;
-        ShowReview();
+        _passed.Clear();
+        _skipped = false;
+        _pages = [];
+        _pageIndex = 0;
+        _page = null;
+        HasReview = false;
+        ReviewCrops = [];
+        HasReviewKnown = false;
+        ReviewQuestion = "Looking for what to ask...";
+        ReviewDetail = "";
+        ReviewProgress = "";
+        _ = ReadReviewAsync();
     }
 
-    private void ShowReview()
+    /// <summary>The matching changed the guesses: the questions after the one on screen are made again.</summary>
+    public void RefreshReview() => _ = ReadReviewAsync();
+
+    private async Task ReadReviewAsync()
     {
-        // Skip what got resolved meanwhile (another answer confirmed the whole track, for example).
-        while (_queueIndex < _queue.Count && _queue[_queueIndex].SuggestPersonId == null) _queueIndex++;
-        HasReview = _queueIndex < _queue.Count;
-        if (!HasReview)
+        var version = ++_reviewVersion;
+        List<DetectionRow> rows;
+        Dictionary<long, string> names;
+        try
         {
-            ReviewCrop = null;
-            ReviewContext = null;
-            ReviewQuestion = "Nothing to review right now.";
-            ReviewProgress = "";
-            ReviewDetail = "Suggestions appear when the analysis is not sure enough to decide by itself.";
+            (rows, names) = await Task.Run(() => (_host.People.OpenSuggestions(), _host.People.ListPersons(true).ToDictionary(p => p.Id, p => p.Name)));
+        }
+        catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException)
+        {
+            // The library is busy or away: the next matching brings them.
             return;
         }
-        var d = _queue[_queueIndex];
-        var crop = new CropViewModel(d.Id, d.MediaId, d.Kind);
-        crop.Load(CropPath(d.Id), d.Kind == DetectionKind.Face ? 240 : 160);
-        ReviewCrop = crop;
-        var name = _names.GetValueOrDefault(d.SuggestPersonId!.Value, "?");
-        ReviewQuestion = $"Is this {name}?";
-        ReviewProgress = $"{_queueIndex + 1} of {_queueOf:N0}, the surest first";
-        var item = _host.Repo.Get(d.MediaId);
-        ReviewDetail = item == null ? "" :
-            $"{item.FileName}, {item.Taken:d. M. yyyy}" + (d.Kind == DetectionKind.Body ? ", recognized by clothes" : "") +
-            $", similarity {d.SuggestScore:0.00}";
-        ReviewContext = null;
-        var thumb = _host.Paths.ThumbPath(d.MediaId);
-        if (File.Exists(thumb) && d.TimeMs == 0)
+        if (version != _reviewVersion) return;
+        _names = names;
+        // The question on screen stays as it is (the user may be clicking in it); what was answered meanwhile is not asked again.
+        var onScreen = _page?.Ids.ToHashSet() ?? [];
+        var open = rows.Where(d => !_passed.Contains(d.Id) && !onScreen.Contains(d.Id)).ToList();
+        var pages = Pages(open);
+        _open = (open.Count(d => d.Kind == DetectionKind.Face) + (_page?.Kind == DetectionKind.Face ? onScreen.Count : 0),
+            open.Count(d => d.Kind == DetectionKind.Body) + (_page?.Kind == DetectionKind.Body ? onScreen.Count : 0));
+        if (_page != null)
         {
-            using var s = File.OpenRead(thumb);
-            var bitmap = Bitmap.DecodeToWidth(s, 480);
-            ContextWidth = bitmap.Size.Width;
-            ContextHeight = bitmap.Size.Height;
-            BoxLeft = d.X * ContextWidth;
-            BoxTop = d.Y * ContextHeight;
-            BoxWidth = d.W * ContextWidth;
-            BoxHeight = d.H * ContextHeight;
-            ReviewContext = bitmap;
+            _pages = [_page, .. pages];
+            _pageIndex = 0;
+            ShowProgress();
+        }
+        else
+        {
+            _pages = pages;
+            _pageIndex = 0;
+            ShowPage();
         }
     }
 
+    /// <summary>
+    /// The questions: the faces first, a person's surest guesses together and the surest question first; then the
+    /// figures by person and day out, the biggest first (one answer settles the most).
+    /// </summary>
+    private static List<ReviewPage> Pages(List<DetectionRow> rows)
+    {
+        var units = rows.GroupBy(d => (d.SuggestPersonId, d.Kind, d.Track, Alone: d.Track == null ? d.Id : 0))
+            .Select(g => g.OrderByDescending(d => d.Quality).ToList()).ToList();
+        static float Score(List<DetectionRow> unit) => unit.Max(d => d.SuggestScore ?? 0);
+        var faces = units.Where(u => u[0].Kind == DetectionKind.Face).GroupBy(u => u[0].SuggestPersonId!.Value)
+            .SelectMany(g => g.OrderByDescending(Score).Chunk(PageSize).Select(c => new ReviewPage(g.Key, DetectionKind.Face, null, [.. c])))
+            .OrderByDescending(p => p.Score);
+        var figures = units.Where(u => u[0].Kind == DetectionKind.Body).GroupBy(u => (Person: u[0].SuggestPersonId!.Value, u[0].EventId))
+            .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(Score))
+            .SelectMany(g => g.OrderByDescending(Score).Chunk(PageSize).Select(c => new ReviewPage(g.Key.Person, DetectionKind.Body, g.Key.EventId, [.. c])));
+        return [.. faces, .. figures];
+    }
+
+    private void ShowProgress() => ReviewProgress = !HasReview ? "" :
+        $"{Format.Count(_pages.Count - _pageIndex, "question", "questions")} to go  \u00b7  {Format.Count(_open.Faces, "face", "faces")}, {_open.Figures:N0} by the clothes";
+
+    private void ShowPage()
+    {
+        _page = _pageIndex < _pages.Count ? _pages[_pageIndex] : null;
+        HasReview = _page != null;
+        if (_page is not { } page)
+        {
+            ReviewCrops = [];
+            ReviewKnown = [];
+            HasReviewKnown = false;
+            ReviewQuestion = _skipped ? "Nothing more to review right now." : "Nothing to review right now.";
+            ReviewProgress = "";
+            ReviewDetail = _skipped
+                ? "What you skipped is asked again when you open the review the next time."
+                : "Guesses appear when the analysis is not sure enough to decide by itself.";
+            return;
+        }
+        var name = _names.GetValueOrDefault(page.PersonId, "?");
+        var items = _host.Repo.Query(new Library.MediaFilter { Ids = page.Units.Select(u => u[0].MediaId).Distinct().ToList() }).ToDictionary(i => i.Id);
+        var figures = page.Kind == DetectionKind.Body;
+        ReviewCrops = new ObservableCollection<CropViewModel>(page.Units.Select(unit =>
+        {
+            var d = unit[0];
+            var item = items.GetValueOrDefault(d.MediaId);
+            var crop = new CropViewModel(d.Id, d.MediaId, d.Kind)
+            {
+                TimeMs = d.TimeMs,
+                DetectionIds = unit.Select(u => u.Id).ToList(),
+                Caption = (item == null ? "" : $"{item.FileName}, {item.Taken:d. M. yyyy}, ") + $"likeness {unit.Max(u => u.SuggestScore ?? 0):0.00}",
+            };
+            crop.LoadLater(CropPath(d.Id), 160);
+            return crop;
+        }));
+        const string how = "Right click a picture to see its whole photo, or to say who else it is.";
+        if (figures)
+        {
+            var day = DateTime.UnixEpoch.AddMilliseconds(page.Units.Max(u => u[0].TakenAt)).ToString("dddd d. MMMM yyyy", System.Globalization.CultureInfo.CurrentCulture);
+            ReviewQuestion = $"Is this {name}, on {day}?";
+            ReviewDetail = $"People without a clear face, taken for {name} by the clothes of that day. Click the ones that are somebody else, then answer for the rest. {how}";
+        }
+        else
+        {
+            ReviewQuestion = $"Is this {name}?";
+            ReviewDetail = $"Click the pictures that are somebody else, then answer for the rest. {how}";
+        }
+        ShowKnown(page, name);
+        ShowYesText();
+        ShowProgress();
+    }
+
+    /// <summary>The person as known already, beside the question: a few named faces, or what the person wore that day.</summary>
+    private void ShowKnown(ReviewPage page, string name)
+    {
+        var known = page.Kind == DetectionKind.Body && page.EventId is { } eventId
+            ? _host.People.KnownFiguresOf([eventId], page.Ids.ToList())
+                .Where(d => d.PersonId == page.PersonId && d.AssignSource != AssignSource.Outfit && d.Quality >= 0.25f)
+                // Known by the face first: those show the clothes from the front, with the face to be sure by.
+                .OrderByDescending(d => d.AssignSource == AssignSource.Linked).ThenByDescending(d => d.Quality).DistinctBy(d => d.MediaId).Take(5).ToList()
+            : _host.People.Detections(personId: page.PersonId, kind: DetectionKind.Face, limit: 5);
+        ReviewKnown = new ObservableCollection<CropViewModel>(known.Select(d =>
+        {
+            var crop = new CropViewModel(d.Id, d.MediaId, d.Kind) { TimeMs = d.TimeMs };
+            crop.Load(CropPath(d.Id), 120);
+            return crop;
+        }).Where(c => c.Image != null));
+        ReviewKnownText = page.Kind == DetectionKind.Body ? $"{name} that day:" : $"{name}, as named:";
+        HasReviewKnown = ReviewKnown.Count > 0;
+    }
+
+    private void ShowYesText()
+    {
+        var all = ReviewCrops.Count;
+        var yes = ReviewCrops.Count(c => !c.IsNot);
+        ReviewYesText = all == 1 && yes == 1 ? "Yes (Y)" : yes == all ? $"Yes, all {all} (Y)" : yes == 0 ? "None of them (Y)" : $"Yes, the other {yes} (Y)";
+        ReviewCrossAllText = yes == 0 && all > 0 ? "Uncross all (A)" : "Cross out all (A)";
+    }
+
+    /// <summary>
+    /// When only a few of the pictures are the person (the clothes of a day guess badly in a crowd): all crossed
+    /// out at once, the few are then clicked back. With all crossed out already: none is.
+    /// </summary>
+    [RelayCommand]
+    private void ReviewCrossAll()
+    {
+        var cross = ReviewCrops.Any(c => !c.IsNot);
+        foreach (var c in ReviewCrops) c.IsNot = cross;
+        ShowYesText();
+    }
+
+    /// <summary>A picture of the question was clicked: it is not the person (or, clicked again, it is).</summary>
+    public void ReviewToggle(CropViewModel crop)
+    {
+        crop.IsNot = !crop.IsNot;
+        ShowYesText();
+    }
+
+    /// <summary>Not the person: a figure of a video on its whole track, and never guessed for it again.</summary>
+    private void RejectUnits(IEnumerable<CropViewModel> crops, long personId)
+    {
+        var ids = crops.SelectMany(c => c.DetectionIds.Concat(_host.People.SamePersonDetectionIds(c.DetectionId))).Distinct().ToList();
+        if (ids.Count > 0) _host.People.Reject(ids, personId);
+    }
+
+    /// <summary>Yes for the pictures left as they are; the clicked ones are not the person.</summary>
     [RelayCommand]
     private void ReviewYes()
     {
-        if (!HasReview) return;
-        var d = _queue[_queueIndex];
-        var ids = WithAlike(d);
-        _host.People.Confirm(ids, d.SuggestPersonId!.Value);
-        Next(ids.Count - 1);
+        if (_page is not { } page) return;
+        var yes = ReviewCrops.Where(c => !c.IsNot).SelectMany(c => c.DetectionIds).ToList();
+        if (yes.Count > 0) _host.People.Confirm(yes, page.PersonId);
+        RejectUnits(ReviewCrops.Where(c => c.IsNot), page.PersonId);
+        Next(answered: true);
     }
 
     [RelayCommand]
     private void ReviewNo()
     {
-        if (!HasReview) return;
-        var d = _queue[_queueIndex];
-        var ids = WithAlike(d);
-        _host.People.Reject(ids, d.SuggestPersonId!.Value);
-        Next(ids.Count - 1);
-    }
-
-    /// <summary>Near the same picture: taken within a few minutes and looking almost the same (a burst, a copy).</summary>
-    private static readonly TimeSpan AlikeWithin = TimeSpan.FromMinutes(5);
-    private const float AlikeFace = 0.85f;
-    private const float AlikeBody = 0.92f;
-
-    /// <summary>
-    /// The answered suggestion and the ones further in the queue that are almost the same picture (the same
-    /// suggested person, taken within minutes, nearly the same look): one answer is enough for all of them.
-    /// </summary>
-    private List<long> WithAlike(DetectionRow answered)
-    {
-        var ids = new List<long> { answered.Id };
-        var rest = _queue.Skip(_queueIndex + 1)
-            .Where(q => q.SuggestPersonId == answered.SuggestPersonId && q.Kind == answered.Kind &&
-                        Math.Abs(q.TakenAt - answered.TakenAt) <= AlikeWithin.TotalMilliseconds)
-            .ToList();
-        if (rest.Count == 0) return ids;
-        var vectors = _host.People.Embeddings(rest.Select(r => r.Id).Append(answered.Id));
-        if (!vectors.TryGetValue(answered.Id, out var look)) return ids;
-        var limit = answered.Kind == DetectionKind.Face ? AlikeFace : AlikeBody;
-        foreach (var q in rest)
-        {
-            if (!vectors.TryGetValue(q.Id, out var other) || PeopleRepository.Similarity(look, other) < limit) continue;
-            ids.Add(q.Id);
-            // Answered with this one: the queue skips it.
-            q.SuggestPersonId = null;
-        }
-        return ids;
+        if (_page is not { } page) return;
+        RejectUnits(ReviewCrops, page.PersonId);
+        Next(answered: true);
     }
 
     [RelayCommand]
     private void ReviewSkip()
     {
-        if (!HasReview) return;
-        _queueIndex++;
-        ShowReview();
+        if (_page == null) return;
+        _skipped = true;
+        Next(answered: false);
     }
 
-    public void ReviewOther(string name)
+    /// <summary>One picture of the question is somebody else, said by name: it leaves the question.</summary>
+    public void ReviewOther(CropViewModel crop, string name)
     {
-        if (!HasReview || string.IsNullOrWhiteSpace(name)) return;
-        var d = _queue[_queueIndex];
+        if (_page is not { } page || string.IsNullOrWhiteSpace(name) || !ReviewCrops.Contains(crop)) return;
         var person = _host.People.FindOrCreatePerson(name);
-        var ids = WithAlike(d);
-        if (person.Id != d.SuggestPersonId) _host.People.Reject(ids, d.SuggestPersonId!.Value);
-        _host.People.Confirm(ids, person.Id);
-        Next(ids.Count - 1);
+        if (person.Id != page.PersonId) RejectUnits([crop], page.PersonId);
+        _host.People.Confirm(crop.DetectionIds, person.Id);
+        _passed.UnionWith(crop.DetectionIds);
+        ReviewCrops.Remove(crop);
+        if (ReviewCrops.Count == 0)
+        {
+            Next(answered: true);
+            return;
+        }
+        ShowYesText();
+        AfterChange();
     }
 
-    /// <summary>Said under the question: the last answer counted for alike pictures too.</summary>
-    [ObservableProperty] private string _reviewNote = "";
-
-    private void Next(int alike = 0)
+    private void Next(bool answered)
     {
-        _queueIndex++;
-        AfterChange();
-        ShowReview();
-        ReviewNote = alike switch
+        if (_page is { } page)
         {
-            0 => "",
-            1 => "The last answer counted for 1 almost the same picture too.",
-            _ => $"The last answer counted for {alike} almost the same pictures too.",
-        };
+            _passed.UnionWith(page.Ids);
+            var asked = page.Ids.Count();
+            _open = page.Kind == DetectionKind.Face ? (Math.Max(0, _open.Faces - asked), _open.Figures) : (_open.Faces, Math.Max(0, _open.Figures - asked));
+        }
+        _pageIndex++;
+        ShowPage();
+        // The matching runs again in the background and brings the questions that are left (RefreshReview).
+        if (answered) AfterChange();
     }
 
     // ---- one person ----

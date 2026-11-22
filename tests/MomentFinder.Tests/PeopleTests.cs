@@ -377,10 +377,44 @@ public class PeopleTests
         Assert.NotNull(faces[0].Cluster);
         Assert.Equal(anna.Id, repo.DetectionsOfMedia(items["alone.jpg"]).Single().SuggestPersonId);
 
+        Assert.Equal(5, Assert.Single(repo.UnnamedClusters()).Media);
+
         var eva = repo.CreatePerson("Eva");
         repo.Confirm([sister[0]], eva.Id);
         identity.Recompute();
         Assert.All(repo.Load(sister), f => Assert.Equal(eva.Id, f.PersonId));
+    }
+
+    /// <summary>
+    /// Two alike faces the review asks about already ("Is this Anna?") are not asked about in Who is this as well.
+    /// After a No to both they are a group to name.
+    /// </summary>
+    [Fact]
+    public async Task AGroupTheReviewAsksAboutIsNotAskedAboutTwice()
+    {
+        using var lib = new TestLibrary();
+        var times = new Dictionary<string, string>();
+        for (var i = 0; i < 3; i++) times[$"anna{i}.jpg"] = $"2023-0{i + 1}-10 10:00";
+        for (var i = 0; i < 2; i++) times[$"guess{i}.jpg"] = $"2024-0{i + 1}-20 10:00";
+        foreach (var (f, t) in times)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var anna = repo.CreatePerson("Anna");
+        for (var i = 0; i < 3; i++) repo.Confirm(repo.ReplaceDetections(items[$"anna{i}.jpg"], [Face(Mix((1, 1)))]), anna.Id);
+        var guesses = Enumerable.Range(0, 2).Select(i =>
+            repo.ReplaceDetections(items[$"guess{i}.jpg"], [Face(Mix((1, 0.4f), (4, 0.9f), (6 + i, 0.1f)))])[0]).ToList();
+        var identity = new IdentityService(repo);
+        identity.Recompute();
+        Assert.Equal(guesses.Order(), repo.OpenSuggestions().Select(d => d.Id).Order());
+        Assert.Empty(repo.UnnamedClusters());
+
+        repo.Reject(guesses, anna.Id);
+        identity.Recompute();
+        Assert.Empty(repo.OpenSuggestions());
+        Assert.Equal(2, Assert.Single(repo.UnnamedClusters()).Media);
     }
 
     /// <summary>
@@ -586,7 +620,7 @@ public class PeopleTests
         using var lib = new TestLibrary();
         var repo = new PeopleRepository(lib.Db);
         Assert.Empty(repo.UnnamedClusters());
-        Assert.Empty(repo.Suggestions(10));
+        Assert.Empty(repo.OpenSuggestions());
         Assert.Equal(0, repo.SuggestionCount());
         Assert.Empty(repo.ListPersons());
         Assert.Empty(repo.FirstAppearance([1]));
@@ -671,6 +705,73 @@ public class PeopleTests
         Assert.Equal(1, new EventBuilder(lib.Db).Rebuild());
         using var c = lib.Db.Open();
         Assert.Equal(2, Dapper.SqlMapper.ExecuteScalar<int>(c, "SELECT COUNT(*) FROM media WHERE event_id IS NOT NULL"));
+    }
+
+    [Theory]
+    [InlineData("2007/01_07_2007_Chorvatsko/PICT0001.JPG", "2007-07-01", "Day")]
+    [InlineData("2005/20_8_2005_BytAPes/PICT0001.JPG", "2005-08-20", "Day")]
+    [InlineData("2005/29_ 10_2005_Mallorca a Skrin/PICT0001.JPG", "2005-10-29", "Day")]
+    [InlineData("2007/2007_05_12_Baby13/PICT0001.JPG", "2007-05-12", "Day")]
+    [InlineData("2008/20080531_brigada/PICT0001.JPG", "2008-05-31", "Day")]
+    [InlineData("WhatsApp/IMG-20190102-WA0001.jpg", "2019-01-02", "Day")]
+    [InlineData("Camera/20260531_123524.jpg", "2026-05-31 12:35:24", "Second")]
+    [InlineData("2008/2008_10 Anglie/PICT0001.JPG", "2008-10-01", "Month")]
+    [InlineData("2005_Svatba/fotograf/639KUc002046/img12.jpg", "2005-01-01", "Year")]
+    [InlineData("2005/Vanocnivecirek2005/P1010001.JPG", "2005-01-01", "Year")]
+    [InlineData("2007/12_Vanoce_a_silvestr/PICT0001.JPG", "2007-01-01", "Year")]
+    [InlineData("2008/Jana a Petr_40/PICT0001.JPG", "2008-01-01", "Year")]
+    [InlineData("holiday/IMG_3368.jpg", null, null)]
+    [InlineData("pictures/DSC_2007.JPG", null, null)]
+    [InlineData("wallpapers 1920x1080/sea.jpg", null, null)]
+    public void TheDateAFolderOrFileNameSays(string path, string? date, string? precision)
+    {
+        var found = MomentFinder.Media.PathDate.Of(path);
+        if (date == null)
+        {
+            Assert.Null(found);
+            return;
+        }
+        Assert.Equal(DateTime.Parse(date, System.Globalization.CultureInfo.InvariantCulture), found!.Value.Date);
+        Assert.Equal(precision, found.Value.Precision.ToString());
+    }
+
+    /// <summary>
+    /// A camera whose clock was never set: the photos have no date of their own, and in the cloud their file time
+    /// is the day they were uploaded. The folder says when it was ("01_07_2007_Chorvatsko"), so that is their date,
+    /// also for photos read before this was done. A file time that lies in what the folder says is the more exact
+    /// one and stays, and so does one from before it (the folder is a backup made later). A folder is often a whole
+    /// trip: it makes no day out.
+    /// </summary>
+    [Fact]
+    public async Task APhotoWithoutADateIsDatedByItsFolder()
+    {
+        using var lib = new TestLibrary();
+        DateTime At(string t) => DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture);
+        File.SetLastWriteTime(lib.AddPhoto("2007/01_07_2007_Chorvatsko/PICT0001.JPG"), At("2026-11-21 12:40"));
+        File.SetLastWriteTime(lib.AddPhoto("2007/01_07_2007_Chorvatsko/PICT0002.JPG"), At("2007-07-01 18:30"));
+        File.SetLastWriteTime(lib.AddPhoto("2007/Baby03/PICT0003.JPG"), At("2026-11-21 12:41"));
+        File.SetLastWriteTime(lib.AddPhoto("other/PICT0004.JPG"), At("2026-11-21 12:42"));
+        File.SetLastWriteTime(lib.AddPhoto("Backup 2015/PICT0005.JPG"), At("2012-03-04 10:00"));
+        await lib.ScanAsync(lib.AddSource());
+        DateTime Taken(string file) => lib.Repo.Query(new MediaFilter()).Single(i => i.FileName == file).Taken;
+        Assert.Equal(At("2007-07-01 12:00"), Taken("PICT0001.JPG"));
+        Assert.Equal(At("2007-07-01 18:30"), Taken("PICT0002.JPG"));
+        Assert.Equal(At("2007-01-01 12:00"), Taken("PICT0003.JPG"));
+        Assert.Equal(At("2026-11-21 12:42"), Taken("PICT0004.JPG"));
+        Assert.Equal(At("2012-03-04 10:00"), Taken("PICT0005.JPG"));
+
+        // Read by a version that did not do it (or said so by another computer): the file's time, and nothing known of where it is from.
+        using (var c = lib.Db.Open())
+            c.Execute("UPDATE media SET taken_at=@t, taken_from_file=NULL, camera=NULL WHERE rel_path LIKE '%PICT0001.JPG'",
+                new { t = MomentFinder.Media.MediaProbe.ToTakenAt(At("2026-11-21 12:40")) });
+        Assert.Equal(1, lib.Repo.DateByFolderNames());
+        Assert.Equal(At("2007-07-01 12:00"), Taken("PICT0001.JPG"));
+        Assert.Equal(0, lib.Repo.DateByFolderNames());
+
+        new EventBuilder(lib.Db).Rebuild();
+        using (var c = lib.Db.Open())
+            Assert.Equal(["PICT0002.JPG", "PICT0004.JPG", "PICT0005.JPG"],
+                c.Query<string>("SELECT rel_path FROM media WHERE event_id IS NOT NULL").Select(p => Path.GetFileName(p)!).Order());
     }
 
     /// <summary>

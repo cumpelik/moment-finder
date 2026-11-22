@@ -646,37 +646,68 @@
                 </ScrollViewer>
             </DockPanel>
 
-            <!-- Review: one question at a time -->
-            <Grid Grid.Row="2" IsVisible="{Binding IsReviewMode}" RowDefinitions="Auto,*,Auto" Margin="20">
-                <StackPanel Spacing="4" HorizontalAlignment="Center">
-                    <TextBlock Text="{Binding People.ReviewQuestion}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding People.ReviewDetail}" Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" />
+            <!-- Review: the guesses for one person together, answered at once -->
+            <DockPanel Grid.Row="2" IsVisible="{Binding IsReviewMode}" Margin="20,12,20,12">
+                <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding People.ReviewQuestion}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding People.ReviewDetail}" Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                     <TextBlock Text="{Binding People.ReviewProgress}" Classes="muted small" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding People.ReviewNote}" Classes="muted small" HorizontalAlignment="Center"
-                               IsVisible="{Binding People.ReviewNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                 </StackPanel>
-                <Grid Grid.Row="1" ColumnDefinitions="*,*" Margin="0,16" IsVisible="{Binding People.HasReview}">
-                    <Image Source="{Binding People.ReviewCrop.Image}" Stretch="Uniform" MaxHeight="320" Margin="10" />
-                    <Viewbox Grid.Column="1" Stretch="Uniform" MaxHeight="360" Margin="10">
-                        <Panel Width="{Binding People.ContextWidth}" Height="{Binding People.ContextHeight}">
-                            <Image Source="{Binding People.ReviewContext}" />
-                            <Canvas>
-                                <Rectangle Canvas.Left="{Binding People.BoxLeft}" Canvas.Top="{Binding People.BoxTop}"
-                                           Width="{Binding People.BoxWidth}" Height="{Binding People.BoxHeight}"
-                                           Stroke="#F59E0B" StrokeThickness="3" />
-                            </Canvas>
-                        </Panel>
-                    </Viewbox>
-                </Grid>
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" IsVisible="{Binding People.HasReview}">
-                    <Button Classes="accent" Command="{Binding People.ReviewYesCommand}" MinWidth="110" HorizontalContentAlignment="Center">Yes (Y)</Button>
-                    <Button Command="{Binding People.ReviewNoCommand}" MinWidth="110" HorizontalContentAlignment="Center">No (N)</Button>
-                    <Button Click="OnReviewOther" MinWidth="110" HorizontalContentAlignment="Center">Someone else (O)</Button>
-                    <Button Command="{Binding People.ReviewSkipCommand}" MinWidth="110" HorizontalContentAlignment="Center">Skip (S)</Button>
-                    <Button Click="OnReviewWholePhoto" MinWidth="110" HorizontalContentAlignment="Center"
-                            ToolTip.Tip="The whole photo (or the video at that moment) with the boxes, when the crop is too small to tell">Whole photo (W)</Button>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,10,0,0"
+                            IsVisible="{Binding People.HasReview}">
+                    <Button Classes="accent" Command="{Binding People.ReviewYesCommand}" Content="{Binding People.ReviewYesText}" MinWidth="170" HorizontalContentAlignment="Center" />
+                    <Button Command="{Binding People.ReviewNoCommand}" MinWidth="130" HorizontalContentAlignment="Center">None of them (N)</Button>
+                    <Button Command="{Binding People.ReviewCrossAllCommand}" Content="{Binding People.ReviewCrossAllText}" MinWidth="150" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="When only a few are the person: cross out all, then click the few" />
+                    <Button Command="{Binding People.ReviewSkipCommand}" MinWidth="110" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Asked again when you open the review the next time">Skip (S)</Button>
                 </StackPanel>
-            </Grid>
+                <!-- The person as known already, to compare with -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,10,0,0"
+                            IsVisible="{Binding People.HasReviewKnown}">
+                    <TextBlock Text="{Binding People.ReviewKnownText}" Classes="muted" VerticalAlignment="Center" />
+                    <ItemsControl ItemsSource="{Binding People.ReviewKnown}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="6" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:CropViewModel">
+                                <Border CornerRadius="4" ClipToBounds="True">
+                                    <Image Source="{Binding Image}" Height="84" Stretch="Uniform" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" Margin="0,12,0,0" IsVisible="{Binding People.HasReview}">
+                    <ItemsRepeater ItemsSource="{Binding People.ReviewCrops}" ElementPrepared="OnCropPrepared" ElementClearing="OnCropClearing">
+                        <ItemsRepeater.Layout>
+                            <UniformGridLayout MinItemWidth="142" MinItemHeight="162" ItemsJustification="Center" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate DataType="vm:CropViewModel">
+                                <Border Classes="tile" Margin="0,0,6,6" Tapped="OnReviewTapped" ToolTip.Tip="{Binding Caption}">
+                                    <Border.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="It is somebody else..." Click="OnReviewOther" />
+                                            <MenuItem Header="Show the whole photo" Click="OnReviewWholePhoto" />
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
+                                    <Panel>
+                                        <Image Source="{Binding Image}" Width="130" Height="150" Stretch="Uniform" />
+                                        <!-- Not the person: dimmed and crossed -->
+                                        <Border Background="#99101216" IsVisible="{Binding IsNot}">
+                                            <mi:MaterialIcon Kind="Close" Width="64" Height="64" Foreground="#EF4444" />
+                                        </Border>
+                                    </Panel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </ScrollViewer>
+            </DockPanel>
 
             <!-- One person's faces and figures -->
             <DockPanel Grid.Row="2" IsVisible="{Binding ShowPersonFaces}" Margin="12,4,12,8">

@@ -82,6 +82,7 @@ public sealed class Indexer : IDisposable
         _people = analyzer;
         _identity = identity;
         _events = events;
+        _repo.DateByFolderNames();
         events.Rebuild();
         _identityDirty = true;
         _identityWanted = true;
@@ -330,6 +331,8 @@ public sealed class Indexer : IDisposable
         finally
         {
             _scanCts = null;
+            // What came without a date of its own (read before, or from another computer) is dated by its folder.
+            if (_repo.DateByFolderNames() > 0) LibraryChanged?.Invoke();
             if (_events != null)
             {
                 _events.Rebuild();

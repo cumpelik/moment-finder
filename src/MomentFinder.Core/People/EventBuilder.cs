@@ -21,14 +21,17 @@ public sealed class EventBuilder
     public int Rebuild()
     {
         using var c = _db.Open();
-        var all = c.Query<(long Id, long TakenAt, double? Lat, double? Lon, int Kind, bool HasCamera, long Mtime, bool? FromFile, bool InCloud)>("""
-            SELECT m.id, m.taken_at, m.lat, m.lon, m.kind, m.camera IS NOT NULL, m.mtime, m.taken_from_file, s.kind='cloud'
+        var all = c.Query<(long Id, long TakenAt, double? Lat, double? Lon, int Kind, bool HasCamera, long Mtime, bool? FromFile, bool InCloud, string RelPath)>("""
+            SELECT m.id, m.taken_at, m.lat, m.lon, m.kind, m.camera IS NOT NULL, m.mtime, m.taken_from_file, s.kind='cloud', m.rel_path
             FROM media m JOIN source s ON s.id=m.source_id WHERE m.missing=0 ORDER BY m.taken_at, m.id
             """).ToList();
-        // Without a date of its own (known since it is kept; before that: the file's time, of a file in the cloud,
-        // which is when it was uploaded, or of a photo without a camera).
-        var copied = CopiedInBulk(all.Where(i => i.Lat == null && (i.FromFile ?? (IsFileTime(i.TakenAt, i.Mtime) && (i.InCloud || i.Kind == (int)MediaKind.Photo && !i.HasCamera))))
-            .Select(i => (i.Id, i.TakenAt)).ToList());
+        var undated = all.Where(i => i.Lat == null && Media.MediaProbe.Undated(i.FromFile, i.TakenAt, i.Mtime, i.InCloud, i.Kind == (int)MediaKind.Photo, i.HasCamera)).ToList();
+        var copied = CopiedInBulk(undated.Where(i => Media.MediaProbe.IsFileTime(i.TakenAt, i.Mtime)).Select(i => (i.Id, i.TakenAt)).ToList());
+        // Dated by the name of its folder (Media.PathDate): the day is a guess, a folder is often a whole trip or a
+        // year, so it makes no day out either (its folder is what belongs together for the faces). A file name
+        // with the time in it is as good as a date of its own.
+        copied.UnionWith(undated.Where(i => !Media.MediaProbe.IsFileTime(i.TakenAt, i.Mtime) &&
+                                            Media.PathDate.Of(i.RelPath) is not { Precision: Media.PathDate.Precision.Second }).Select(i => i.Id));
         var items = all.Where(i => !copied.Contains(i.Id)).ToList();
         var events = new List<(long Start, long End, List<long> Ids)>();
         (double Lat, double Lon)? lastGps = null;
@@ -64,19 +67,6 @@ public sealed class EventBuilder
     /// <summary>Photos this many within minutes of each other, all dated only by their file time, were copied then.</summary>
     public int BulkCount { get; set; } = 50;
     private static readonly long BulkWindowMs = (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
-
-    /// <summary>
-    /// The capture time is the file's own time (the wall clock of its modification time): the photo had no date
-    /// of its own. The two differ by the time zone only (whole quarters of an hour).
-    /// </summary>
-    private static bool IsFileTime(long takenAt, long mtime)
-    {
-        const long quarter = 15 * 60 * 1000;
-        var offset = takenAt - mtime;
-        if (Math.Abs(offset) > 14 * 4 * quarter) return false;
-        var rest = ((offset % quarter) + quarter) % quarter;
-        return Math.Min(rest, quarter - rest) <= 2000;
-    }
 
     /// <summary>
     /// Photos without a date of their own that came by the dozens within minutes (scanned slides, a folder

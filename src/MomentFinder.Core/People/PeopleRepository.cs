@@ -584,7 +584,10 @@ public sealed class PeopleRepository
         public long CoverId { get; init; }
     }
 
-    /// <summary>Groups of faces nobody named yet, biggest first.</summary>
+    /// <summary>
+    /// Groups of faces nobody named yet, biggest first. A group the review asks about already (half of its faces or
+    /// more are guesses there) is not asked about here too: it comes back when those answers were No.
+    /// </summary>
     public List<ClusterInfo> UnnamedClusters()
     {
         using var c = _db.Open();
@@ -593,7 +596,9 @@ public sealed class PeopleRepository
                    (SELECT d2.id FROM detection d2 WHERE d2.cluster=d.cluster ORDER BY d2.quality DESC LIMIT 1) AS CoverId
             FROM detection d JOIN media m ON m.id=d.media_id
             WHERE d.kind=@face AND d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
-            GROUP BY d.cluster HAVING COUNT(DISTINCT d.media_id) >= 2
+            GROUP BY d.cluster
+            HAVING COUNT(DISTINCT d.media_id) >= 2
+               AND 2 * SUM(d.suggest_person_id IS NOT NULL AND d.suggest_person_id IN (SELECT id FROM person WHERE hidden=0)) < COUNT(*)
             ORDER BY Media DESC
             """, new { face = (int)DetectionKind.Face }).ToList();
     }
@@ -615,13 +620,15 @@ public sealed class PeopleRepository
     /// <summary>
     /// People nobody named whose face does not identify them (helmet and goggles, seen from behind, too small):
     /// groups of alike figures of one event, the clearest first. A group whose face is already among the
-    /// groups of faces is left to that group.
+    /// groups of faces is left to that group, and one the review asks about already (half of its appearances or
+    /// more are guesses there) to the review.
     /// </summary>
     public List<FigureInfo> UnnamedFigures(IReadOnlySet<long> faceClusters, int limit = 2000)
     {
         using var c = _db.Open();
-        var members = c.Query<(long Cluster, long Id, long? Track, long MediaId, int TimeMs, double Quality, long EventId, long TakenAt)>("""
-            SELECT d.cluster, d.id, d.track, d.media_id, d.time_ms, d.quality, COALESCE(m.event_id, 0), m.taken_at
+        var members = c.Query<(long Cluster, long Id, long? Track, long MediaId, int TimeMs, double Quality, long EventId, long TakenAt, bool Guessed)>("""
+            SELECT d.cluster, d.id, d.track, d.media_id, d.time_ms, d.quality, COALESCE(m.event_id, 0), m.taken_at,
+                   d.suggest_person_id IS NOT NULL AND d.suggest_person_id IN (SELECT id FROM person WHERE hidden=0)
             FROM detection d JOIN media m ON m.id=d.media_id
             WHERE d.kind=@body AND d.cluster IS NOT NULL AND d.person_id IS NULL AND m.missing=0
             """, new { body = (int)DetectionKind.Body }).ToList();
@@ -636,6 +643,7 @@ public sealed class PeopleRepository
             }
         return members.GroupBy(m => m.Cluster)
             .Where(g => !g.Any(m => skip.Contains(m.Id) || m.Track is { } t && skip.Contains(t)))
+            .Where(g => 2 * g.Where(m => m.Guessed).Select(m => m.Track ?? m.Id).Distinct().Count() < g.Select(m => m.Track ?? m.Id).Distinct().Count())
             .Select(g =>
             {
                 var cover = g.MaxBy(m => m.Quality);
@@ -680,20 +688,12 @@ public sealed class PeopleRepository
         return c.Query<long>("SELECT id FROM detection WHERE cluster=@cluster AND person_id IS NULL", new { cluster }).ToList();
     }
 
-    /// <summary>The review queue: open suggestions, most likely first.</summary>
-    public List<DetectionRow> Suggestions(int limit)
-    {
-        using var c = _db.Open();
-        return c.Query<DetectionRow>("""
-            SELECT d.id, d.media_id, d.time_ms, d.kind, d.x, d.y, d.w, d.h, d.score, d.quality, d.track, d.linked_id,
-                   d.cluster, d.person_id, d.assign_source, d.confidence, d.confirmed, d.suggest_person_id, d.suggest_score,
-                   m.taken_at AS TakenAt
-            FROM detection d JOIN media m ON m.id=d.media_id
-            JOIN person p ON p.id=d.suggest_person_id AND p.hidden=0
-            WHERE d.suggest_person_id IS NOT NULL AND d.confirmed=0 AND m.missing=0
-            ORDER BY d.kind, d.suggest_score DESC LIMIT @limit
-            """, new { limit }).ToList();
-    }
+    /// <summary>
+    /// Everything the review asks about: the open guesses for people who are not hidden, with their day out (as
+    /// LoadAll gives them).
+    /// </summary>
+    public List<DetectionRow> OpenSuggestions() =>
+        Load("d.confirmed=0 AND d.suggest_person_id IN (SELECT id FROM person WHERE hidden=0)", null);
 
     /// <summary>The appearance vectors of these detections (face or figure), by detection.</summary>
     public Dictionary<long, float[]> Embeddings(IEnumerable<long> detectionIds)
