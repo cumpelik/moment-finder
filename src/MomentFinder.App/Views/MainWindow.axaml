@@ -118,8 +118,8 @@
                                 <ContextMenu IsVisible="{Binding HasMenu}">
                                     <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
-                                    <MenuItem Header="Cloud..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
-                                    <MenuItem Header="Upload here..." Click="OnHereUpload" IsVisible="{Binding CanUpload}" />
+                                    <MenuItem Header="Cloud settings..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
+                                    <MenuItem Header="Show Upload panel" Click="OnHereUpload" IsVisible="{Binding CanUpload}" />
                                     <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding IsAway}" />
                                     <MenuItem Header="Make read-only..." Click="OnMakeReadOnly" IsVisible="{Binding CanMakeReadOnly}"
                                               ToolTip.Tip="Nothing in it can be deleted, moved or added from MomentFinder, and it cannot be removed from the library, until read-only is turned off with a password" />
@@ -310,10 +310,11 @@
                 </StackPanel>
                 <!-- How the results look -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsGridMode}">
+                    <!-- With the upload panel the photos stay by folder, as a tree: that is where things are dropped -->
                     <ComboBox ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding GroupBy}" MinWidth="130" VerticalAlignment="Center"
-                              ToolTip.Tip="Show the results in groups: by day, month, year, person or folder" />
+                              IsEnabled="{Binding !UploadPanel}" ToolTip.ShowOnDisabled="True" ToolTip.Tip="{Binding GroupTip}" />
                     <ToggleButton IsChecked="{Binding GroupTree}" IsVisible="{Binding IsGrouped}" VerticalAlignment="Center"
-                                  ToolTip.Tip="The groups as a tree on the left, like folders: the thumbnails show only the chosen one">
+                                  IsEnabled="{Binding !UploadPanel}" ToolTip.ShowOnDisabled="True" ToolTip.Tip="{Binding TreeTip}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <mi:MaterialIcon Kind="FileTree" />
                             <TextBlock Text="Tree" />
@@ -451,7 +452,7 @@
                                 <!-- A folder that lives in the cloud: what can be done with it -->
                                 <DockPanel.ContextMenu>
                                     <ContextMenu IsVisible="{Binding CanUpload}">
-                                        <MenuItem Header="Upload here..." Click="OnHereUpload" />
+                                        <MenuItem Header="Show Upload panel" Click="OnHereUpload" />
                                         <MenuItem Header="New folder here..." Click="OnTreeNewFolder" />
                                         <MenuItem Header="Move this folder..." Click="OnTreeMoveFolder" IsVisible="{Binding CanChangeFolder}" />
                                         <MenuItem Header="Rename this folder..." Click="OnTreeRenameFolder" IsVisible="{Binding CanChangeFolder}" />
@@ -500,7 +501,7 @@
                             <!-- While something is dragged the same lines say where it would go: nothing below moves -->
                             <TextBlock Classes="small" TextWrapping="Wrap" MinHeight="46" Text="{Binding UploadHint}" />
                         </StackPanel>
-                        <Button Grid.Column="1" Classes="icon" Command="{Binding ToggleUploadCommand}" VerticalAlignment="Top" ToolTip.Tip="Close the upload view">
+                        <Button Grid.Column="1" Classes="icon" Command="{Binding ToggleUploadCommand}" VerticalAlignment="Top" ToolTip.Tip="Close the Upload panel">
                             <mi:MaterialIcon Kind="Close" />
                         </Button>
                     </Grid>

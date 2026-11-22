@@ -528,8 +528,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     // ---- uploading by dragging: the folders' tree on the left, a browser of this computer (or another storage) on the right ----
 
     /// <summary>The upload view is on: the folders of the source as a tree, and the browser to drag from beside the photos.</summary>
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowUploadPanel))] private bool _uploadPanel;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowUploadPanel), nameof(GroupTip), nameof(TreeTip))] private bool _uploadPanel;
     public bool ShowUploadPanel => UploadPanel && IsCloudScope;
+    private const string ByFolderWhileUploading = "While the Upload panel is open the photos are shown by folder, as a tree: a folder is where things are dropped. Close the panel to group them another way.";
+    public string GroupTip => UploadPanel ? ByFolderWhileUploading : "Show the results in groups: by day, month, year, person or folder";
+    public string TreeTip => UploadPanel ? ByFolderWhileUploading : "The groups as a tree on the left, like folders: the thumbnails show only the chosen one";
     /// <summary>This computer's folders and files, or another storage's; made when first shown.</summary>
     [ObservableProperty] private FileBrowserViewModel? _browser;
     /// <summary>While something is dragged: where it would go.</summary>
@@ -561,7 +564,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Opens the upload view at a folder (from the menu of a source or of a folder in the tree).</summary>
+    /// <summary>Opens the Upload panel at a folder (from the menu of a source or of a folder in the tree).</summary>
     public void OpenUpload((long SourceId, string Folder) where)
     {
         if (SidebarItems.OfType<SidebarEntry>().FirstOrDefault(e => e.Kind == SidebarKind.Source && e.Id == where.SourceId) is not { CanUpload: true } entry) return;
