@@ -267,7 +267,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                     VideoReady = true;
                     EndLoading();
                     PeopleChanged?.Invoke();
+                    OnVideoBuffering();
                 };
+                _video.Failed += OnVideoFailed;
+                _video.BufferingChanged += OnVideoBuffering;
             }
             VideoLength = Math.Max(1, item.DurationMs ?? 1);
             // Only someone's moments and they are not in this video: on to the next one.
@@ -277,6 +280,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 Dispatcher.UIThread.Post(Next);
                 return;
             }
+            _streamed = null;
             if (Cloud.MediaFiles.IsLocal(item))
             {
                 _playingPath = Is360 ? Path360(item, item.FullPath, version) : item.FullPath;
@@ -286,9 +290,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             }
             else
             {
-                // The video before must not go on playing (and sounding) under "Downloading".
+                // The video before must not go on playing (and sounding) while this one is opened.
                 _video.Stop();
                 _positionTimer.Stop();
+                // Its thumbnail meanwhile, not a black window.
+                if (!Is360) ShowThumbnail(item);
                 _ = PlayFromCloudAsync(entry, version);
             }
         }
@@ -610,7 +616,74 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         if (version == _loadVersion) Show();
     }
 
+    /// <summary>The video playing from the cloud as it comes (not from a file here): what to fall back on if that fails.</summary>
+    private (PlaylistEntry Entry, int Version, int StartMs)? _streamed;
+
+    /// <summary>
+    /// A video that lives in the cloud plays while it comes. Downloaded whole first, as before: a 360 video (its
+    /// leveling reads the end of the file, its playing copy all of it), a video with a copy on this computer, and
+    /// any video the gate cannot serve.
+    /// </summary>
     private async Task PlayFromCloudAsync(PlaylistEntry entry, int version)
+    {
+        if (!Is360 && Cloud.MediaFiles.LocalNow(entry.Item) == null)
+        {
+            LoadingText = "Opening the video from the cloud...";
+            string? url = null;
+            try
+            {
+                url = await _main.Streams.UrlAsync(entry.Item, CancellationToken.None);
+            }
+            catch (Exception e) when (e is Cloud.RcloneException or IOException)
+            {
+                // Downloaded instead.
+            }
+            if (version != _loadVersion || _video == null) return;
+            if (url != null)
+            {
+                var start = TakeStart(entry);
+                _streamed = (entry, version, start);
+                _playingPath = url;
+                _video.Play(url, start);
+                HoldIfWanted();
+                _positionTimer.Start();
+                return;
+            }
+        }
+        await DownloadAndPlayAsync(entry, version, null);
+    }
+
+    /// <summary>
+    /// A video played from the cloud stands still on its picture while more of it comes (after a jump, on a slow
+    /// line, or at the start of a video that needs much before it moves): said, so it is not taken for stuck.
+    /// </summary>
+    private void OnVideoBuffering()
+    {
+        if (_video == null || !VideoReady) return;
+        if (_video.IsBuffering && IsRunning)
+        {
+            if (_loadPending || IsLoading) return;
+            BeginLoading();
+            LoadingText = "Loading more of the video from the cloud...";
+        }
+        else EndLoading();
+    }
+
+    /// <summary>libVLC could not open the video or lost it: a streamed one is downloaded and played from the file.</summary>
+    private void OnVideoFailed()
+    {
+        if (_streamed is { } s && s.Version == _loadVersion)
+        {
+            _streamed = null;
+            var at = VideoReady ? (int)NowMs : s.StartMs;
+            VideoReady = false;
+            _positionTimer.Stop();
+            BeginLoading();
+            _ = DownloadAndPlayAsync(s.Entry, s.Version, at);
+        }
+    }
+
+    private async Task DownloadAndPlayAsync(PlaylistEntry entry, int version, int? at)
     {
         LoadingText = "Downloading the video from the cloud...";
         try
@@ -626,6 +699,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             if (version != _loadVersion || _video == null) return;
             LoadingText = "Loading...";
             _playingPath = Is360 ? Path360(entry.Item, path, version) : path;
+            if (at != null) ResumeAtMs = at;
             _video.Play(_playingPath, TakeStart(entry));
             HoldIfWanted();
             _positionTimer.Start();
@@ -732,6 +806,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVideoEnded()
     {
+        // A video from the cloud that "ended" well before its end stopped coming (the gate is gone): the rest is
+        // downloaded and it goes on from there.
+        if (_streamed is { } s && s.Version == _loadVersion && VideoLength > 5000 && NowMs < VideoLength - 5000)
+        {
+            OnVideoFailed();
+            return;
+        }
         // Loop: the same video (or its first moment) again.
         if (Loop && _video != null && _playingPath != null)
         {

@@ -47,6 +47,8 @@ public sealed class VideoPlayer : IDisposable
     public event Action? Ended;
     /// <summary>On the UI thread: the first frame of the video just started is on screen.</summary>
     public event Action? Started;
+    /// <summary>On the UI thread: libVLC could not open the video, or lost it while playing (a stream that stopped coming).</summary>
+    public event Action? Failed;
 
     private readonly object _queueLock = new();
     private Task _queue = Task.CompletedTask;
@@ -119,6 +121,22 @@ public sealed class VideoPlayer : IDisposable
             _ended = true;
             Dispatcher.UIThread.Post(() => Ended?.Invoke());
         };
+        _player.Buffering += (_, e) =>
+        {
+            var buffering = _streamed && e.Cache < 100;
+            if (buffering == _buffering) return;
+            _buffering = buffering;
+            Dispatcher.UIThread.Post(() => BufferingChanged?.Invoke());
+        };
+        _player.EncounteredError += (_, _) =>
+        {
+            var of = _active;
+            Dispatcher.UIThread.Post(() =>
+            {
+                // Of the video asked for now, not of one left a moment ago.
+                if (of == _requested) Failed?.Invoke();
+            });
+        };
     }
 
     /// <summary>Frames go to RawFrame (for the 360 view) instead of the Frame bitmap.</summary>
@@ -132,6 +150,16 @@ public sealed class VideoPlayer : IDisposable
     public long TimeMs => _player.Time;
     public long LengthMs => _player.Length;
 
+    private volatile bool _streamed;
+    private volatile bool _buffering;
+    /// <summary>
+    /// A video read from the cloud as it plays stands still because more of it has to come first (at its start,
+    /// after a jump, on a slow line). Never true for a file.
+    /// </summary>
+    public bool IsBuffering => _buffering;
+    /// <summary>On the UI thread: IsBuffering changed.</summary>
+    public event Action? BufferingChanged;
+
     private string? _path;
     /// <summary>The video played to its end: libVLC ignores a seek then, the video has to be opened again.</summary>
     private volatile bool _ended;
@@ -141,7 +169,13 @@ public sealed class VideoPlayer : IDisposable
         _path = path;
         _ended = false;
         var old = _media;
-        var media = _media = new VlcMedia(_libVlc!, path, FromType.FromPath);
+        // An address, not a file: a video of a cloud folder, read from the gate on this computer as it plays.
+        // (libVLC's own choices for a network stream are kept: its buffer of a second, its demuxers. Its MP4 demuxer
+        // reads up to 15 s ahead of a video without sound before it starts, which the other one, ffmpeg's, does not;
+        // but that one starts every ordinary video seconds later.)
+        var stream = _streamed = path.StartsWith("http://", StringComparison.Ordinal);
+        _buffering = false;
+        var media = _media = new VlcMedia(_libVlc!, path, stream ? FromType.FromLocation : FromType.FromPath);
         if (startMs > 0)
             media.AddOption(":start-time=" + (startMs / 1000.0).ToString(System.Globalization.CultureInfo.InvariantCulture));
         _starting = true;

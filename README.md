@@ -50,6 +50,11 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **A folder in the cloud as a source** (SOURCES +, Folder in the cloud): photos put into a storage by other means
   (its own app, another program) are added from there, browsing its folders; files are fetched when needed.
+- **A video in the cloud plays while it comes**: it starts in about a second and can be moved in, the whole file
+  is not downloaded first (rclone serves the folder to the player on this computer only, over several connections,
+  decrypting on the way). A video without sound, such as a time-lapse, needs its first 15 seconds before it moves.
+  360 videos are still downloaded whole (leveling them needs the whole file), and so is any video the player
+  cannot read this way. Thumbnails of cloud videos are read from the stream too.
 - **Changing a folder that lives in the cloud**. Upload (its button above the photos): the folders of the source
   show as a tree on the left and a browser of this computer (or of another storage: another bucket, a OneDrive, a
   Google Drive) on the right; files and whole folders are dragged from it onto the folder they should be in, or onto

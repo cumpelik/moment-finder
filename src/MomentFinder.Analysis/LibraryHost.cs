@@ -62,7 +62,7 @@ public sealed class LibraryHost : IDisposable
         Buckets = new BucketService(Db, Repo);
         Search = new SearchService(Repo);
         Cloud = new CloudService(Paths, Db, Repo);
-        Indexer = new Indexer(Paths, Repo, Cloud.Rclone);
+        Indexer = new Indexer(Paths, Repo, Cloud.Rclone) { VideoStream = Cloud.Streams.UrlAsync };
         Mirrors = new MirrorScheduler(Cloud, Db);
         Jobs = new CloudJobs(Paths, Db, Repo, Cloud);
         Jobs.LibraryChanged += Indexer.Wake;
@@ -131,6 +131,7 @@ public sealed class LibraryHost : IDisposable
         Mirrors.Dispose();
         Jobs.Dispose();
         Sync.Dispose();
+        Cloud.Streams.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();
         Translator?.Dispose();

@@ -36,11 +36,10 @@ public static class MediaFiles
         new FileInfo(item.FullPath) is { Exists: true } fi && fi.Length == item.Size;
 
     /// <summary>
-    /// The local path of the item's bytes, downloaded first when needed. Waited: somebody is looking at the screen
-    /// for it (the viewer), so it does not wait for the downloads of the background analysis.
+    /// Where the item's bytes are on this computer right now: its own file, the copy fetched from the cloud, or its
+    /// twin in a local folder. Null when they would have to be downloaded (nothing is downloaded here).
     /// </summary>
-    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct, bool waited = false,
-        IProgress<Rclone.CopyProgress>? progress = null)
+    public static string? LocalNow(MediaItem item)
     {
         if (item.Remote == null) return item.FullPath;
         if (IsCached(item))
@@ -49,7 +48,17 @@ public static class MediaFiles
             try { File.SetLastWriteTimeUtc(item.FullPath, DateTime.UtcNow); } catch (IOException) { }
             return item.FullPath;
         }
-        if (_localTwin?.Invoke(item) is { } twin) return twin;
+        return _localTwin?.Invoke(item);
+    }
+
+    /// <summary>
+    /// The local path of the item's bytes, downloaded first when needed. Waited: somebody is looking at the screen
+    /// for it (the viewer), so it does not wait for the downloads of the background analysis.
+    /// </summary>
+    public static async Task<string> LocalPathAsync(MediaItem item, CancellationToken ct, bool waited = false,
+        IProgress<Rclone.CopyProgress>? progress = null)
+    {
+        if (LocalNow(item) is { } here) return here;
         if (_rclone == null) throw new InvalidOperationException("Cloud access is not configured");
         var gate = waited ? WaitedGate : Gate;
         await gate.WaitAsync(ct);
@@ -73,7 +82,7 @@ public static class MediaFiles
                 {
                     // Somebody waits: several connections at once. The background keeps to one each, so it does
                     // not take the line from the viewer.
-                    await _rclone.DownloadAsync(item.Remote, item.FullPath, progress, ct, waited ? 8 : 1);
+                    await _rclone.DownloadAsync(item.Remote!, item.FullPath, progress, ct, waited ? 8 : 1);
                     Fetched?.Invoke(item.Id);
                 }
             }

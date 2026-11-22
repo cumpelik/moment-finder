@@ -99,6 +99,57 @@ public sealed partial class Rclone
         return (p.ExitCode, await stdout);
     }
 
+    private static Version? _version;
+
+    /// <summary>The version of the rclone in use (the installer brings its own; on Linux it may be the system's, years older).</summary>
+    public async Task<Version> VersionAsync(CancellationToken ct)
+    {
+        if (_version != null) return _version;
+        var m = VersionNumber().Match(await RunAsync(["version"], ct));
+        return _version = m.Success ? new Version(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)) : new Version(0, 0);
+    }
+
+    [GeneratedRegex(@"rclone v(\d+)\.(\d+)")]
+    private static partial Regex VersionNumber();
+
+    /// <summary>
+    /// Starts rclone and leaves it running (a server): the caller ends it. What it writes is read and dropped, so
+    /// it never waits for somebody to read it. It does not outlive this process, also when this one is ended the
+    /// hard way: on Windows the system sees to it (ChildProcesses), elsewhere a shell beside it watches this process.
+    /// </summary>
+    public Process Start(IEnumerable<string> args)
+    {
+        if (Exe.Value is not { } exe) throw new RcloneException("rclone is not installed");
+        var watched = !OperatingSystem.IsWindows() && File.Exists("/bin/sh");
+        var psi = new ProcessStartInfo(watched ? "/bin/sh" : exe)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        if (watched)
+        {
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"\"$@\" & c=$!; trap 'kill $c 2>/dev/null' TERM INT; " +
+                                 $"while kill -0 {Environment.ProcessId} 2>/dev/null && kill -0 $c 2>/dev/null; do sleep 1; done; kill $c 2>/dev/null");
+            psi.ArgumentList.Add("sh");
+            psi.ArgumentList.Add(exe);
+        }
+        psi.ArgumentList.Add("--config");
+        psi.ArgumentList.Add(_configPath);
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        var p = Process.Start(psi) ?? throw new RcloneException("Cannot start rclone");
+        ChildProcesses.EndWithThisOne(p);
+        p.StandardInput.Close();
+        p.OutputDataReceived += (_, _) => { };
+        p.ErrorDataReceived += (_, _) => { };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        return p;
+    }
+
     /// <summary>Creates or replaces a remote; secret values are passed as given and obscured by rclone.</summary>
     public Task CreateRemoteAsync(string name, string type, IReadOnlyDictionary<string, string> parameters, CancellationToken ct)
     {

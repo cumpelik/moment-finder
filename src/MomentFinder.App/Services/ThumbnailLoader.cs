@@ -17,10 +17,13 @@ public sealed class ThumbnailLoader
     private readonly AppPaths _paths;
     private readonly SemaphoreSlim _gate = new(Math.Max(2, Environment.ProcessorCount / 2));
 
-    public ThumbnailLoader(Indexer indexer, AppPaths paths)
+    private readonly Cloud.CloudStreams? _streams;
+
+    public ThumbnailLoader(Indexer indexer, AppPaths paths, Cloud.CloudStreams? streams = null)
     {
         _indexer = indexer;
         _paths = paths;
+        _streams = streams;
     }
 
     /// <summary>The item's thumbnail when it is made already; null otherwise (nothing is made or downloaded for it).</summary>
@@ -65,7 +68,15 @@ public sealed class ThumbnailLoader
         var path = Path.Combine(_paths.CacheDir, "hits", $"{item.Id}_{atMs}.jpg");
         if (File.Exists(path)) return path;
         var tmp = Path.ChangeExtension(path, Guid.NewGuid().ToString("N") + ".jpg");
-        if (await FFmpeg.ExtractFrameAsync(await Cloud.MediaFiles.LocalPathAsync(item, ct), atMs / 1000.0, tmp, (int)ImageCodec.ThumbSize, ct))
+        // A video in the cloud: the frame is read from where it is (a few requests), the video is not downloaded for it.
+        var from = Cloud.MediaFiles.LocalNow(item);
+        if (from == null && _streams != null && await _streams.UrlAsync(item, ct) is { } url &&
+            await FFmpeg.ExtractFrameAsync(url, atMs / 1000.0, tmp, (int)ImageCodec.ThumbSize, ct))
+        {
+            File.Move(tmp, path, true);
+            return path;
+        }
+        if (await FFmpeg.ExtractFrameAsync(from ?? await Cloud.MediaFiles.LocalPathAsync(item, ct), atMs / 1000.0, tmp, (int)ImageCodec.ThumbSize, ct))
         {
             File.Move(tmp, path, true);
             return path;

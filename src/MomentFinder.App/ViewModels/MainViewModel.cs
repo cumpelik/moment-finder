@@ -26,6 +26,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _starting = true;
 
     public ThumbnailLoader Thumbnails { get; }
+    /// <summary>Videos of the cloud folders, played while they come.</summary>
+    public Cloud.CloudStreams Streams => _host.Cloud.Streams;
     public PeopleViewModel People { get; }
 
     /// <summary>What the main area shows: the grid of photos, or one of the people screens.</summary>
@@ -85,7 +87,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         _host = host;
         host.Indexer.Proxies360 = true;
-        Thumbnails = new ThumbnailLoader(host.Indexer, host.Paths);
+        Thumbnails = new ThumbnailLoader(host.Indexer, host.Paths, host.Cloud.Streams);
         People = new PeopleViewModel(host, () => Dispatcher.UIThread.Post(RebuildSidebar));
         host.Identity.Changed += () => Dispatcher.UIThread.Post(() =>
         {

@@ -201,6 +201,8 @@ public class FolderBackupTests
         var inCloud = lib.Repo.Query(new MediaFilter { SourceId = cloud.Id }).Single();
         // The remote does not exist: a download would fail. The file here is used.
         Assert.Equal(photo, await MediaFiles.LocalPathAsync(inCloud, ct));
+        // And it is known to be here without asking for a download (a video of it plays from the file, not streamed).
+        Assert.Equal(photo, MediaFiles.LocalNow(inCloud));
     }
 
     [Fact]

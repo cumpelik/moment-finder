@@ -122,7 +122,11 @@ public sealed class CloudService
         Backup = new LibraryBackup(paths, db, this);
         Rclone = new Rclone(Path.Combine(paths.DataDir, "rclone.conf"));
         MediaFiles.Configure(Rclone, Path.Combine(paths.CacheDir, "cloud"), repo.LocalTwinPath);
+        Streams = new CloudStreams(Rclone, Path.Combine(paths.CacheDir, "stream"));
     }
+
+    /// <summary>Videos of the cloud folders played while they come (nothing runs for it until the first one).</summary>
+    public CloudStreams Streams { get; }
 
     public static string Join(string remote, string path)
     {

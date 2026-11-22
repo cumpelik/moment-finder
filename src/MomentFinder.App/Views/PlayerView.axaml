@@ -27,7 +27,8 @@
         <!-- The picture and the people boxes share one coordinate space (pixels of the picture); the Viewbox fits it to the screen. -->
         <Viewbox Stretch="Uniform">
             <Panel Width="{Binding ContentWidth}" Height="{Binding ContentHeight}">
-                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !IsVideo}" />
+                <!-- A photo; or the thumbnail of a video from the cloud until its first frame is here -->
+                <Image x:Name="PhotoImage" Source="{Binding Photo}" Stretch="Fill" IsVisible="{Binding !VideoReady}" />
                 <Image x:Name="VideoImage" Stretch="Fill" IsVisible="{Binding VideoReady}" />
                 <Canvas x:Name="PeopleLayer" IsVisible="{Binding ShowPeople}" />
             </Panel>

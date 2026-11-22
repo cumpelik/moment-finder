@@ -414,6 +414,9 @@ public sealed class Indexer : IDisposable
 
     private readonly SemaphoreSlim _thumbGate = new(Math.Max(2, Environment.ProcessorCount / 2));
 
+    /// <summary>The address a video of a cloud folder can be read from in parts (null: it cannot); set by the host.</summary>
+    public Func<MediaItem, CancellationToken, Task<string?>>? VideoStream { get; set; }
+
     /// <summary>Also called by the grid for an item it shows before the indexer got to it.</summary>
     public async Task<string?> EnsureThumbnailAsync(MediaItem item, CancellationToken ct, bool regenerate = false)
     {
@@ -426,8 +429,14 @@ public sealed class Indexer : IDisposable
             bool ok;
             try
             {
-                // Where the file is on this computer: a cloud item's fetched copy, or the file it was uploaded from.
-                ok = await ImageCodec.CreateThumbnailAsync(item, await Cloud.MediaFiles.LocalPathAsync(item, ct), path, ct);
+                // A video that is only in the cloud: one frame is read from where it is, the video is not downloaded
+                // for a thumbnail.
+                var stream = item.IsVideo && VideoStream != null && !Fisheye360.IsDualFisheye(item.FullPath) && Cloud.MediaFiles.LocalNow(item) == null
+                    ? await VideoStream(item, ct)
+                    : null;
+                // Otherwise where the file is on this computer: a cloud item's fetched copy, or the file it was uploaded from.
+                ok = stream != null && await ImageCodec.CreateThumbnailAsync(item, stream, path, ct) ||
+                     await ImageCodec.CreateThumbnailAsync(item, await Cloud.MediaFiles.LocalPathAsync(item, ct), path, ct);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
