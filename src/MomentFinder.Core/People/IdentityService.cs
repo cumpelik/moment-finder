@@ -8,7 +8,8 @@ namespace MomentFinder.People;
 /// (after the layers: nobody is twice on screen at once in a video, nor twice in one picture)
 /// 1. the clear face on a figure the user named is that person; faces against the faces named on the same day
 ///    (the closest one decides), then against the faces of named people of all years (confident new matches
-///    extend a person, so a child is followed as it grows),
+///    extend a person, so a child is followed as it grows; who is there that day anyway needs less likeness, and
+///    a face that belongs to a crowd nobody named is left to that crowd),
 ///    2. a body linked to a face in the same picture, 3. everything on one
 ///    video track, 4. bodies in the same event (one day of skiing: same jacket and helmet) against bodies
 ///    already known, 5. tracks again. What stays unknown becomes a suggestion for the review queue,
@@ -27,6 +28,17 @@ public sealed class IdentityService
     /// stay below ~0.36, and there are only the few named faces of that day to be close to by chance.
     /// </summary>
     public float FaceSameDay { get; set; } = 0.5f;
+    /// <summary>
+    /// Somebody who is there that day anyway (on ThereOnPictures pictures at least, by a face as sure as FaceSure)
+    /// needs less likeness to be taken for it: a face turned away, blurred or half hidden, which no picture of
+    /// other years is close to. On the real library the clothes of the day agreed with 97 % of such names, as
+    /// with the names above FaceAuto. Photos only: in a video one weak face would name its whole track.
+    /// </summary>
+    public float FaceAutoThere { get; set; } = 0.36f;
+    public float FaceSure { get; set; } = 0.5f;
+    public int ThereOnPictures { get; set; } = 3;
+    /// <summary>How clear a face nobody known is like must be to count for the crowd of the unnamed (InCrowd).</summary>
+    public float CrowdQuality { get; set; } = 0.5f;
     // OSNet cosine similarity of whole people (clothes); only within an event, where clothes do not change.
     public float BodyAuto { get; set; } = 0.72f;
     public float BodySuggest { get; set; } = 0.6f;
@@ -456,11 +468,19 @@ public sealed class IdentityService
                 results[i] = (best, bestScore, second);
             });
             compared = counts;
+            var crowd = InCrowd(open, results);
             for (var i = 0; i < open.Count; i++)
             {
                 var f = open[i];
                 var (person, score, second) = results[i];
                 if (person == 0) continue;
+                if (crowd[i])
+                {
+                    // Somebody not named yet: no guess, the group is asked about as a whole in Who is this.
+                    f.SuggestPersonId = null;
+                    f.SuggestScore = null;
+                    continue;
+                }
                 if (score >= FaceAuto && score - second >= Margin)
                 {
                     if (f.PersonId == null && score >= FaceExtend && f.Quality >= 0.3f)
@@ -480,8 +500,60 @@ public sealed class IdentityService
                     f.SuggestScore = score;
                 }
             }
+            // Who is there each day, by a sure face: on how many pictures.
+            var there = faces.Where(f => f.PersonId != null && (f.Confirmed || (f.Confidence ?? 0) >= FaceSure))
+                .GroupBy(f => (Day: f.EventId ?? -1 - f.Folder, Person: f.PersonId!.Value))
+                .ToDictionary(g => g.Key, g => g.Select(f => f.MediaId).Distinct().Count());
+            for (var i = 0; i < open.Count; i++)
+            {
+                var f = open[i];
+                var (person, score, second) = results[i];
+                if (f.PersonId != null || f.Track != null || crowd[i] || person == 0 || score < FaceAutoThere || score - second < Margin) continue;
+                if (there.GetValueOrDefault((f.EventId ?? -1 - f.Folder, person)) < ThereOnPictures) continue;
+                f.PersonId = person;
+                f.AssignSource = AssignSource.Face;
+                f.Confidence = score;
+                f.SuggestPersonId = null;
+                f.SuggestScore = null;
+            }
             if (added == 0) break;
         }
+    }
+
+    /// <summary>
+    /// The open faces that belong to a crowd nobody named: closer to clear faces nobody known is like enough (the
+    /// three closest of them, on other pictures) than to the person they are most like, and close enough to be
+    /// grouped with them. That is somebody not named yet who looks like a named one, a brother or a sister mostly.
+    /// Without this every picture of the one not named yet came as a guess for the other (on the real library:
+    /// 1 400 of the 2 100 faces of a sister as her brother, and two cousins took nearly all of each other's faces
+    /// as sure). Their group is asked about once in Who is this instead, with the look-alike offered first. Faces
+    /// that got a name in a round before keep it.
+    /// </summary>
+    private bool[] InCrowd(List<DetectionRow> open, (long Person, float Score, float Second)[] results)
+    {
+        var inCrowd = new bool[open.Count];
+        var unnamed = Enumerable.Range(0, open.Count).Where(i => open[i].PersonId == null && open[i].Quality >= CrowdQuality &&
+                                                                 (results[i].Score < FaceAuto || results[i].Score - results[i].Second < Margin)).ToArray();
+        if (unnamed.Length < 3) return inCrowd;
+        Parallel.For(0, open.Count, i =>
+        {
+            if (open[i].PersonId != null || results[i].Person == 0 || results[i].Score < FaceSuggest) return;
+            var e = open[i].Embedding;
+            float a = float.MinValue, b = float.MinValue, c = float.MinValue;
+            foreach (var j in unnamed)
+            {
+                if (open[j].MediaId == open[i].MediaId || open[j].Embedding.Length != e.Length) continue;
+                var s = TensorPrimitives.Dot(e, open[j].Embedding);
+                if (s <= c) continue;
+                if (s > a) (a, b, c) = (s, a, b);
+                else if (s > b) (b, c) = (s, b);
+                else c = s;
+            }
+            if (c == float.MinValue) return;
+            var like = (a + b + c) / 3;
+            inCrowd[i] = like >= FaceCluster && like >= results[i].Score + Margin;
+        });
+        return inCrowd;
     }
 
     /// <summary>

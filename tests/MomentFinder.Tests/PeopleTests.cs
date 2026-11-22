@@ -308,6 +308,82 @@ public class PeopleTests
     }
 
     /// <summary>
+    /// Anna is on three photos of the trip by her face. A fourth shows her turned away, too little alike to be taken
+    /// for her by itself: there, on that day, it is her. The same look on a day she is not known on stays a
+    /// question, and so does a face in a video (one weak face would name its whole track).
+    /// </summary>
+    [Fact]
+    public async Task SomebodyThereThatDayNeedsLessLikeness()
+    {
+        using var lib = new TestLibrary();
+        var times = new Dictionary<string, string> { ["trip/turned.jpg"] = "2024-06-01 11:00", ["trip/video.jpg"] = "2024-06-01 11:30", ["later/turned.jpg"] = "2024-09-01 10:00" };
+        for (var i = 0; i < 3; i++) times[$"trip/anna{i}.jpg"] = $"2024-06-01 10:0{i}";
+        foreach (var (f, t) in times)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.RelPath.Replace('\\', '/'), i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var anna = repo.CreatePerson("Anna");
+        for (var i = 0; i < 3; i++) repo.Confirm(repo.ReplaceDetections(items[$"trip/anna{i}.jpg"], [Face(Mix((1, 1)))]), anna.Id);
+        // 0.4 like her pictures: a question by itself (below FaceAuto), each turned another way.
+        repo.ReplaceDetections(items["trip/turned.jpg"], [Face(Mix((1, 0.4f), (5, 0.92f)))]);
+        repo.ReplaceDetections(items["trip/video.jpg"], [Face(Mix((1, 0.4f), (6, 0.92f)), track: 1)]);
+        repo.ReplaceDetections(items["later/turned.jpg"], [Face(Mix((1, 0.4f), (7, 0.92f)))]);
+        new IdentityService(repo).Recompute();
+
+        var there = repo.DetectionsOfMedia(items["trip/turned.jpg"]).Single();
+        Assert.Equal((anna.Id, AssignSource.Face), (there.PersonId, there.AssignSource));
+        foreach (var asked in new[] { "trip/video.jpg", "later/turned.jpg" })
+        {
+            var d = repo.DetectionsOfMedia(items[asked]).Single();
+            Assert.Null(d.PersonId);
+            Assert.Equal(anna.Id, d.SuggestPersonId);
+        }
+    }
+
+    /// <summary>
+    /// Anna has a sister nobody named yet, on five photos: alike enough to be guessed as Anna one photo after
+    /// another, two of them even to be taken for her. The five are far more like each other, so they are left as
+    /// one group to name (no guesses, no names). One answer then names them all. A single face that is a little
+    /// like Anna, with no such group around it, is still asked about.
+    /// </summary>
+    [Fact]
+    public async Task ALookAlikeNobodyNamedIsAskedAboutOnceAsAGroup()
+    {
+        using var lib = new TestLibrary();
+        var times = new Dictionary<string, string> { ["alone.jpg"] = "2024-08-01 10:00" };
+        for (var i = 0; i < 3; i++) times[$"anna{i}.jpg"] = $"2023-0{i + 1}-10 10:00";
+        for (var i = 0; i < 5; i++) times[$"sister{i}.jpg"] = $"2024-0{i + 1}-20 10:00";
+        foreach (var (f, t) in times)
+            File.SetLastWriteTime(lib.AddPhoto(f), DateTime.Parse(t, System.Globalization.CultureInfo.InvariantCulture));
+        await lib.ScanAsync(lib.AddSource());
+        var items = lib.Repo.Query(new MediaFilter()).ToDictionary(i => i.FileName, i => i.Id);
+        new EventBuilder(lib.Db).Rebuild();
+        var repo = new PeopleRepository(lib.Db);
+        var anna = repo.CreatePerson("Anna");
+        for (var i = 0; i < 3; i++) repo.Confirm(repo.ReplaceDetections(items[$"anna{i}.jpg"], [Face(Mix((1, 1)))]), anna.Id);
+        float[] likeness = [0.4f, 0.4f, 0.4f, 0.48f, 0.48f];
+        var sister = Enumerable.Range(0, 5).Select(i =>
+            repo.ReplaceDetections(items[$"sister{i}.jpg"], [Face(Mix((1, likeness[i]), (2, MathF.Sqrt(1 - likeness[i] * likeness[i])), (6 + i, 0.1f)))])[0]).ToList();
+        repo.ReplaceDetections(items["alone.jpg"], [Face(Mix((1, 0.4f), (3, 0.92f)))]);
+        var identity = new IdentityService(repo);
+        identity.Recompute();
+
+        var faces = repo.Load(sister);
+        Assert.All(faces, f => Assert.Null(f.PersonId));
+        Assert.All(faces, f => Assert.Null(f.SuggestPersonId));
+        Assert.Single(faces.Select(f => f.Cluster).Distinct());
+        Assert.NotNull(faces[0].Cluster);
+        Assert.Equal(anna.Id, repo.DetectionsOfMedia(items["alone.jpg"]).Single().SuggestPersonId);
+
+        var eva = repo.CreatePerson("Eva");
+        repo.Confirm([sister[0]], eva.Id);
+        identity.Recompute();
+        Assert.All(repo.Load(sister), f => Assert.Equal(eva.Id, f.PersonId));
+    }
+
+    /// <summary>
     /// Choosing a name: the known people are offered the most likely first. By the face; without a face by the
     /// clothes of that day; who the user said it is not comes last.
     /// </summary>

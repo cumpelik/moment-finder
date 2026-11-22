@@ -109,6 +109,8 @@ public sealed partial class PeopleViewModel : ObservableObject
     private readonly Action _changed;
     private List<DetectionRow> _queue = [];
     private int _queueIndex;
+    /// <summary>All the open suggestions when the queue was read (the queue holds the surest of them).</summary>
+    private long _queueOf;
     private Dictionary<long, string> _names = [];
 
     [ObservableProperty] private ObservableCollection<CropViewModel> _clusters = [];
@@ -373,6 +375,7 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         _names = _host.People.ListPersons(true).ToDictionary(p => p.Id, p => p.Name);
         _queue = _host.People.Suggestions(200);
+        _queueOf = Math.Max(_host.People.SuggestionCount(), _queue.Count);
         _queueIndex = 0;
         ShowReview();
     }
@@ -397,7 +400,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         ReviewCrop = crop;
         var name = _names.GetValueOrDefault(d.SuggestPersonId!.Value, "?");
         ReviewQuestion = $"Is this {name}?";
-        ReviewProgress = $"{_queueIndex + 1} / {_queue.Count}";
+        ReviewProgress = $"{_queueIndex + 1} of {_queueOf:N0}, the surest first";
         var item = _host.Repo.Get(d.MediaId);
         ReviewDetail = item == null ? "" :
             $"{item.FileName}, {item.Taken:d. M. yyyy}" + (d.Kind == DetectionKind.Body ? ", recognized by clothes" : "") +

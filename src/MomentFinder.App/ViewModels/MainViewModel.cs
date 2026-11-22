@@ -231,7 +231,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             {
                 var clusters = _host.People.UnnamedClusters();
                 counts = new SidebarCounts(
-                    clusters.Count + _host.People.UnnamedFigures(clusters.Select(c => c.Cluster).ToHashSet()).Count,
+                    // What Who is this shows: people seen only once are behind its checkbox, so they do not count.
+                    clusters.Count + _host.People.UnnamedFigures(clusters.Select(c => c.Cluster).ToHashSet()).Count(f => f.Tracks > 1),
                     _host.People.SuggestionCount(),
                     InterestingMoments.Find(_host.Db).Count,
                     _host.Repo.Stats(Indexer.AnalysisVersion),
