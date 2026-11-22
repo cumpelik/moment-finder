@@ -140,12 +140,21 @@ public sealed partial class Rclone
         File.WriteAllText(path, text.ToString());
     }
 
+    /// <summary>
+    /// The times of a listing are the files' own (what the file had on the disk it came from) unless told otherwise.
+    /// An S3 storage keeps that beside the file and answers it with a request for every single file: a folder of
+    /// 20 000 photos takes ten minutes to list. With the times of when the file came to the storage (uploadTimes)
+    /// the same listing takes two seconds: for everything that only needs the names and sizes.
+    /// </summary>
+    private static string[] ListArgs(bool uploadTimes, params string[] rest) =>
+        uploadTimes ? ["lsjson", "-R", "--files-only", "--no-mimetype", "--use-server-modtime", .. rest] : ["lsjson", "-R", "--files-only", "--no-mimetype", .. rest];
+
     /// <summary>Files down to a depth (1 = directly in the folder); an empty list when the folder is not there.</summary>
-    public async Task<List<RemoteFile>> ListAsync(string remotePath, int depth, CancellationToken ct)
+    public async Task<List<RemoteFile>> ListAsync(string remotePath, int depth, CancellationToken ct, bool uploadTimes = false)
     {
         try
         {
-            return Parse(await RunAsync(["lsjson", "-R", "--files-only", "--no-mimetype", "--max-depth", depth.ToString(CultureInfo.InvariantCulture), remotePath], ct));
+            return Parse(await RunAsync(ListArgs(uploadTimes, "--max-depth", depth.ToString(CultureInfo.InvariantCulture), remotePath), ct));
         }
         catch (RcloneException e) when (e.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
         {
@@ -199,9 +208,10 @@ public sealed partial class Rclone
         await RunAsync(["lsjson", "--max-depth", "1", remotePath], ct);
     }
 
-    public async Task<List<RemoteFile>> ListAsync(string remotePath, CancellationToken ct)
+    /// <summary>All the files of a folder, its folders inside too.</summary>
+    public async Task<List<RemoteFile>> ListAsync(string remotePath, CancellationToken ct, bool uploadTimes = false)
     {
-        return Parse(await RunAsync(["lsjson", "-R", "--files-only", "--no-mimetype", remotePath], ct));
+        return Parse(await RunAsync(ListArgs(uploadTimes, remotePath), ct));
     }
 
     private static List<RemoteFile> Parse(string json)
@@ -263,14 +273,19 @@ public sealed partial class Rclone
     /// <summary>Moves a file inside one cloud (the provider copies it there, nothing goes over this computer's line).</summary>
     public Task MoveFileAsync(string from, string to, CancellationToken ct) => RunAsync(["moveto", from, to], ct);
 
-    /// <summary>Copies only these files (paths relative to both folders) from one folder to the other.</summary>
-    public async Task CopyFilesAsync(string from, string to, IReadOnlyCollection<string> files, IProgress<CopyProgress>? progress, CancellationToken ct)
+    /// <summary>
+    /// Copies only these files (paths relative to both folders) from one folder to the other. Many small files
+    /// (thumbnails) go faster over more connections at once: 500 of them from IDrive e2 in 8 s over 4, in 3 s over 16.
+    /// </summary>
+    public async Task CopyFilesAsync(string from, string to, IReadOnlyCollection<string> files, IProgress<CopyProgress>? progress, CancellationToken ct,
+        int transfers = 4)
     {
         if (files.Count == 0) return;
         var list = await WriteListAsync(files, ct);
         try
         {
-            await CopyAsync(from, to, ["--files-from-raw", list, "--no-traverse"], progress, ct);
+            // The later number is the one that counts.
+            await CopyAsync(from, to, ["--files-from-raw", list, "--no-traverse", "--transfers", transfers.ToString(CultureInfo.InvariantCulture)], progress, ct);
         }
         finally
         {

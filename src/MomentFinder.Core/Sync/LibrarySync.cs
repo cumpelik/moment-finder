@@ -189,7 +189,7 @@ public sealed class LibrarySync : IDisposable
 
     /// <summary>The summaries of the shared library in the cloud, the newest last; none when it is not shared yet.</summary>
     public static async Task<List<RemoteFile>> SnapshotsAsync(Rclone rclone, string backupRoot, CancellationToken ct) =>
-        (await rclone.ListAsync(CloudService.Join(backupRoot, "shared/snapshot"), 1, ct))
+        (await rclone.ListAsync(CloudService.Join(backupRoot, "shared/snapshot"), 1, ct, uploadTimes: true))
         .Where(f => f.Path.EndsWith(".db.gz", StringComparison.Ordinal)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
 
     /// <summary>The library's cloud has a shared library already (this one, or another computer's to join).</summary>
@@ -250,7 +250,7 @@ public sealed class LibrarySync : IDisposable
                 if (mirror != null)
                 {
                     progress?.Report($"Which photos of {source.Name} are in the cloud");
-                    var there = (await _cloud.Rclone.ListAsync(mirror.Place, -1, ct)).Select(f => f.Path).ToHashSet();
+                    var there = (await _cloud.Rclone.ListAsync(mirror.Place, -1, ct, uploadTimes: true)).Select(f => f.Path).ToHashSet();
                     Catalog.Publish(_db, source.Id, there);
                 }
                 else if (source.Kind == MomentFinder.Library.SourceKinds.Cloud) Catalog.Publish(_db, source.Id);
@@ -299,7 +299,7 @@ public sealed class LibrarySync : IDisposable
             await _cloud.Rclone.UploadAsync(gz, CloudService.Join(root, $"snapshot/{_db.Facts.Now()}.db.gz"), ct);
             _db.SetSetting("snapshot_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
             // The older summaries are of no use beside it; one before it stays for a computer that is joining from it.
-            var old = (await _cloud.Rclone.ListAsync(CloudService.Join(root, "snapshot"), 1, ct))
+            var old = (await _cloud.Rclone.ListAsync(CloudService.Join(root, "snapshot"), 1, ct, uploadTimes: true))
                 .Where(f => f.Path.EndsWith(".db.gz", StringComparison.Ordinal)).Select(f => f.Path).Order(StringComparer.Ordinal).SkipLast(2).ToList();
             await _cloud.Rclone.DeleteFilesAsync(CloudService.Join(root, "snapshot"), old, ct);
         }
@@ -324,7 +324,7 @@ public sealed class LibrarySync : IDisposable
             await File.WriteAllTextAsync(file, JsonSerializer.Serialize(mine), ct);
             await _cloud.Rclone.UploadAsync(file, CloudService.Join(keys, $"{_db.Device.Id}.json"), ct);
             var added = false;
-            foreach (var other in await _cloud.Rclone.ListAsync(keys, 1, ct))
+            foreach (var other in await _cloud.Rclone.ListAsync(keys, 1, ct, uploadTimes: true))
             {
                 if (other.Path == $"{_db.Device.Id}.json" || await _cloud.Rclone.ReadTextAsync(CloudService.Join(keys, other.Path), ct) is not { } json) continue;
                 var theirs = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json) ?? [];
@@ -360,7 +360,8 @@ public sealed class LibrarySync : IDisposable
     private async Task<int> PullAsync(string root, CancellationToken ct)
     {
         var me = _db.Device.Id;
-        var files = await _cloud.Rclone.ListAsync(CloudService.Join(root, "journal"), 2, ct);
+        // Only the names matter (they sort by time): asked every minute, so the quick listing.
+        var files = await _cloud.Rclone.ListAsync(CloudService.Join(root, "journal"), 2, ct, uploadTimes: true);
         Dictionary<string, string?> seen;
         using (var c = _db.Open())
             seen = c.Query<(string Device, string? Last)>("SELECT device, last_file FROM sync_seen").ToDictionary(s => s.Device, s => s.Last);

@@ -425,6 +425,14 @@
                                  IsVisible="{Binding ScopeBusy}" />
                 </StackPanel>
             </Border>
+
+            <!-- A search that found nothing because the search does not know all the photos yet: said where the results would be -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding SearchWaiting}">
+                <Grid ColumnDefinitions="Auto,*">
+                    <mi:MaterialIcon Kind="TimerSand" Width="22" Height="22" Margin="0,0,10,0" />
+                    <TextBlock Grid.Column="1" Text="{Binding SearchWaitText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
             </StackPanel>
 
             <!-- Thumbnails, plain or in groups; only the visible ones exist -->

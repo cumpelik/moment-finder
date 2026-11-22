@@ -50,6 +50,9 @@ public sealed class IndexImport
             // detections of items that have none here yet
             var detections = 0;
             var withDetections = c.Query<long>("SELECT DISTINCT media_id FROM detection", transaction: tx).ToHashSet();
+            // How far the people analysis is, here and in the backup.
+            var versionHere = c.Query<(long Id, int Version)>("SELECT id, people_version FROM media", transaction: tx).ToDictionary(r => r.Id, r => r.Version);
+            var versionThere = c.Query<(long Id, int Version)>("SELECT id, people_version FROM b.media", transaction: tx).ToDictionary(r => r.Id, r => r.Version);
             var detMap = new Dictionary<long, long>();
             var confirmedHere = 0;
             foreach (var (from, to) in map)
@@ -74,6 +77,9 @@ public sealed class IndexImport
                     }
                     continue;
                 }
+                // Analyzed here with nobody found (a landscape, a house), by an analysis as new as the backup's or
+                // newer: it stays so. Taking the backup's older state would send the photo to be analyzed again.
+                if (versionHere[to] > 0 && versionHere[to] >= versionThere[from]) continue;
                 var rows = c.Query("SELECT * FROM b.detection WHERE media_id=@from", new { from }, tx).ToList();
                 foreach (var r in rows)
                 {

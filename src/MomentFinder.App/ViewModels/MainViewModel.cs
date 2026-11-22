@@ -46,6 +46,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private ObservableCollection<TileViewModel> _tiles = [];
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _resultSummary = "";
+    /// <summary>
+    /// A search by what is in the picture found nothing, and the search does not know all the photos yet: said where
+    /// the results would be (empty: not shown), so an empty window is not taken for "there is no such photo".
+    /// </summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(SearchWaiting))] private string _searchWaitText = "";
+    public bool SearchWaiting => SearchWaitText.Length > 0;
     [ObservableProperty] private Bucket? _activeBucket;
     [ObservableProperty] private double _tileSize = 180;
 
@@ -104,7 +110,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _refreshPending = false;
             RefreshSidebarCounts();
             // A text search is not repeated by itself: its results would jump around while the user looks at them.
-            if (string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text))
+            // Unless it found nothing yet (nothing to jump), or the search knows many more photos than when it ran:
+            // a library this computer just joined fills in within minutes, and its first few results are not all.
+            var knows = _counts?.Stats.Analyzed ?? 0;
+            if (string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text) || Tiles.Count == 0 ||
+                knows - _searchKnew > Math.Max(500, _searchKnew / 5))
                 _ = RunSearchAsync(keepSelection: true);
         });
 
@@ -941,12 +951,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ObservableCollection<TileViewModel>? tiles;
         HashSet<long> inBucket = [];
         int count;
+        LibraryStats? stats = null;
         var started = DateTime.UtcNow;
         try
         {
             (tiles, count) = await Task.Run(() =>
             {
                 var hits = _host.Search.Search(text, scope);
+                // How many photos the search knows at this moment (the sidebar's count may be a while old).
+                if (hasText) stats = _host.Repo.Stats(Indexer.AnalysisVersion);
                 cts.Token.ThrowIfCancellationRequested();
                 // The same items in the same order: nothing changes (the tiles and their thumbnails stay).
                 // (A photo moved to another folder is another item here: its tile knows where the file is.)
@@ -984,7 +997,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Tiles = tiles;
             _anchorIndex = -1;
         }
-        UpdateSummary(count, hasText);
+        UpdateSummary(count, hasText, stats);
         if (!keepSelection) ResultsReset?.Invoke();
     }
 
@@ -1001,9 +1014,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 $"{At(m.StartMs)} to {At(m.EndMs)}: {string.Join(", ", m.PersonIds.Select(id => names.GetValueOrDefault(id, "?")))} ({m.Score:0.0})")));
     }
 
-    private void UpdateSummary(int count, bool hasText)
+    /// <summary>How many photos the search knew when the text search shown now ran.</summary>
+    private long _searchKnew;
+
+    private void UpdateSummary(int count, bool hasText, LibraryStats? stats)
     {
+        _searchKnew = stats?.Analyzed ?? 0;
         var text = Format.Count(count, "item", "items");
+        var wait = "";
         UpdateScopeBanner();
         if (CurrentScope?.Kind == SidebarKind.Best && !hasText)
             text = count == 0 ? "No best moments yet. They come with the people you name in your videos (Who is this?)."
@@ -1017,9 +1035,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var english = _host.Search.QueryPhrase(phrase);
             if (!string.Equals(english.Trim('.', ' '), phrase.Trim('.', ' '), StringComparison.OrdinalIgnoreCase))
                 text += $" for \"{english.Trim('.', ' ').ToLowerInvariant()}\"";
-            if (_counts?.Stats is { } stats && stats.Analyzed < stats.Total)
+            if (stats != null && stats.Analyzed < stats.Total)
+            {
                 text += $" (the AI has looked at {stats.Analyzed:N0} of {stats.Total:N0} so far, search again later for more)";
+                if (count == 0)
+                    wait = $"Nothing found yet: the search knows {stats.Analyzed:N0} of the {stats.Total:N0} photos and videos so far. " +
+                           (IndexerPaused
+                               ? "The background work is paused: press the button at the bottom left to go on."
+                               : "The rest is being prepared now (the bottom of the window says how far it is). What is found will show here by itself.");
+            }
         }
+        SearchWaitText = wait;
         ResultSummary = text;
     }
 
@@ -1285,9 +1311,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         var cloud = source.Kind == SourceKinds.Cloud;
         var away = CurrentScope?.IsAway == true;
-        var reading = st.Phase == IndexerPhase.Scanning && _host.Indexer.ScanningSourceId == source.Id;
-        var waiting = !reading && source.LastScanAt == null && !away;
-        var empty = !reading && !waiting && Tiles.Count == 0 && !IsDateFiltered &&
+        var scanned = st.Phase == IndexerPhase.Scanning && _host.Indexer.ScanningSourceId == source.Id;
+        // A folder read before is only checked for new files, which takes seconds: the status bar says it. Here only
+        // the first reading, and new files being read.
+        var reading = scanned && (source.LastScanAt == null || st.Total > 0);
+        var waiting = !scanned && source.LastScanAt == null && !away;
+        var empty = !scanned && !waiting && Tiles.Count == 0 && !IsDateFiltered &&
                     string.IsNullOrWhiteSpace(QueryParser.Parse(SearchText, _host.Search.People).Text);
         ScopeBanner = reading || waiting || empty;
         ScopeBusy = reading || waiting;

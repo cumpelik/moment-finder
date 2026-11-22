@@ -40,6 +40,29 @@ public class LibraryTests
 
     /// <summary>A file moved to another folder or source is the same item: its id and what hangs on it stay.</summary>
     [Fact]
+    public async Task APhotoWithADescriptionInAnOldEncodingIsReadLikeTheOthers()
+    {
+        using var lib = new TestLibrary();
+        lib.AddPhoto("2015/good.jpg");
+        // What an old program left in a photo: a description (XMP) with stray bytes in its padding, which the
+        // metadata reader then tries to read as Windows-1252.
+        var path = lib.AddPhoto("2015/old.jpg", width: 80);
+        var jpeg = File.ReadAllBytes(path);
+        var xmp = System.Text.Encoding.Latin1.GetBytes(
+            "http://ns.adobe.com/xap/1.0/\0<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
+            "<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" dc:source=\"x\"/></rdf:RDF></x:xmpmeta>" +
+            "      \0   0      !\u00a0    $\u00a0  $     \0 \0     ");
+        byte[] header = [0xFF, 0xE1, (byte)((xmp.Length + 2) >> 8), (byte)(xmp.Length + 2)];
+        File.WriteAllBytes(path, [.. jpeg[..2], .. header, .. xmp, .. jpeg[2..]]);
+
+        var scan = await lib.ScanAsync(lib.AddSource());
+
+        // It stopped the reading of the whole folder: none of the photos beside it came into the library.
+        Assert.Equal(2, scan.Added);
+        Assert.Equal(80, lib.Repo.Query(new MediaFilter()).Single(i => i.FileName == "old.jpg").Width);
+    }
+
+    [Fact]
     public async Task MovedFilesKeepTheirRow()
     {
         using var lib = new TestLibrary();

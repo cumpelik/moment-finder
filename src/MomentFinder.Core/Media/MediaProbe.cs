@@ -11,6 +11,13 @@ namespace MomentFinder.Media;
 /// <summary>Reads what the library stores about a file: capture time, size, GPS, camera.</summary>
 public static class MediaProbe
 {
+    static MediaProbe()
+    {
+        // A description an old program wrote into a photo (XMP in Windows-1252) needs the code pages, which .NET does
+        // not carry by itself: without them the metadata reader throws on such a photo.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+    }
+
     public static async Task<ScannedFile> ProbeAsync(string fullPath, string relPath, MediaKind kind, FileInfo info, CancellationToken ct)
     {
         var mtime = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds();
@@ -59,9 +66,10 @@ public static class MediaProbe
                 if (ifd0.TryGetInt32(ExifDirectoryBase.TagOrientation, out var o)) orientation = o;
             }
         }
-        catch (Exception e) when (e is ImageProcessingException or IOException or MetadataException)
+        catch (Exception e) when (e is not OperationCanceledException)
         {
-            // No readable metadata - the file time stays.
+            // No readable metadata, whatever the reader stumbled on: the photo is in the library all the same, with
+            // the file time. (One photo it threw on stopped the reading of its whole folder, at every start.)
         }
 
         try

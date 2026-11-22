@@ -62,7 +62,7 @@ public sealed class Indexer : IDisposable
     {
         _paths = paths;
         _repo = repo;
-        _scanner = new LibraryScanner(repo, rclone);
+        _scanner = new LibraryScanner(repo, rclone) { BatchRead = source => MomentFinder.Sync.Catalog.Publish(repo.Db, source.Id) };
         _twins = new AnalysisTwin(paths, repo.Db);
     }
 
@@ -134,8 +134,20 @@ public sealed class Indexer : IDisposable
         set
         {
             _paused = value;
-            // A 360 copy takes minutes: pausing stops it now (it starts again later).
-            if (value) _proxyCts?.Cancel();
+            // A 360 copy takes minutes, the first reading of a folder in the cloud hours: pausing stops them now
+            // (they go on later from where they were).
+            if (value)
+            {
+                try
+                {
+                    _proxyCts?.Cancel();
+                    _scanCts?.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Just finished by itself.
+                }
+            }
             Report(Status with { Paused = value });
             if (!value) _wake.Release();
         }
@@ -195,6 +207,9 @@ public sealed class Indexer : IDisposable
     private async Task<bool> StepAsync(CancellationToken ct)
     {
         if (_paused) return false;
+        // What the other computers of the library made already comes first: a whole library of it is here in minutes
+        // and can be looked at and searched then. Reading new files from the cloud may take hours.
+        if (await SharedBatchAsync(ct)) return true;
         if (_scanRequested)
         {
             _scanRequested = false;
@@ -219,7 +234,7 @@ public sealed class Indexer : IDisposable
         // Named or corrected by the user: matched again between the batches of a long analysis (at most twice a
         // minute, a review gives many answers in a row), so the names show while the library is still being analyzed.
         var wanted = _identityWanted && DateTime.UtcNow - _lastIdentity > TimeSpan.FromSeconds(30);
-        if (!wanted && (await SharedBatchAsync(ct) || TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct)))
+        if (!wanted && (TwinBatch() || await ThumbnailBatchAsync(ct) || await AnalysisBatchAsync(ct) || await PeopleBatchAsync(ct)))
             return true;
         if (_identityDirty && _identity != null)
         {
@@ -241,13 +256,23 @@ public sealed class Indexer : IDisposable
     /// </summary>
     public Func<CancellationToken, Task<bool>>? SharedContentBatch { get; set; }
 
+    /// <summary>
+    /// A batch of what another computer made is being fetched, and so many photos still wait for it: said while it
+    /// comes (it takes a while), with how far it is. Thousands of photos come in minutes.
+    /// </summary>
+    public void SharedContentComing(int left)
+    {
+        var total = (int)_repo.Stats(AnalysisVersion).Total;
+        Report(new IndexerStatus(IndexerPhase.Thumbnails, "Taking thumbnails and search data the other computers of the library made already",
+            Math.Max(0, total - left), total, false));
+    }
+
     private async Task<bool> SharedBatchAsync(CancellationToken ct)
     {
         if (SharedContentBatch == null) return false;
         try
         {
             if (!await SharedContentBatch(ct)) return false;
-            Report(new IndexerStatus(IndexerPhase.Thumbnails, "Taking thumbnails and search data the other computers made", 0, 0, false));
             LibraryChanged?.Invoke();
             return true;
         }
@@ -262,6 +287,7 @@ public sealed class Indexer : IDisposable
 
     private readonly HashSet<long> _proxyFailed = [];
     private CancellationTokenSource? _proxyCts;
+    private CancellationTokenSource? _scanCts;
 
     /// <summary>One 360 video without its playing copy, the newest first, while the copies have room.</summary>
     private async Task<bool> Proxy360BatchAsync(CancellationToken ct)
@@ -290,12 +316,20 @@ public sealed class Indexer : IDisposable
     /// <summary>All sources, or only these.</summary>
     private async Task ScanAllAsync(long[]? only, CancellationToken ct)
     {
+        using var cts = _scanCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            await ScanSourcesAsync(only, ct);
+            await ScanSourcesAsync(only, cts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Paused in the middle: asked for again, and it goes on from where it was (what was read is known).
+            if (only == null) _scanRequested = true;
+            else lock (_scanSources) _scanSources.UnionWith(only);
         }
         finally
         {
+            _scanCts = null;
             if (_events != null)
             {
                 _events.Rebuild();

@@ -19,6 +19,8 @@ namespace MomentFinder.Sync;
 public sealed class SharedContent
 {
     private const int Batch = 500;
+    /// <summary>Thumbnails are tens of kilobytes: the connections are what limits them, not the line.</summary>
+    private const int SmallFilesAtOnce = 16;
 
     private readonly Database _db;
     private readonly CloudService _cloud;
@@ -59,6 +61,26 @@ public sealed class SharedContent
         return took;
     }
 
+    /// <summary>A batch is about to be fetched; with how many photos still wait (to say how far the taking is).</summary>
+    public Action<int>? Coming { get; set; }
+
+    /// <summary>
+    /// How many photos still wait for a thumbnail or search data another computer made. Not counted: those that did
+    /// not come (they are made here).
+    /// </summary>
+    private int Left()
+    {
+        using var c = _db.Open();
+        int Count(string field, string where) => c.ExecuteScalar<int>($"""
+            SELECT COUNT(*) FROM media m
+            WHERE m.missing=0 AND m.quick_hash IS NOT NULL AND {where}
+              AND EXISTS(SELECT 1 FROM fact f WHERE f.obj='c:'||m.quick_hash||'-'||m.size AND f.field=@field)
+            """, new { field });
+        var thumbs = Count("thumb", "m.thumb_state=0");
+        var scene = Scene == null ? 0 : Count(SceneField, $"m.thumb_state IN (0,1) AND m.analysis_version<{Indexer.AnalysisVersion}");
+        return Math.Max(0, Math.Max(thumbs, scene) - _failed.Count);
+    }
+
     private List<Item> Waiting(string field, string where)
     {
         using var c = _db.Open();
@@ -78,7 +100,7 @@ public sealed class SharedContent
         Directory.CreateDirectory(staging);
         try
         {
-            await _cloud.Rclone.CopyFilesAsync(CloudService.Join(root, "content"), staging, list, null, ct);
+            await _cloud.Rclone.CopyFilesAsync(CloudService.Join(root, "content"), staging, list, null, ct, SmallFilesAtOnce);
         }
         catch (RcloneException)
         {
@@ -91,6 +113,7 @@ public sealed class SharedContent
     {
         var items = Waiting("thumb", "m.thumb_state=0");
         if (items.Count == 0) return false;
+        Coming?.Invoke(Left());
         var staging = await DownloadAsync(root, items.Select(i => Name(i.QuickHash, i.Size, ".jpg")), ct);
         try
         {
@@ -120,6 +143,7 @@ public sealed class SharedContent
     {
         var items = Waiting(SceneField, $"m.thumb_state=1 AND m.analysis_version<{Indexer.AnalysisVersion}");
         if (items.Count == 0) return false;
+        Coming?.Invoke(Left());
         var staging = await DownloadAsync(root, items.Select(i => Name(i.QuickHash, i.Size, ".scene")), ct);
         try
         {
@@ -190,7 +214,7 @@ public sealed class SharedContent
                 write(path);
                 names.Add(name);
             }
-            await _cloud.Rclone.CopyFilesAsync(staging, CloudService.Join(root, "content"), names, null, ct);
+            await _cloud.Rclone.CopyFilesAsync(staging, CloudService.Join(root, "content"), names, null, ct, SmallFilesAtOnce);
             using var c = _db.Open();
             using var tx = c.BeginTransaction();
             foreach (var (item, _) in files) _db.Facts.Set(c, tx, Keys.Content(item.QuickHash, item.Size), field, "1");

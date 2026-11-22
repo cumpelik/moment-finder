@@ -244,12 +244,6 @@ public sealed class MediaRepository
             new { mediaId, path });
     }
 
-    public void SetMtime(long id, long mtime)
-    {
-        using var c = _db.Open();
-        c.Execute("UPDATE media SET mtime=@mtime WHERE id=@id", new { id, mtime });
-    }
-
     public void SetMissing(IEnumerable<long> ids, bool missing)
     {
         using var c = _db.Open();

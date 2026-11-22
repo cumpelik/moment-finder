@@ -12,6 +12,13 @@ public sealed class LibraryScanner
     private readonly MediaRepository _repo;
     private readonly Cloud.Rclone? _rclone;
 
+    /// <summary>
+    /// A batch of new files of a folder in the cloud was read into the library (a long first reading goes by batches):
+    /// in a shared library the other computers are told now, not when the whole folder is done, so they do not fetch
+    /// the same files to read them too.
+    /// </summary>
+    public Action<Source>? BatchRead { get; set; }
+
     public LibraryScanner(MediaRepository repo, Cloud.Rclone? rclone = null)
     {
         _repo = repo;
@@ -138,7 +145,9 @@ public sealed class LibraryScanner
     {
         if (_rclone == null || source.Remote == null) throw new InvalidOperationException("Cloud access is not configured");
         progress?.Report($"Looking for new photos and videos in {source.Name} in the cloud");
-        var remote = await _rclone.ListAsync(source.Remote, ct);
+        // Names and sizes are enough to see what is new: the listing that also asks every file for its own time takes
+        // minutes for a folder of thousands of photos, at every start of every computer.
+        var remote = await _rclone.ListAsync(source.Remote, ct, uploadTimes: true);
         // Whose the folder is: the backup of another computer's folder is only for looking here.
         if (await Cloud.FolderMarker.ReadAsync(_rclone, source.Remote, ct) is { } marker)
             _repo.SetCloudRole(source.Id, marker.IsBackup, marker.IsBackup ? marker.HomeName : null);
@@ -149,14 +158,8 @@ public sealed class LibraryScanner
         {
             if (FileTypes.KindOf(f.Path) == null || IsIgnored(f.Path)) continue;
             seen.Add(f.Path);
-            var mtime = f.ModTime.ToUnixTimeMilliseconds();
-            if (known.TryGetValue(f.Path, out var k) && k.Size == f.Size && !k.IsMissing)
-            {
-                // The same place and size with another time (uploaded again, another computer's copy of the
-                // library): not worth fetching and analyzing again.
-                if (k.Mtime != mtime) _repo.SetMtime(k.Id, mtime);
-                continue;
-            }
+            // The same place and size (also when uploaded again): not worth fetching and analyzing again.
+            if (known.TryGetValue(f.Path, out var k) && k.Size == f.Size && !k.IsMissing) continue;
             todo.Add(f);
         }
         var movedIds = new HashSet<long>();
@@ -164,8 +167,14 @@ public sealed class LibraryScanner
         var done = 0;
         progress?.Report($"Reading the new photos and videos of {source.Name}: 0/{todo.Count}");
         // Small batches: every file is fetched before it is read, and each batch shows in the library at once.
-        foreach (var chunk in todo.Chunk(20))
+        foreach (var all in todo.Chunk(20))
         {
+            // Another computer of the library may be reading the same folder now: what it read meanwhile is known
+            // here already and is not fetched a second time.
+            var now = _repo.KnownFiles(source.Id);
+            var chunk = all.Where(f => !(now.TryGetValue(f.Path, out var k) && k.Size == f.Size && !k.IsMissing)).ToArray();
+            done += all.Length - chunk.Length;
+            if (chunk.Length == 0) continue;
             var list = Path.Combine(source.Root, ".files-" + Guid.NewGuid().ToString("N") + ".txt");
             Directory.CreateDirectory(source.Root);
             await File.WriteAllLinesAsync(list, chunk.Select(f => f.Path), ct);
@@ -183,9 +192,17 @@ public sealed class LibraryScanner
                 var local = Path.Combine(source.Root, f.Path.Replace('/', Path.DirectorySeparatorChar));
                 if (!File.Exists(local)) continue;
                 var info = new FileInfo(local);
-                var probed = await MediaProbe.ProbeAsync(local, f.Path, FileTypes.KindOf(f.Path)!.Value, info, ct);
-                // The cloud's size and time decide what changed next time, not the cached copy's.
-                scanned.Add(probed with { Size = f.Size, Mtime = f.ModTime.ToUnixTimeMilliseconds() });
+                try
+                {
+                    var probed = await MediaProbe.ProbeAsync(local, f.Path, FileTypes.KindOf(f.Path)!.Value, info, ct);
+                    // The cloud's size decides what changed next time, not the cached copy's. The time is the file's
+                    // own: the fetched copy has it (the listing only said when the file came to the storage).
+                    scanned.Add(probed with { Size = f.Size, Mtime = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() });
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Not readable now: the others of the batch are read, this one at the next scan.
+                }
             }
             // Moved inside the cloud or from a local folder that is gone: the known row moves along.
             var fresh = new List<ScannedFile>();
@@ -199,6 +216,7 @@ public sealed class LibraryScanner
                 else fresh.Add(f);
             }
             _repo.Upsert(source.Id, fresh);
+            BatchRead?.Invoke(source);
             done += chunk.Length;
             progress?.Report($"Reading the new photos and videos of {source.Name}: {done}/{todo.Count}");
         }

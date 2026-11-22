@@ -1,3 +1,4 @@
+using Dapper;
 using MomentFinder.Cloud;
 using MomentFinder.Library;
 using MomentFinder.People;
@@ -89,6 +90,28 @@ public class CloudTests
         var eva = new PeopleRepository(other.Db).ListPersons().Single();
         Assert.Equal("Eva", eva.Name);
         Assert.Equal(1, eva.MediaCount);
+    }
+
+    [Fact]
+    public async Task ImportDoesNotSendAnalyzedPhotosToBeAnalyzedAgain()
+    {
+        // The library a computer had before it joined the family's: the people analysis did not get to this photo.
+        using var before = new TestLibrary();
+        before.AddPhoto("house.jpg", color: "green");
+        await before.ScanAsync(before.AddSource());
+        // The family's library: the same photo, analyzed, nobody on it.
+        using var lib = new TestLibrary();
+        lib.AddPhoto("house.jpg", color: "green");
+        await lib.ScanAsync(lib.AddSource());
+        var id = lib.Repo.Query(new MediaFilter()).Single().Id;
+        lib.Repo.SetPeopleVersion(id, Indexer.PeopleVersion);
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        var result = new IndexImport(lib.Db).Import(before.Paths.DbPath);
+
+        Assert.Equal(1, result.MatchedItems);
+        using var c = lib.Db.Open();
+        Assert.Equal(Indexer.PeopleVersion, c.ExecuteScalar<int>("SELECT people_version FROM media WHERE id=@id", new { id }));
     }
 
     [Fact]
