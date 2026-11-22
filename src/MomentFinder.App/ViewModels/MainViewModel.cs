@@ -123,6 +123,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         LoadBrowseSettings();
 
         LibraryCopy = new LibraryCopyViewModel(host.Restore, host.Db);
+        CloudJobs = new CloudJobsViewModel(host.Jobs);
+        // Uploaded, moved or deleted in the cloud: the photos shown follow.
+        host.Jobs.LibraryChanged += () => Dispatcher.UIThread.Post(() =>
+        {
+            _refreshPending = true;
+            if (!_refreshThrottle!.IsEnabled) _refreshThrottle.Start();
+        });
         host.Indexer.StatusChanged += st => Dispatcher.UIThread.Post(() => OnIndexerStatus(st));
         host.Mirrors.StatusChanged += text => Dispatcher.UIThread.Post(() => MirrorText = text.Length > 0 ? text : CloudSummary());
         host.Mirrors.MirrorsChanged += () => Dispatcher.UIThread.Post(OnCloudChanged);
@@ -160,6 +167,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _ = RunSearchAsync(keepSelection: false);
         _host.Indexer.Start(scanNow: true);
         _host.Mirrors.Start();
+        _host.Jobs.Start();
         _host.Sync.Start();
         // A folder that changed is read again, and its backup follows, once it has been quiet for a while.
         _watcher = new FolderWatcher(_host.Repo);
@@ -259,6 +267,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SidebarItems.Add(new SidebarHeader("SOURCES", "Add a folder", SidebarKind.Source));
         var sources = _host.Repo.ListSources();
         _sources = sources;
+        _changeable = _host.Jobs.Changeable().Select(s => s.Id).ToHashSet();
         var counts = _counts?.BySource ?? [];
         var mirrors = _host.Cloud.Mirrors().GroupBy(m => m.SourceId).ToDictionary(g => g.Key, g => g.First());
         var merges = _host.Cloud.Merges();
@@ -306,6 +315,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _rebuilding = false;
         // A removed scope falls back to the whole library (and searches again).
         SelectedSidebarItem = restored ?? SidebarItems.OfType<SidebarEntry>().First();
+        // Read-only turned on or off: what can be done in the folder shown changes with it.
+        if (SelectedSidebarItem is SidebarEntry now) _scope = now;
+        OnPropertyChanged(nameof(IsCloudScope));
     }
 
     /// <summary>The progress of clones and of folders being added to a cloud folder, by MirrorScheduler's keys.</summary>
@@ -367,6 +379,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             IsAway = away,
             IsLocked = locked,
             IsTurnedOff = s.Protected && !locked,
+            CanUpload = _changeable.Contains(s.Id),
         };
         if (s.Kind == SourceKinds.Cloud)
             return s.ReadOnly
@@ -451,6 +464,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _scope = entry;
         UpdateScopeBanner();
         OnPropertyChanged(nameof(IsBucketScope));
+        OnPropertyChanged(nameof(IsCloudScope));
         OnPropertyChanged(nameof(IsPersonScope));
         if (!same) ShowPersonFaces = false;
         OnPropertyChanged(nameof(IsGridMode));
@@ -484,6 +498,98 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public SidebarEntry? CurrentScope => _scope;
     public bool IsBucketScope => CurrentScope?.Kind == SidebarKind.Bucket;
+
+    // ---- changing folders that live in the cloud: uploading into them, moving and deleting ----
+
+    /// <summary>The uploads and changes in the cloud the user asked for: how far they are, what did not go.</summary>
+    public CloudJobsViewModel CloudJobs { get; }
+
+    /// <summary>The sources in the cloud that can be changed from here now (not a computer's backup, not read-only).</summary>
+    private HashSet<long> _changeable = [];
+
+    /// <summary>The folder shown lives in the cloud and can be changed: its own actions show (upload, move, delete).</summary>
+    public bool IsCloudScope => CurrentScope is { Kind: SidebarKind.Source, CanUpload: true } && IsGridMode;
+
+    /// <summary>Where things put "here" go: the folder chosen in the tree, or the source shown; null when that is not a folder in the cloud.</summary>
+    public (long SourceId, string Folder)? CurrentCloudFolder()
+    {
+        if (ShowGroupTree && SelectedGroup is { CanUpload: true, SourceId: { } id } node) return (id, node.Folder);
+        return CurrentScope is { Kind: SidebarKind.Source, CanUpload: true } scope ? (scope.Id, "") : null;
+    }
+
+    public CloudPutViewModel PutUpload(IReadOnlyList<string> paths, (long SourceId, string Folder)? where) =>
+        CloudPutViewModel.Upload(_host, paths, where?.SourceId, where?.Folder);
+
+    public CloudPutViewModel PutImport((long SourceId, string Folder)? where) => CloudPutViewModel.Import(_host, where?.SourceId, where?.Folder);
+
+    public CloudPutViewModel PutMoveFolder(GroupNode folder) => CloudPutViewModel.MoveFolder(_host, folder.SourceId!.Value, folder.Folder);
+
+    /// <summary>The selection to move, with the folder of the first one chosen to start from.</summary>
+    public CloudPutViewModel PutMoveSelection()
+    {
+        var items = SelectedTiles().Select(t => t.Item).DistinctBy(i => i.Id).ToList();
+        var first = items[0];
+        var folder = first.RelPath.Contains('/') ? first.RelPath[..first.RelPath.LastIndexOf('/')] : "";
+        return CloudPutViewModel.MoveFiles(_host, items.Select(i => (i.SourceId, i.RelPath)).ToList(), first.SourceId, folder);
+    }
+
+    public int SelectedCount => SelectedTiles().Select(t => t.Item.Id).Distinct().Count();
+
+    /// <summary>Why the selection cannot be moved or deleted from here; null when it can.</summary>
+    public string? SelectionProblem()
+    {
+        var sources = SelectedTiles().Select(t => t.Item.SourceId).Distinct().ToList();
+        if (sources.Count == 0) return "Select the photos or videos first: click one, Ctrl+click more, Shift+click a range, Ctrl+A all.";
+        foreach (var id in sources.Where(id => !_changeable.Contains(id)))
+        {
+            var source = _sources.FirstOrDefault(s => s.Id == id);
+            return source == null ? "The folder is not in the library any more."
+                : source.Kind != SourceKinds.Cloud ? $"\"{source.Name}\" is a folder on a computer. Move or delete its files there, in the file manager: MomentFinder follows."
+                : source.ReadOnly ? $"\"{source.Name}\" is the backup of a folder on {source.HomeName ?? "another computer"}: only that computer changes it."
+                : $"\"{source.Name}\" is read-only. Turn read-only off first: right click it on the left.";
+        }
+        return null;
+    }
+
+    /// <summary>After the user confirmed it: the selection is deleted in the cloud, for good.</summary>
+    public string? DeleteSelection()
+    {
+        try
+        {
+            foreach (var from in SelectedTiles().Select(t => t.Item).DistinctBy(i => i.Id).GroupBy(i => i.SourceId))
+                _host.Jobs.Delete(from.Key, from.Select(i => i.RelPath).ToList());
+            return null;
+        }
+        catch (InvalidOperationException e)
+        {
+            return e.Message;
+        }
+    }
+
+    /// <summary>After the user confirmed it: the folder is deleted in the cloud with everything in it.</summary>
+    public string? DeleteFolder(GroupNode folder) => Try(() => _host.Jobs.DeleteFolder(folder.SourceId!.Value, folder.Folder));
+
+    /// <summary>The folder gets another name, where it is.</summary>
+    public string? RenameFolder(GroupNode folder, string name)
+    {
+        name = CloudService.CleanFolder(name.Replace('/', ' ').Replace('\\', ' '));
+        if (name.Length == 0) return "Type the new name.";
+        var parent = folder.Folder.Contains('/') ? folder.Folder[..folder.Folder.LastIndexOf('/')] : "";
+        return Try(() => _host.Jobs.MoveFolder(folder.SourceId!.Value, folder.Folder, folder.SourceId.Value, CloudService.Join(parent, name)));
+    }
+
+    private static string? Try(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (InvalidOperationException e)
+        {
+            return e.Message;
+        }
+    }
 
     [ObservableProperty] private bool _isLibraryEmpty;
 
@@ -731,9 +837,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 var hits = _host.Search.Search(text, scope);
                 cts.Token.ThrowIfCancellationRequested();
                 // The same items in the same order: nothing changes (the tiles and their thumbnails stay).
-                if (keepSelection && hits.Count == old.Count && hits.Select(h => h.Item.Id).SequenceEqual(old.Select(t => t.Item.Id)))
+                // (A photo moved to another folder is another item here: its tile knows where the file is.)
+                if (keepSelection && hits.Count == old.Count &&
+                    hits.Select(h => (h.Item.Id, h.Item.SourceId, h.Item.RelPath)).SequenceEqual(old.Select(t => (t.Item.Id, t.Item.SourceId, t.Item.RelPath))))
                     return ((ObservableCollection<TileViewModel>?)null, hits.Count);
-                var kept = keepSelection ? old.GroupBy(t => (t.Item.Id, t.StartMs)).ToDictionary(g => g.Key, g => g.First()) : [];
+                var places = new Dictionary<(long, int), (long, string)>();
+                foreach (var h in hits) places.TryAdd((h.Item.Id, h.TimeMs), (h.Item.SourceId, h.Item.RelPath));
+                var kept = keepSelection
+                    ? old.Where(t => places.TryGetValue((t.Item.Id, t.StartMs), out var place) && place == (t.Item.SourceId, t.Item.RelPath))
+                        .GroupBy(t => (t.Item.Id, t.StartMs)).ToDictionary(g => g.Key, g => g.First())
+                    : [];
                 var notes = best ? BestNotes() : null;
                 inBucket = bucket is { } b ? _host.Buckets.MediaIds(b).ToHashSet() : [];
                 var list = new List<TileViewModel>(hits.Count);
@@ -1116,7 +1229,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     /// <summary>All background work: the reading and analysis, and what goes to the cloud.</summary>
-    private void TogglePause() => _host.Indexer.Paused = _host.Mirrors.Paused = _host.Sync.Paused = !_host.Indexer.Paused;
+    private void TogglePause() => _host.Indexer.Paused = _host.Mirrors.Paused = _host.Jobs.Paused = _host.Sync.Paused = !_host.Indexer.Paused;
 
     private async Task LoadModelAsync()
     {

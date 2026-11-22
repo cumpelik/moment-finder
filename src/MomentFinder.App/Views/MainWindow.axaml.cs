@@ -41,6 +41,11 @@ public partial class MainWindow : Window
             if (_vm?.SidebarVisible == true) _vm.SaveSize("sidebar_width", MainSplit.ColumnDefinitions[0].ActualWidth);
         };
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        GridScroll.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
+        // Files and folders dragged in from the file manager are uploaded to a folder in the cloud.
+        DragDrop.SetAllowDrop(this, true);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -243,6 +248,9 @@ public partial class MainWindow : Window
                 break;
             case Key.Delete when _vm.IsBucketScope:
                 _vm.RemoveSelectionFromBucketCommand.Execute(null);
+                break;
+            case Key.Delete when _vm.IsCloudScope:
+                OnDeleteSelection(null, e);
                 break;
             case Key.P:
                 _vm.PlayAllCommand.Execute(null);
@@ -716,6 +724,151 @@ public partial class MainWindow : Window
                 _vm.DeletePerson(entry);
                 break;
         }
+    }
+
+    // ---- folders that live in the cloud: uploading into them, moving and deleting ----
+
+    private void OnShowCloudJobs(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null) ShowOverlay(new CloudJobsPanel(_vm.CloudJobs));
+    }
+
+    /// <summary>The folder a menu was opened on: a source in the sidebar, a folder in the tree.</summary>
+    private static (long SourceId, string Folder)? HereOf(object? sender) => (sender as Control)?.DataContext switch
+    {
+        SidebarEntry { CanUpload: true } entry => (entry.Id, ""),
+        GroupNode { CanUpload: true, SourceId: { } id } node => (id, node.Folder),
+        _ => null,
+    };
+
+    private async Task UploadFilesAsync((long SourceId, string Folder)? where)
+    {
+        if (_vm == null) return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "The files to upload", AllowMultiple = true });
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, where)));
+    }
+
+    private async Task UploadFolderAsync((long SourceId, string Folder)? where)
+    {
+        if (_vm == null) return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "The folder to upload (with everything inside)", AllowMultiple = true });
+        var paths = folders.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, where)));
+    }
+
+    private async void OnUploadFiles(object? sender, RoutedEventArgs e) => await UploadFilesAsync(_vm?.CurrentCloudFolder());
+    private async void OnUploadFolder(object? sender, RoutedEventArgs e) => await UploadFolderAsync(_vm?.CurrentCloudFolder());
+
+    private void OnImport(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null) ShowOverlay(new CloudPutPanel(_vm.PutImport(_vm.CurrentCloudFolder())));
+    }
+
+    private async void OnHereUploadFiles(object? sender, RoutedEventArgs e) => await UploadFilesAsync(HereOf(sender));
+    private async void OnHereUploadFolder(object? sender, RoutedEventArgs e) => await UploadFolderAsync(HereOf(sender));
+
+    private void OnHereImport(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null) ShowOverlay(new CloudPutPanel(_vm.PutImport(HereOf(sender))));
+    }
+
+    private async void OnMoveSelection(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        if (_vm.SelectionProblem() is { } problem)
+        {
+            await Dialogs.InfoAsync(this, "Move", problem);
+            return;
+        }
+        ShowOverlay(new CloudPutPanel(_vm.PutMoveSelection()));
+    }
+
+    private async void OnDeleteSelection(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        if (_vm.SelectionProblem() is { } problem)
+        {
+            await Dialogs.InfoAsync(this, "Delete", problem);
+            return;
+        }
+        var one = _vm.SelectedCount == 1;
+        if (!await Dialogs.ConfirmAsync(this, "Delete from the cloud",
+                (one ? "Delete the selected photo or video from the cloud? It is" : $"Delete the {_vm.SelectedCount:N0} selected photos and videos from the cloud? They are") +
+                " deleted there for good: gone on every computer of the library, and this cannot be undone."))
+            return;
+        if (_vm.DeleteSelection() is { } error) await Dialogs.InfoAsync(this, "Delete", error);
+    }
+
+    private void OnTreeMoveFolder(object? sender, RoutedEventArgs e)
+    {
+        if (_vm != null && (sender as Control)?.DataContext is GroupNode { CanChangeFolder: true } folder) ShowOverlay(new CloudPutPanel(_vm.PutMoveFolder(folder)));
+    }
+
+    private async void OnTreeRenameFolder(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || (sender as Control)?.DataContext is not GroupNode { CanChangeFolder: true } folder) return;
+        var name = await Dialogs.PromptAsync(this, "Rename the folder", "The folder's new name (it is renamed in the cloud, for every computer of the library)", folder.Title);
+        if (string.IsNullOrWhiteSpace(name) || name.Trim() == folder.Title) return;
+        if (_vm.RenameFolder(folder, name) is { } error) await Dialogs.InfoAsync(this, "Rename the folder", error);
+    }
+
+    private async void OnTreeDeleteFolder(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || (sender as Control)?.DataContext is not GroupNode { CanChangeFolder: true } folder) return;
+        if (!await Dialogs.ConfirmAsync(this, "Delete the folder from the cloud",
+                $"Delete the folder \"{folder.Folder.Replace("/", " / ")}\" from the cloud, with everything in it (its folders inside too, and files MomentFinder does not show)? " +
+                "It is deleted there for good: gone on every computer of the library, and this cannot be undone."))
+            return;
+        if (_vm.DeleteFolder(folder) is { } error) await Dialogs.InfoAsync(this, "Delete the folder", error);
+    }
+
+    /// <summary>The right click was on a photo: the menu is about the selection (the clicked photo, when it was not selected).</summary>
+    private bool _menuOnTile;
+
+    private void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(GridScroll).Properties.IsRightButtonPressed) return;
+        var tile = TileOf(e);
+        _menuOnTile = tile != null;
+        if (_vm != null && tile is { IsSelected: false }) _vm.Select(tile, false, false);
+    }
+
+    private void OnTileMenuOpening(object? sender, CancelEventArgs e)
+    {
+        if (_vm == null || !_menuOnTile)
+        {
+            e.Cancel = true;
+            return;
+        }
+        // What cannot be done is said, not only greyed: why, and where to do it instead.
+        var problem = _vm.SelectionProblem();
+        TileMenuMove.IsEnabled = TileMenuDelete.IsEnabled = problem == null;
+        TileMenuWhy.IsVisible = problem != null;
+        TileMenuWhy.Header = new TextBlock { Text = problem, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 340 };
+    }
+
+    /// <summary>The folder in the cloud under the pointer: a source in the sidebar, a folder of the tree, or the one shown.</summary>
+    private (long SourceId, string Folder)? DropTarget(DragEventArgs e)
+    {
+        if (_vm == null) return null;
+        foreach (var visual in (e.Source as Visual)?.GetSelfAndVisualAncestors() ?? [])
+        {
+            if (visual is ListBoxItem { DataContext: SidebarEntry { CanUpload: true } entry }) return (entry.Id, "");
+            if (visual is TreeViewItem { DataContext: GroupNode { CanUpload: true, SourceId: { } id } node }) return (id, node.Folder);
+        }
+        return _vm.CurrentCloudFolder();
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e) =>
+        e.DragEffects = !Overlay.IsVisible && e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        if (_vm == null || Overlay.IsVisible) return;
+        var paths = e.DataTransfer.TryGetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().ToList() ?? [];
+        // Where it goes is asked before anything starts (and chosen there, when it was not dropped onto a folder in the cloud).
+        if (paths.Count > 0) ShowOverlay(new CloudPutPanel(_vm.PutUpload(paths, DropTarget(e))));
     }
 
     private async void OnExportBucket(object? sender, RoutedEventArgs e)

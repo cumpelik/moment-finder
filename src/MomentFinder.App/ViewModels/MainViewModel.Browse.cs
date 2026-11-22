@@ -25,6 +25,8 @@ public sealed class TileGroup(string title, string count, IReadOnlyList<TileView
     public IReadOnlyList<TileViewModel> Tiles { get; } = tiles;
     /// <summary>Where it is in the groups' tree: a folder under its parent folders, a day under its year and month.</summary>
     public IReadOnlyList<string> Path { get; } = path ?? [title];
+    /// <summary>Grouped by folder: the source the folder is in (the first part of Path is its name, the rest the folder).</summary>
+    public long? SourceId { get; init; }
 }
 
 /// <summary>A place in the groups' tree: a folder with its subfolders, a year with its months.</summary>
@@ -37,6 +39,13 @@ public sealed partial class GroupNode(string key, string title) : ObservableObje
     /// <summary>Its own group and those of everything under it, in the order the grid shows them.</summary>
     public List<TileGroup> Groups { get; set; } = [];
     public int Total { get; set; }
+    /// <summary>A folder (grouped by folder): its source and its path inside it ("" is the source itself).</summary>
+    public long? SourceId { get; init; }
+    public string Folder { get; init; } = "";
+    /// <summary>The folder lives in the cloud and can be changed from here: files can be put into it.</summary>
+    public bool CanUpload { get; init; }
+    /// <summary>And it can be moved, renamed or deleted itself (not the source as a whole).</summary>
+    public bool CanChangeFolder => CanUpload && Folder.Length > 0;
     [ObservableProperty] private string _count = "";
     [ObservableProperty] private bool _isExpanded;
 
@@ -141,7 +150,7 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>The tree of the groups' paths; each place collects the groups under it.</summary>
-    private static List<GroupNode> BuildTree(List<TileGroup> groups)
+    private static List<GroupNode> BuildTree(List<TileGroup> groups, HashSet<long> changeable)
     {
         var roots = new List<GroupNode>();
         var byKey = new Dictionary<string, GroupNode>();
@@ -149,12 +158,18 @@ public sealed partial class MainViewModel
         {
             GroupNode? parent = null;
             var key = "";
-            foreach (var part in group.Path)
+            for (var depth = 0; depth < group.Path.Count; depth++)
             {
+                var part = group.Path[depth];
                 key += "\u0001" + part;
                 if (!byKey.TryGetValue(key, out var node))
                 {
-                    byKey[key] = node = new GroupNode(key, part);
+                    byKey[key] = node = new GroupNode(key, part)
+                    {
+                        SourceId = group.SourceId,
+                        Folder = group.SourceId == null ? "" : string.Join('/', group.Path.Skip(1).Take(depth)),
+                        CanUpload = group.SourceId is { } source && changeable.Contains(source),
+                    };
                     (parent?.Children ?? roots).Add(node);
                 }
                 node.Groups.Add(group);
@@ -198,10 +213,11 @@ public sealed partial class MainViewModel
         // Grouped off the UI thread: a library of millions takes a moment.
         var tiles = Tiles.ToList();
         var mode = GroupBy.Mode;
+        var changeable = _changeable;
         var (groups, roots) = await Task.Run(() =>
         {
             var groups = BuildGroups(tiles, mode);
-            return (groups, BuildTree(groups));
+            return (groups, BuildTree(groups, changeable));
         });
         if (version != _groupsVersion) return;
         OnPropertyChanged(nameof(ShowGroupTree));
@@ -230,7 +246,7 @@ public sealed partial class MainViewModel
                     return (Title: title, Path: path, Group: g);
                 })
                 .OrderBy(x => x.Title, StringComparer.Create(culture, CompareOptions.IgnoreCase))
-                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList(), x.Path))
+                .Select(x => new TileGroup(x.Title, Items(x.Group.Count()), x.Group.ToList(), x.Path) { SourceId = x.Group.Key.SourceId })
                 .ToList();
         }
         else if (mode == GroupMode.Person)

@@ -29,7 +29,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           match                            run the identity matching now
           detections <file name part>      what was found on an item
           cloud list                       clouds and mirrors
-          cloud add-folder <name> <folder> [--password p]
+          cloud add-folder <name> <folder> [--password p] [--plain]     (--plain last: not encrypted)
           cloud add-s3 <name> <bucket> <access key> <secret> [--endpoint url] [--region r] [--provider p] [--password p]
           cloud add-onedrive <name> [--password p]     (opens the browser to sign in)
           cloud add-gdrive <name> [--password p]       (opens the browser to sign in)
@@ -37,6 +37,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           cloud source <cloud id> <folder> add a cloud folder as a source
           cloud restore <cloud id> <folder> <local folder>
           cloud import-index <cloud id>    names, people and buckets from the cloud's index backup
+          upload <source id> <path>... [--into folder]    files and folders into a source that lives in a cloud
           mirror add <source id> <cloud id> [--encrypt]   back a folder up to a cloud
           mirror run [mirror id]           compare folders with the cloud: move, upload, note deleted ones
           mirror gone <mirror id>          files deleted from the folder that are still in the cloud
@@ -275,6 +276,28 @@ switch (args[0])
         return 0;
     }
 
+    case "upload" when args.Length >= 3:
+    {
+        var into = args.SkipWhile(x => x != "--into").Skip(1).FirstOrDefault() ?? "";
+        var files = args.Skip(2).TakeWhile(x => x != "--into").Select(Path.GetFullPath).ToList();
+        try
+        {
+            var id = host.Jobs.Upload(long.Parse(args[1], CultureInfo.InvariantCulture), into, files);
+            host.Jobs.Progress += (_, p) => Console.Write($"\r  {p.Text,-70}");
+            // Tried a few times, as the application does in the background.
+            for (var tries = 0; tries < 3 && host.Jobs.Get(id) is { IsOpen: true }; tries++) await host.Jobs.RunAsync(id, ct);
+            var job = host.Jobs.Get(id)!;
+            Console.WriteLine($"\r{job.Done:N0} of {job.Total:N0} files are in the cloud" + (job.Same > 0 ? $" ({job.Same:N0} were there already)" : "") + new string(' ', 50));
+            foreach (var f in host.Jobs.FailedFiles(id)) Console.WriteLine($"  not uploaded: {f.Origin}: {f.Error}");
+            if (job.Message != null) Console.WriteLine("  " + job.Message);
+            return job.State == MomentFinder.Cloud.JobStates.Done ? 0 : 1;
+        }
+        catch (InvalidOperationException e)
+        {
+            return Fail(e.Message);
+        }
+    }
+
     case "backup" when args.Length >= 2 && args[1] == "run":
     {
         if (host.Cloud.BackupCloud is not { } cloud) return Fail("Choose the cloud for the library first (backup cloud <cloud id>)");
@@ -431,7 +454,7 @@ async Task<int> CloudCommand(string[] a)
             return 0;
         case "add-folder" when positional.Count >= 3:
         {
-            var c = await host.Cloud.AddFolderAsync(positional[1], Path.GetFullPath(positional[2]), password, ct);
+            var c = await host.Cloud.AddFolderAsync(positional[1], Path.GetFullPath(positional[2]), password, ct, encrypt: a[^1] != "--plain");
             Console.WriteLine($"Cloud {c.Id} added");
             return 0;
         }

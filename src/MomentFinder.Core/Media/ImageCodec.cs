@@ -12,14 +12,15 @@ public static class ImageCodec
     /// <summary>The longest side of a thumbnail. Also the input of the image analysis, so the original is decoded only once.</summary>
     public const uint ThumbSize = 480;
 
-    public static async Task<bool> CreateThumbnailAsync(MediaItem item, string outPath, CancellationToken ct)
+    /// <summary>source: the file on this computer (a cloud item's fetched copy, or the file it was uploaded from).</summary>
+    public static async Task<bool> CreateThumbnailAsync(MediaItem item, string source, string outPath, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
         // Written aside and moved, so a reader never sees half a file and two writers do not collide.
         var tmp = Path.ChangeExtension(outPath, Guid.NewGuid().ToString("N") + ".jpg");
-        if (Fisheye360.IsDualFisheye(item.FullPath))
+        if (Fisheye360.IsDualFisheye(source))
         {
-            var ok = await Create360ThumbnailAsync(item, tmp, ct);
+            var ok = await Create360ThumbnailAsync(item, source, tmp, ct);
             if (ok) File.Move(tmp, outPath, true);
             return ok;
         }
@@ -27,15 +28,15 @@ public static class ImageCodec
         {
             var duration = (item.DurationMs ?? 0) / 1000.0;
             var at = duration > 0 ? Math.Min(1.0, duration * 0.1) : 0;
-            var ok = await FFmpeg.ExtractFrameAsync(item.FullPath, at, tmp, (int)ThumbSize, ct) ||
-                     (at > 0 && await FFmpeg.ExtractFrameAsync(item.FullPath, 0, tmp, (int)ThumbSize, ct));
+            var ok = await FFmpeg.ExtractFrameAsync(source, at, tmp, (int)ThumbSize, ct) ||
+                     (at > 0 && await FFmpeg.ExtractFrameAsync(source, 0, tmp, (int)ThumbSize, ct));
             if (ok) File.Move(tmp, outPath, true);
             return ok;
         }
 
         return await Task.Run(() =>
         {
-            using var image = ReadFirstFrame(item.FullPath, (int)ThumbSize * 2);
+            using var image = ReadFirstFrame(source, (int)ThumbSize * 2);
             image.AutoOrient();
             image.Thumbnail(new MagickGeometry(ThumbSize, ThumbSize));
             image.Strip();
@@ -47,7 +48,7 @@ public static class ImageCodec
     }
 
     /// <summary>A 360 item's thumbnail: the forward view, as it opens.</summary>
-    private static async Task<bool> Create360ThumbnailAsync(MediaItem item, string outJpeg, CancellationToken ct)
+    private static async Task<bool> Create360ThumbnailAsync(MediaItem item, string source, string outJpeg, CancellationToken ct)
     {
         RgbImage lens0, lens1;
         Rot3? level = null;
@@ -57,9 +58,9 @@ public static class ImageCodec
             try
             {
                 var duration = (item.DurationMs ?? 0) / 1000.0;
-                var frame = await FFmpeg.ExtractDualFrameAsync(item.FullPath, duration > 0 ? Math.Min(1.0, duration * 0.1) : 0, dir, 768, ct);
+                var frame = await FFmpeg.ExtractDualFrameAsync(source, duration > 0 ? Math.Min(1.0, duration * 0.1) : 0, dir, 768, ct);
                 if (frame == null) return false;
-                level = Fisheye360.LevelAt(item.FullPath, frame.TimeMs / 1000.0);
+                level = Fisheye360.LevelAt(source, frame.TimeMs / 1000.0);
                 (lens0, lens1) = (RgbImage.Load(frame.Lens0, 768), RgbImage.Load(frame.Lens1, 768));
             }
             finally
@@ -68,9 +69,9 @@ public static class ImageCodec
             }
         }
         else
-            (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(item.FullPath, 1536)), ct);
+            (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(source, 1536)), ct);
         await Task.Run(() => Fisheye360.RenderView(lens0, lens1, 0, Fisheye360.DefaultPitch, Fisheye360.DefaultFov, (int)ThumbSize, (int)ThumbSize * 3 / 4,
-                Fisheye360.ModelOf(item.FullPath), level)
+                Fisheye360.ModelOf(source), level)
             .SaveJpeg(outJpeg, 82), ct);
         return true;
     }

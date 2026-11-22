@@ -394,6 +394,8 @@ public sealed class LibraryRestore
         using (var c = db.Open())
         using (var tx = c.BeginTransaction())
         {
+            // What the other computer was doing in the cloud is its work, and where it uploaded files from are its disks.
+            c.Execute("DELETE FROM cloud_job; DELETE FROM upload_origin;", transaction: tx);
             var sources = c.Query<(long Id, string Kind, string Root)>("SELECT id, kind, root FROM source", transaction: tx).ToList();
             foreach (var s in sources)
             {

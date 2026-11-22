@@ -79,8 +79,19 @@
                 <TextBlock Grid.Column="1" Classes="muted small" Text="{Binding IndexerText}" VerticalAlignment="Center" Margin="4,0,10,0" />
                 <ProgressBar Grid.Column="2" Width="160" Value="{Binding IndexerProgress}" IsVisible="{Binding IndexerBusy}"
                              VerticalAlignment="Center" />
-                <TextBlock Grid.Column="3" Classes="muted small" Text="{Binding MirrorText}" VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis" Margin="10,0" />
+                <DockPanel Grid.Column="3" Margin="10,0">
+                    <!-- What the user asked to be done in the cloud: always in sight while there is any -->
+                    <Button DockPanel.Dock="Left" Classes="icon" Click="OnShowCloudJobs" IsVisible="{Binding CloudJobs.HasJobs}" MaxWidth="720"
+                            Margin="0,0,10,0" VerticalAlignment="Center"
+                            ToolTip.Tip="Uploads and changes in the cloud: how far they are, and what did not go. Click for the list.">
+                        <DockPanel>
+                            <mi:MaterialIcon DockPanel.Dock="Left" Kind="CloudUploadOutline" Margin="0,0,6,0" IsVisible="{Binding !CloudJobs.Attention}" />
+                            <mi:MaterialIcon DockPanel.Dock="Left" Kind="CloudAlertOutline" Margin="0,0,6,0" Foreground="#F59E0B" IsVisible="{Binding CloudJobs.Attention}" />
+                            <TextBlock Classes="small" Text="{Binding CloudJobs.BarText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Button>
+                    <TextBlock Classes="muted small" Text="{Binding MirrorText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
                 <TextBlock Grid.Column="4" Classes="muted small" Text="{Binding ModelText}" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" Margin="10,0" IsVisible="{Binding !CanDownloadModel}" />
             </Grid>
@@ -108,6 +119,9 @@
                                     <MenuItem Header="Rename..." Click="OnRenameEntry" IsVisible="{Binding CanRename}" />
                                     <MenuItem Header="Scan again" Click="OnRescanEntry" IsVisible="{Binding CanRescan}" />
                                     <MenuItem Header="Cloud..." Click="OnSourceCloud" IsVisible="{Binding HasCloudButton}" />
+                                    <MenuItem Header="Upload files here..." Click="OnHereUploadFiles" IsVisible="{Binding CanUpload}" />
+                                    <MenuItem Header="Upload a folder here..." Click="OnHereUploadFolder" IsVisible="{Binding CanUpload}" />
+                                    <MenuItem Header="Copy here from another storage..." Click="OnHereImport" IsVisible="{Binding CanUpload}" />
                                     <MenuItem Header="Locate folder..." Click="OnLocateEntry" IsVisible="{Binding IsAway}" />
                                     <MenuItem Header="Make read-only..." Click="OnMakeReadOnly" IsVisible="{Binding CanMakeReadOnly}"
                                               ToolTip.Tip="Nothing in it can be deleted, moved or added from MomentFinder, and it cannot be removed from the library, until read-only is turned off with a password" />
@@ -323,6 +337,36 @@
                         </Button>
                     </StackPanel>
                 </StackPanel>
+                <!-- A folder that lives in the cloud: what can be done in it -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" IsVisible="{Binding IsCloudScope}">
+                    <Button Classes="toolbar"
+                            ToolTip.Tip="Put photos and videos into this folder in the cloud: from this computer, or from another storage. Files and folders can also be dragged here from the file manager.">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="CloudUploadOutline" />
+                            <TextBlock Text="Upload" />
+                            <mi:MaterialIcon Kind="ChevronDown" Width="14" Height="14" />
+                        </StackPanel>
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                <MenuItem Header="Files from this computer..." Click="OnUploadFiles" />
+                                <MenuItem Header="A folder from this computer..." Click="OnUploadFolder" />
+                                <MenuItem Header="From another storage (another bucket, OneDrive, Google Drive)..." Click="OnImport" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <Button Classes="toolbar" Click="OnMoveSelection" ToolTip.Tip="Move the selected photos and videos to another folder in the cloud">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="FolderMoveOutline" />
+                            <TextBlock Text="Move" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="toolbar" Click="OnDeleteSelection" ToolTip.Tip="Delete the selected photos and videos from the cloud, for good (Delete)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <mi:MaterialIcon Kind="TrashCanOutline" />
+                            <TextBlock Text="Delete" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsBucketScope}">
                     <Button Classes="toolbar" Command="{Binding RemoveSelectionFromBucketCommand}"
                             ToolTip.Tip="Take the selection out of this bucket (Delete); the files stay">
@@ -352,6 +396,25 @@
                 </StackPanel>
             </Border>
 
+            <!-- An upload or a change in the cloud that runs, or one that did not go: said here too, not only in the status bar -->
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding CloudJobs.Busy}">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <mi:MaterialIcon Kind="CloudSyncOutline" Width="22" Height="22" Margin="0,0,10,0" />
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CloudJobs.StatusText}" TextWrapping="Wrap" />
+                        <ProgressBar Value="{Binding CloudJobs.Percent}" Minimum="0" Maximum="100" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Click="OnShowCloudJobs" Margin="12,0,0,0" ToolTip.Tip="How far it is, and a way to stop it">Show</Button>
+                </Grid>
+            </Border>
+            <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding CloudJobs.Attention}">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <mi:MaterialIcon Kind="CloudAlertOutline" Foreground="#F59E0B" Width="22" Height="22" Margin="0,0,10,0" />
+                    <TextBlock Grid.Column="1" Text="{Binding CloudJobs.AttentionText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Click="OnShowCloudJobs" Margin="12,0,0,0">See why</Button>
+                </Grid>
+            </Border>
+
             <!-- The folder shown is being read (how far), or is empty (why): right where its photos would be -->
             <Border Classes="card" Margin="12,4,12,6" Padding="14,10" IsVisible="{Binding ScopeBanner}">
                 <StackPanel Spacing="8">
@@ -376,7 +439,18 @@
                     </TreeView.Styles>
                     <TreeView.ItemTemplate>
                         <TreeDataTemplate DataType="vm:GroupNode" ItemsSource="{Binding Children}">
-                            <DockPanel>
+                            <DockPanel Background="Transparent">
+                                <!-- A folder that lives in the cloud: what can be done with it -->
+                                <DockPanel.ContextMenu>
+                                    <ContextMenu IsVisible="{Binding CanUpload}">
+                                        <MenuItem Header="Upload files here..." Click="OnHereUploadFiles" />
+                                        <MenuItem Header="Upload a folder here..." Click="OnHereUploadFolder" />
+                                        <MenuItem Header="Copy here from another storage..." Click="OnHereImport" />
+                                        <MenuItem Header="Move this folder..." Click="OnTreeMoveFolder" IsVisible="{Binding CanChangeFolder}" />
+                                        <MenuItem Header="Rename this folder..." Click="OnTreeRenameFolder" IsVisible="{Binding CanChangeFolder}" />
+                                        <MenuItem Header="Delete this folder..." Click="OnTreeDeleteFolder" IsVisible="{Binding CanChangeFolder}" />
+                                    </ContextMenu>
+                                </DockPanel.ContextMenu>
                                 <TextBlock DockPanel.Dock="Right" Text="{Binding Count}" Classes="muted" Margin="10,0,8,0" VerticalAlignment="Center" />
                                 <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" VerticalAlignment="Center" />
                             </DockPanel>
@@ -389,6 +463,14 @@
             <Grid x:Name="BrowseArea" Grid.Column="2" RowDefinitions="*,Auto,0" ColumnDefinitions="*,Auto,0">
             <ScrollViewer x:Name="GridScroll" HorizontalScrollBarVisibility="Disabled" Focusable="True"
                           Padding="10,4,10,10">
+                <!-- Right click on a photo: what can be done with the selection (the code says which) -->
+                <ScrollViewer.ContextMenu>
+                    <ContextMenu Opening="OnTileMenuOpening">
+                        <MenuItem x:Name="TileMenuMove" Header="Move to another folder..." Click="OnMoveSelection" />
+                        <MenuItem x:Name="TileMenuDelete" Header="Delete from the cloud..." Click="OnDeleteSelection" />
+                        <MenuItem x:Name="TileMenuWhy" IsEnabled="False" />
+                    </ContextMenu>
+                </ScrollViewer.ContextMenu>
                 <!-- The code gives it the list, the layout (TileGridLayout) and the templates of a tile and a group's title -->
                 <ItemsRepeater x:Name="Repeater" />
             </ScrollViewer>

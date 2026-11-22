@@ -47,6 +47,24 @@ public sealed partial class Rclone
 
     public async Task<string> RunAsync(IEnumerable<string> args, CancellationToken ct, Action<string>? onStderrLine = null)
     {
+        var stderr = new StringBuilder();
+        var (exit, output) = await ExecAsync(args, ct, line =>
+        {
+            stderr.AppendLine(line);
+            onStderrLine?.Invoke(line);
+        });
+        if (exit != 0)
+        {
+            var message = stderr.ToString().Split('\n').LastOrDefault(l => l.Contains("ERROR") || l.Contains("Failed"))?.Trim()
+                          ?? stderr.ToString().Trim();
+            throw new RcloneException(string.IsNullOrEmpty(message) ? $"rclone failed ({exit})" : message);
+        }
+        return output;
+    }
+
+    /// <summary>Runs rclone to its end and gives its exit code and output; what it writes to stderr goes to the caller line by line.</summary>
+    private async Task<(int Exit, string Output)> ExecAsync(IEnumerable<string> args, CancellationToken ct, Action<string> onStderrLine)
+    {
         if (Exe.Value is not { } exe) throw new RcloneException("rclone is not installed");
         var psi = new ProcessStartInfo(exe)
         {
@@ -64,14 +82,9 @@ public sealed partial class Rclone
         using var p = Process.Start(psi) ?? throw new RcloneException("Cannot start rclone");
         p.StandardInput.Close();
         var stdout = p.StandardOutput.ReadToEndAsync(ct);
-        var stderr = new StringBuilder();
         var errTask = Task.Run(async () =>
         {
-            while (await p.StandardError.ReadLineAsync(ct) is { } line)
-            {
-                stderr.AppendLine(line);
-                onStderrLine?.Invoke(line);
-            }
+            while (await p.StandardError.ReadLineAsync(ct) is { } line) onStderrLine(line);
         }, ct);
         try
         {
@@ -83,14 +96,7 @@ public sealed partial class Rclone
             throw;
         }
         await errTask;
-        var output = await stdout;
-        if (p.ExitCode != 0)
-        {
-            var message = stderr.ToString().Split('\n').LastOrDefault(l => l.Contains("ERROR") || l.Contains("Failed"))?.Trim()
-                          ?? stderr.ToString().Trim();
-            throw new RcloneException(string.IsNullOrEmpty(message) ? $"rclone failed ({p.ExitCode})" : message);
-        }
-        return output;
+        return (p.ExitCode, await stdout);
     }
 
     /// <summary>Creates or replaces a remote; secret values are passed as given and obscured by rclone.</summary>
@@ -253,6 +259,89 @@ public sealed partial class Rclone
         }
     }
 
+    /// <summary>
+    /// What became of the files of a batch. Done: said so by rclone. Failed: each with rclone's reason. Error: the
+    /// run as a whole did not end well (the storage did not answer, the key was refused): of the files in neither
+    /// list nothing is known then; without it they are where they should be (copied now, or there already).
+    /// </summary>
+    public sealed record BatchResult(HashSet<string> Done, Dictionary<string, string> Failed, string? Error);
+
+    /// <summary>How far a batch is, from rclone's statistics.</summary>
+    public sealed record BatchStats(long Bytes, long TotalBytes, double Speed, int Files);
+
+    /// <summary>
+    /// Copies, moves or deletes these files (paths relative to the folders; "delete" has no target) in one run of
+    /// rclone, several at once over connections it keeps open, and says what became of each of them. A file that
+    /// fails does not stop the others.
+    /// </summary>
+    public async Task<BatchResult> BatchAsync(string verb, string from, string? to, IReadOnlyCollection<string> files,
+        Action<string>? onDone, Action<BatchStats>? onStats, CancellationToken ct)
+    {
+        var done = new HashSet<string>(StringComparer.Ordinal);
+        var failed = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (files.Count == 0) return new BatchResult(done, failed, null);
+        var list = await WriteListAsync(files, ct);
+        string? last = null;
+        try
+        {
+            var args = new List<string> { verb, from };
+            if (to != null) args.Add(to);
+            args.AddRange(["--files-from-raw", list, "--use-json-log", "--log-level", "INFO", "--stats", "1s", "--stats-log-level", "NOTICE",
+                "--transfers", "8", "--checkers", "16"]);
+            if (verb != "delete") args.Add("--no-traverse");
+            var (exit, _) = await ExecAsync(args, ct, line =>
+            {
+                if (line.Length == 0 || line[0] != '{') return;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    var level = root.TryGetProperty("level", out var l) ? l.GetString() : null;
+                    var message = root.TryGetProperty("msg", out var m) ? m.GetString() ?? "" : "";
+                    if (root.TryGetProperty("stats", out var stats) && stats.ValueKind == JsonValueKind.Object)
+                    {
+                        onStats?.Invoke(new BatchStats(Number(stats, "bytes"), Number(stats, "totalBytes"),
+                            stats.TryGetProperty("speed", out var speed) && speed.ValueKind == JsonValueKind.Number ? speed.GetDouble() : 0,
+                            (int)Number(stats, "transfers")));
+                        return;
+                    }
+                    // A file's own line names it; the folders rclone works in are named too (their type says so).
+                    var file = root.TryGetProperty("object", out var o) && o.ValueKind == JsonValueKind.String &&
+                               (!root.TryGetProperty("objectType", out var type) || type.GetString() is not { } t || !t.EndsWith(".Fs", StringComparison.Ordinal))
+                        ? o.GetString() : null;
+                    if (level == "error")
+                    {
+                        if (file != null) lock (failed) failed[file] = message;
+                        else if (!message.StartsWith("Attempt ", StringComparison.Ordinal)) last = message;
+                    }
+                    else if (file != null && (message.StartsWith("Copied", StringComparison.Ordinal) || message.StartsWith("Moved", StringComparison.Ordinal) ||
+                                              message.StartsWith("Renamed", StringComparison.Ordinal) || message.StartsWith("Deleted", StringComparison.Ordinal)))
+                    {
+                        bool isNew;
+                        lock (failed) isNew = done.Add(file);
+                        if (isNew) onDone?.Invoke(file);
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Not a line of the log.
+                }
+            });
+            // A file that failed at first and went at rclone's next try is done.
+            foreach (var f in failed.Keys.Where(done.Contains).ToList())
+                if (exit == 0) failed.Remove(f);
+                else done.Remove(f);
+            return new BatchResult(done, failed, exit == 0 || failed.Count > 0 && last == null ? null : last ?? $"rclone failed ({exit})");
+        }
+        finally
+        {
+            File.Delete(list);
+        }
+
+        static long Number(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0;
+    }
+
     /// <summary>Deletes a folder with everything in it; nothing to do when it is not there.</summary>
     public async Task PurgeAsync(string remotePath, CancellationToken ct)
     {
@@ -322,6 +411,9 @@ public sealed partial class Rclone
         if (m.Groups[6].Success) parts.Add($"{m.Groups[6].Value} of {m.Groups[7].Value} files done");
         return new CopyProgress(done, total, int.TryParse(m.Groups[3].Value, out var pct) ? pct : 0, string.Join(", ", parts));
     }
+
+    /// <summary>A size in words: "1.4 GB", "341 MB", "12 KB".</summary>
+    public static string SizeText(long bytes) => Size(bytes);
 
     private static string Size(long bytes) => bytes switch
     {

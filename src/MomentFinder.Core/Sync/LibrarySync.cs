@@ -254,6 +254,8 @@ public sealed class LibrarySync : IDisposable
                 s.Open();
                 // What this computer sent is in it; what it took in from the others too, up to where it is.
                 s.Execute("DELETE FROM outbox");
+                // This computer's own work in the cloud is not part of the library.
+                s.Execute("DELETE FROM cloud_job; DELETE FROM upload_origin;");
                 s.Execute("""
                     INSERT INTO sync_seen(device, seq, last_file, last_seen) VALUES(@me, 0, @lastFile, @now)
                     ON CONFLICT(device) DO UPDATE SET last_file=excluded.last_file

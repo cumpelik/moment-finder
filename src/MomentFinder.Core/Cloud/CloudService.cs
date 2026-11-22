@@ -128,6 +128,8 @@ public sealed class CloudService
     {
         path = path.Trim('/');
         if (path.Length == 0) return remote;
+        // A path inside a folder, joined to the folder's top.
+        if (remote.Length == 0) return path;
         return remote.EndsWith(':') || remote.EndsWith('/') ? remote + path : remote + "/" + path;
     }
 

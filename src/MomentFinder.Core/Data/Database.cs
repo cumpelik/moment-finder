@@ -275,6 +275,39 @@ public sealed class Database
         "ALTER TABLE sync_seen ADD COLUMN last_file TEXT;",
         // 17: facts found by what they say (the photos moved to a key, the files of a folder), not only by their object.
         "CREATE INDEX fact_field_value ON fact(field, value);",
+        // 18: what the user asked to be done in the cloud (files uploaded into a folder there, copied from another
+        // storage, moved, deleted): done in the background, file by file, so a break goes on where it stopped and what
+        // did not go can be shown with its reason. spec says what and where (CloudJobs). A file uploaded from this
+        // computer is read from where it came from while it is still there, not downloaded again.
+        """
+        CREATE TABLE cloud_job(
+            id INTEGER PRIMARY KEY,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            spec TEXT NOT NULL,
+            target_id INTEGER NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+            state TEXT NOT NULL DEFAULT 'waiting',
+            prepared INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            finished_at INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            tried_at INTEGER,
+            message TEXT);
+        CREATE TABLE cloud_job_file(
+            job_id INTEGER NOT NULL REFERENCES cloud_job(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            origin TEXT NOT NULL,
+            target TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            mtime INTEGER NOT NULL DEFAULT 0,
+            state INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            PRIMARY KEY(job_id, seq)) WITHOUT ROWID;
+        CREATE INDEX cloud_job_file_state ON cloud_job_file(job_id, state);
+        CREATE TABLE upload_origin(
+            media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+            path TEXT NOT NULL);
+        """,
     ];
 
     /// <summary>

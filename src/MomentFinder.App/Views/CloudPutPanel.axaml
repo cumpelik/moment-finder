@@ -1,0 +1,124 @@
+<!-- Shown over the main window (see IOverlayPanel) -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             xmlns:v="clr-namespace:MomentFinder.App.Views"
+             xmlns:c="clr-namespace:MomentFinder.Cloud;assembly=MomentFinder.Core"
+             x:Class="MomentFinder.App.Views.CloudPutPanel"
+             x:DataType="vm:CloudPutViewModel"
+             MaxWidth="780" VerticalAlignment="Center">
+    <UserControl.Styles>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border Background="{DynamicResource AppBackgroundBrush}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1"
+            CornerRadius="8" BoxShadow="0 8 32 0 #80000000" ClipToBounds="True">
+    <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" Margin="24,20,24,0" />
+        <Border DockPanel.Dock="Bottom" Padding="24,12" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource AppBorderBrush}">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" MaxLines="4" />
+                <Button Grid.Column="1" Classes="accent" Command="{Binding ActCommand}" IsEnabled="{Binding CanAct}" Content="{Binding ActText}"
+                        Padding="20,6" Margin="12,0,0,0" />
+                <Button Grid.Column="2" Click="OnClose" Padding="20,6" Margin="12,0,0,0">Cancel</Button>
+            </Grid>
+        </Border>
+        <ScrollViewer>
+            <StackPanel Margin="24,24,24,16" Spacing="16">
+                <Border Classes="card" Padding="18" IsVisible="{Binding HasWhat}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Classes="section" Text="What" />
+                        <TextBlock Text="{Binding WhatText}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- From another storage: which one, and the folder in it -->
+                <Panel IsVisible="{Binding IsImport}">
+                <StackPanel Spacing="16" DataContext="{Binding Origin}" x:DataType="vm:AddCloudFolderViewModel">
+                    <Border Classes="card" Padding="18">
+                        <StackPanel Spacing="12">
+                            <TextBlock Classes="section" Text="1. Which storage" />
+                            <TextBlock Classes="muted" TextWrapping="Wrap"
+                                       Text="Photos and videos that are in another storage (another bucket, a OneDrive, a Google Drive) are copied from there into a folder of the library. They stay in the other storage too." />
+                            <Grid ColumnDefinitions="300,*" IsVisible="{Binding HasClouds}">
+                                <TextBlock VerticalAlignment="Center" Text="Connected storage" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Destinations}" SelectedItem="{Binding Destination}" HorizontalAlignment="Stretch" />
+                            </Grid>
+                            <StackPanel Spacing="12" IsVisible="{Binding IsNewStorage}">
+                                <v:StorageForm x:Name="NewStorage" />
+                                <Button Command="{Binding ConnectCommand}" IsEnabled="{Binding NotBusy}" HorizontalAlignment="Left">Connect and show its folders</Button>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Status}" TextWrapping="Wrap"
+                                       IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Classes="card" Padding="18" IsVisible="{Binding IsBrowsing}">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="section" Text="2. Which folder" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Left" Command="{Binding UpCommand}" IsEnabled="{Binding CanGoUp}" Margin="0,0,10,0"
+                                        ToolTip.Tip="One folder up">
+                                    <mi:MaterialIcon Kind="ArrowUp" />
+                                </Button>
+                                <TextBlock Text="{Binding PlaceText}" VerticalAlignment="Center" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                            <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="220">
+                                <Panel>
+                                    <ListBox x:Name="FolderList" ItemsSource="{Binding Folders}" Background="Transparent" SelectionChanged="OnFolderChosen">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="c:StorageFolder">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <mi:MaterialIcon Kind="FolderOutline" />
+                                                    <TextBlock Text="{Binding Title}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock Classes="muted" Margin="12,10" IsVisible="{Binding NoFolders}" Text="No folders inside: this one is copied with the files in it." />
+                                </Panel>
+                            </Border>
+                            <TextBlock Classes="muted" TextWrapping="Wrap"
+                                       Text="Click a folder to go into it. The folder you are in is copied, with the folders inside it." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+                </Panel>
+
+                <Border Classes="card" Padding="18">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section" Text="{Binding WhereTitle}" />
+                        <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="260" IsVisible="{Binding !NoPlaces}">
+                            <TreeView ItemsSource="{Binding Places}" SelectedItem="{Binding SelectedPlace}">
+                                <TreeView.Styles>
+                                    <Style Selector="TreeViewItem" x:DataType="vm:PlaceNode">
+                                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                        <Setter Property="MinHeight" Value="28" />
+                                    </Style>
+                                </TreeView.Styles>
+                                <TreeView.ItemTemplate>
+                                    <TreeDataTemplate DataType="vm:PlaceNode" ItemsSource="{Binding Children}">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <mi:MaterialIcon Kind="CloudOutline" IsVisible="{Binding IsSource}" />
+                                            <mi:MaterialIcon Kind="FolderOutline" IsVisible="{Binding !IsSource}" />
+                                            <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </TreeDataTemplate>
+                                </TreeView.ItemTemplate>
+                            </TreeView>
+                        </Border>
+                        <Grid ColumnDefinitions="300,*" IsVisible="{Binding !NoPlaces}">
+                            <TextBlock VerticalAlignment="Center" Text="A new folder inside it (if you want one)" />
+                            <TextBox Grid.Column="1" Text="{Binding NewFolder}" PlaceholderText="for example 2024/Ski" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Text="{Binding WhereText}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+    </Border>
+</UserControl>

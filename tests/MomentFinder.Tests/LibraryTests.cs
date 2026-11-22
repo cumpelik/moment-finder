@@ -105,7 +105,7 @@ public class LibraryTests
         Assert.Equal(2021, item.Taken.Year);
 
         var thumb = lib.Paths.ThumbPath(item.Id);
-        Assert.True(await ImageCodec.CreateThumbnailAsync(item, thumb, TestContext.Current.CancellationToken));
+        Assert.True(await ImageCodec.CreateThumbnailAsync(item, item.FullPath, thumb, TestContext.Current.CancellationToken));
         Assert.True(new FileInfo(thumb).Length > 0);
     }
 

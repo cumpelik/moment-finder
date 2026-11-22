@@ -50,6 +50,15 @@ Windows: the installer is on the [Releases](../../releases/latest) page (`Moment
   A small file in the cloud folder (`.medialens-folder.json`) says which way it is and whose it is.
 - **A folder in the cloud as a source** (SOURCES +, Folder in the cloud): photos put into a storage by other means
   (its own app, another program) are added from there, browsing its folders; files are fetched when needed.
+- **Changing a folder that lives in the cloud** (its buttons above the photos, a right click on photos, on a folder
+  of the tree or on the source; files and folders can be dragged in from the file manager): upload files and whole
+  folders from this computer, copy a folder from another storage (another bucket, a OneDrive, a Google Drive), move
+  photos and whole folders (also to another cloud folder of the library, and rename a folder), delete them. Each is
+  done in the background, file by file, several at once: a break goes on where it stopped, a file that did not go is
+  kept with its reason and tried again, and what still does not go waits in the list (status bar, and a line above
+  the photos). Nothing is written over: the same file is left, another one of that name goes beside it as
+  `name (2).jpg`. An uploaded photo is read from the file here, not downloaded again; a moved one keeps everything
+  known of it (people, buckets), on every computer of the library. Deleting is for good.
 - **Read-only sources** (right click a source, or its cloud window): nothing in it is deleted, moved or added from
   MomentFinder and it is not removed from the library, until read-only is turned off with the password (one for all,
   chosen the first time); it is read-only again when turned on or at the next start. A guard against mistakes in
@@ -135,6 +144,7 @@ momentfinder clusters / name <group> <name> / persons / match
 momentfinder bucket add "Fotokniha" Eva lyže 2023
 momentfinder bucket export "Fotokniha" ~/Desktop/fotokniha
 momentfinder cloud add-onedrive Backup --password ...
+momentfinder upload <source> <file or folder>... [--into folder]
 momentfinder mirror add <source> <cloud> [--encrypt] / mirror run / mirror gone|delete-gone|bring-back|to-cloud <mirror>
 momentfinder source home <source> <folder>
 momentfinder cloud restore <cloud> <folder> <local folder> / cloud import-index <cloud>

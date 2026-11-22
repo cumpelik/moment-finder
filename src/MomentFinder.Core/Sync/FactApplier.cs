@@ -49,6 +49,8 @@ public sealed class FactApplier
                 case "b": Bucket(obj[2..]); break;
                 case "m":
                     if (Catalog.Place(_c, _tx, obj[2..]) is { } added) arrived.Add(added);
+                    // Moved: its row follows to the new place (when that came before this), then what was said of it.
+                    if (FactStore.Get(_c, _tx, obj, "moved") is { } now && Catalog.Place(_c, _tx, now) is { } atNew) arrived.Add(atNew);
                     Moved(obj[2..]);
                     break;
                 case "bi": BucketItem(obj); break;

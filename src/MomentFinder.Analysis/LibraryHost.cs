@@ -28,6 +28,8 @@ public sealed class LibraryHost : IDisposable
     public EventBuilder Events { get; }
     public CloudService Cloud { get; }
     public MirrorScheduler Mirrors { get; }
+    /// <summary>What the user asked to be done in the folders in the cloud: uploads, moves, deletes.</summary>
+    public CloudJobs Jobs { get; }
     /// <summary>The library shared with the other computers that use it: changes go out and come in.</summary>
     public MomentFinder.Sync.LibrarySync Sync { get; }
     /// <summary>Copying the library of another computer here (put in place at the next start).</summary>
@@ -62,6 +64,10 @@ public sealed class LibraryHost : IDisposable
         Cloud = new CloudService(Paths, Db, Repo);
         Indexer = new Indexer(Paths, Repo, Cloud.Rclone);
         Mirrors = new MirrorScheduler(Cloud, Db);
+        Jobs = new CloudJobs(Paths, Db, Repo, Cloud);
+        Jobs.LibraryChanged += Indexer.Wake;
+        Jobs.ScanWanted += Indexer.RequestScan;
+        Indexer.Busy = Jobs.IsBusy;
         Sync = new MomentFinder.Sync.LibrarySync(Db, Cloud, Paths);
         Db.Facts.Recorded += Sync.Wake;
         Indexer.SharedContentBatch = Sync.Content.TakeAsync;
@@ -122,6 +128,7 @@ public sealed class LibraryHost : IDisposable
     {
         Indexer.Dispose();
         Mirrors.Dispose();
+        Jobs.Dispose();
         Sync.Dispose();
         SceneIndex?.Dispose();
         SceneModel?.Dispose();

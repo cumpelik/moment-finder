@@ -65,6 +65,8 @@ public sealed record SidebarEntry(SidebarKind Kind, long Id, string Name, string
     /// <summary>Not connected: the button is there, quietly.</summary>
     public bool CloudIdle { get; init; }
 
+    /// <summary>A folder that lives in the cloud and can be changed from here: files can be put into it.</summary>
+    public bool CanUpload { get; init; }
     public bool CanRename => Kind is SidebarKind.Bucket or SidebarKind.Person;
     public bool CanRescan => Kind == SidebarKind.Source;
     public bool CanRemove => Kind is SidebarKind.Bucket or SidebarKind.Person || Kind == SidebarKind.Source && !IsLocked;

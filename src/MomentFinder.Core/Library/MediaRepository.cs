@@ -183,8 +183,65 @@ public sealed class MediaRepository
             new { id, sourceId, relPath, mtime }, tx);
         // Its key is made of its place: what anybody said of it under the old key follows it.
         var after = c.ExecuteScalar<string?>("SELECT uid FROM media WHERE id=@id", new { id }, tx);
-        if (before != null && after != null && before != after) _db.Facts.Set(c, tx, Keys.Media(before), "moved", after);
+        if (before != null && after != null && before != after)
+        {
+            // In a folder that lives in the cloud the others learn its new place first, then that it is the same photo.
+            Catalog.Say(_db, c, tx, id);
+            _db.Facts.Set(c, tx, Keys.Media(before), "moved", after);
+            // Said to be at the old place: it is not there any more (the others would keep a photo nobody can open).
+            if (FactStore.Get(c, tx, Keys.Media(before), "file") != null && FactStore.Get(c, tx, Keys.Media(before), "gone") != "1")
+                _db.Facts.Set(c, tx, Keys.Media(before), "gone", "1");
+        }
         tx.Commit();
+    }
+
+    /// <summary>
+    /// A file moved inside the cloud by this computer: its row follows. A row left at the new place from before (a
+    /// file that was there once) makes way: the cloud was looked at, nothing is there now but this file.
+    /// </summary>
+    public void MoveInCloud(long id, long sourceId, string relPath)
+    {
+        using (var c = _db.Open())
+            c.Execute("DELETE FROM media WHERE source_id=@sourceId AND rel_path=@relPath AND id<>@id", new { sourceId, relPath, id });
+        long mtime;
+        using (var c = _db.Open()) mtime = c.ExecuteScalar<long>("SELECT mtime FROM media WHERE id=@id", new { id });
+        Move(id, sourceId, relPath, mtime);
+    }
+
+    /// <summary>The rows of these places of a source (missing ones too), by their path.</summary>
+    public Dictionary<string, long> IdsOf(long sourceId, IEnumerable<string> relPaths)
+    {
+        using var c = _db.Open();
+        var ids = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var chunk in relPaths.Distinct().Chunk(500))
+            foreach (var (path, id) in c.Query<(string, long)>("SELECT rel_path, id FROM media WHERE source_id=@sourceId AND rel_path IN @chunk",
+                         new { sourceId, chunk }))
+                ids[path] = id;
+        return ids;
+    }
+
+    /// <summary>The folders of a source that hold photos or videos, each with those above it ("2024", "2024/Ski").</summary>
+    public List<string> Folders(long sourceId)
+    {
+        using var c = _db.Open();
+        // The path up to its last slash: what is left when the name's own letters are cut from the end.
+        var folders = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var dir in c.Query<string>(
+                     "SELECT DISTINCT rtrim(rel_path, replace(rel_path, '/', '')) FROM media WHERE source_id=@sourceId AND missing=0", new { sourceId }))
+        {
+            var folder = dir.TrimEnd('/');
+            while (folder.Length > 0 && folders.Add(folder))
+                folder = folder.Contains('/') ? folder[..folder.LastIndexOf('/')] : "";
+        }
+        return folders.ToList();
+    }
+
+    /// <summary>A file uploaded from this computer: read from where it came from while it is there, not downloaded again.</summary>
+    public void SetUploadOrigin(long mediaId, string path)
+    {
+        using var c = _db.Open();
+        c.Execute("INSERT INTO upload_origin(media_id, path) VALUES(@mediaId, @path) ON CONFLICT(media_id) DO UPDATE SET path=excluded.path",
+            new { mediaId, path });
     }
 
     public void SetMtime(long id, long mtime)
@@ -207,8 +264,22 @@ public sealed class MediaRepository
     /// <summary>The same file (quick hash and size) in a folder on this computer, if it is there now.</summary>
     public string? LocalTwinPath(MediaItem item)
     {
-        if (item.QuickHash == null) return null;
         using var c = _db.Open();
+        // Uploaded from this computer, and still where it was (the same size and time): that very file.
+        if (c.ExecuteScalar<string?>("SELECT path FROM upload_origin WHERE media_id=@Id", new { item.Id }) is { } origin)
+        {
+            try
+            {
+                if (new FileInfo(origin) is { Exists: true } f && f.Length == item.Size &&
+                    Math.Abs(new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeMilliseconds() - item.Mtime) <= 1000)
+                    return origin;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // A disk that is away, a path this system cannot have: downloaded like any other.
+            }
+        }
+        if (item.QuickHash == null) return null;
         var twins = c.Query<(string Root, string RelPath)>("""
             SELECT s.root, m.rel_path FROM media m JOIN source s ON s.id=m.source_id
             WHERE m.quick_hash=@QuickHash AND m.size=@Size AND m.missing=0 AND s.kind='local' AND s.enabled=1

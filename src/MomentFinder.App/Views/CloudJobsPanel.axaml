@@ -1,0 +1,91 @@
+<!-- Shown over the main window (see IOverlayPanel) -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mi="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="clr-namespace:MomentFinder.App.ViewModels"
+             x:Class="MomentFinder.App.Views.CloudJobsPanel"
+             x:DataType="vm:CloudJobsViewModel"
+             MaxWidth="860" VerticalAlignment="Center">
+    <UserControl.Styles>
+        <Style Selector="TextBlock.warn">
+            <Setter Property="Foreground" Value="#F59E0B" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border Background="{DynamicResource AppBackgroundBrush}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1"
+            CornerRadius="8" BoxShadow="0 8 32 0 #80000000" ClipToBounds="True">
+    <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Uploads and changes in the cloud" FontSize="20" FontWeight="SemiBold" Margin="24,20,24,0" />
+        <Border DockPanel.Dock="Bottom" Padding="24,12" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource AppBorderBrush}">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center"
+                           Text="They are done in the background, one after another. MomentFinder can be closed meanwhile: they go on where they stopped when it starts again." />
+                <Button Grid.Column="1" Command="{Binding ClearDoneCommand}" IsVisible="{Binding HasDone}" Margin="12,0,0,0"
+                        ToolTip.Tip="Takes the finished ones off this list; what they did stays done">Clear the finished ones</Button>
+                <Button Grid.Column="2" Click="OnClose" Padding="20,6" Margin="12,0,0,0">Close</Button>
+            </Grid>
+        </Border>
+        <ScrollViewer>
+            <StackPanel Margin="24,24,24,16" Spacing="12">
+                <TextBlock Classes="muted" TextWrapping="Wrap" IsVisible="{Binding !HasJobs}"
+                           Text="Nothing here now. What you upload into a folder in the cloud, move or delete there shows here, with how far it is and anything that did not go." />
+                <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:JobRow">
+                            <Border Classes="card" Padding="16" Margin="0,0,0,12">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                                        <Panel Margin="0,0,10,0" VerticalAlignment="Top">
+                                            <mi:MaterialIcon Kind="ClockOutline" Width="20" Height="20" />
+                                            <!-- The state's own picture covers the waiting one -->
+                                            <Border Background="{DynamicResource AppBackgroundBrush}" IsVisible="{Binding Running}">
+                                                <mi:MaterialIcon Kind="CloudSyncOutline" Width="20" Height="20" />
+                                            </Border>
+                                            <Border Background="{DynamicResource AppBackgroundBrush}" IsVisible="{Binding Done}">
+                                                <mi:MaterialIcon Kind="CheckCircleOutline" Width="20" Height="20" Foreground="#22C55E" />
+                                            </Border>
+                                            <Border Background="{DynamicResource AppBackgroundBrush}" IsVisible="{Binding Attention}">
+                                                <mi:MaterialIcon Kind="AlertCircleOutline" Width="20" Height="20" Foreground="#F59E0B" />
+                                            </Border>
+                                        </Panel>
+                                        <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        <Button Grid.Column="2" Margin="8,0,0,0" IsVisible="{Binding CanRetry}" Content="{Binding RetryText}"
+                                                Command="{Binding $parent[ItemsControl].((vm:CloudJobsViewModel)DataContext).RetryCommand}" CommandParameter="{Binding}" />
+                                        <Button Grid.Column="3" Margin="8,0,0,0" IsVisible="{Binding CanStop}"
+                                                ToolTip.Tip="Stops it; what is done stays done, and it can go on later"
+                                                Command="{Binding $parent[ItemsControl].((vm:CloudJobsViewModel)DataContext).StopCommand}" CommandParameter="{Binding}">Stop</Button>
+                                        <Button Grid.Column="4" Margin="8,0,0,0" IsVisible="{Binding CanRemove}"
+                                                ToolTip.Tip="Takes it off this list; what it did stays done"
+                                                Command="{Binding $parent[ItemsControl].((vm:CloudJobsViewModel)DataContext).RemoveCommand}" CommandParameter="{Binding}">Remove from the list</Button>
+                                    </Grid>
+                                    <ProgressBar Value="{Binding Percent}" Minimum="0" Maximum="100" IsVisible="{Binding Running}" />
+                                    <TextBlock Text="{Binding StateText}" TextWrapping="Wrap" Classes.warn="{Binding Attention}" />
+                                    <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="4" MaxHeight="220"
+                                            IsVisible="{Binding HasFailed}">
+                                        <ScrollViewer>
+                                            <StackPanel>
+                                                <ItemsControl ItemsSource="{Binding Failed}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="vm:FailedFileRow">
+                                                            <StackPanel Margin="10,6">
+                                                                <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
+                                                                <TextBlock Classes="muted small" Text="{Binding Why}" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Classes="muted small" Margin="10,2,10,8" Text="{Binding MoreFailed}"
+                                                           IsVisible="{Binding MoreFailed, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+    </Border>
+</UserControl>

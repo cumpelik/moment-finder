@@ -103,6 +103,9 @@ public sealed class Indexer : IDisposable
         _wake.Release();
     }
 
+    /// <summary>A source the user's own changes in the cloud are working in now (uploads, moves): not scanned meanwhile.</summary>
+    public Func<long, bool>? Busy { get; set; }
+
     /// <summary>The source being scanned now (its window and its place in the library show how far).</summary>
     public long? ScanningSourceId { get; private set; }
 
@@ -113,6 +116,7 @@ public sealed class Indexer : IDisposable
     }
 
     private readonly HashSet<long> _scanSources = [];
+    private readonly HashSet<long> _scanLater = [];
 
     /// <summary>Scans one source (a folder that changed); the others are not listed again.</summary>
     public void RequestScan(long sourceId)
@@ -201,6 +205,9 @@ public sealed class Indexer : IDisposable
         long[] only;
         lock (_scanSources)
         {
+            // Left out of a scan while the user's changes were working in them: read now that those are done.
+            _scanSources.UnionWith(_scanLater.Where(id => Busy?.Invoke(id) != true).ToList());
+            _scanLater.ExceptWith(_scanSources);
             only = [.. _scanSources];
             _scanSources.Clear();
         }
@@ -304,6 +311,12 @@ public sealed class Indexer : IDisposable
             // Another computer's backup: which files it has comes from that computer (the catalog), the same as on
             // every computer, without downloading each of them to find out.
             if (MomentFinder.Sync.Catalog.KnownFromOthers(_repo.Db, source)) continue;
+            // Files are being put into it or moved in it right now: it is read when that is done.
+            if (Busy?.Invoke(source.Id) == true)
+            {
+                lock (_scanSources) _scanLater.Add(source.Id);
+                continue;
+            }
             ScanningSourceId = source.Id;
             Report(new IndexerStatus(IndexerPhase.Scanning, $"Looking for new photos and videos in {source.Name}", 0, 0, false));
             // What a long scan found so far shows while it runs (a cloud folder of thousands of photos takes a while).
@@ -379,8 +392,8 @@ public sealed class Indexer : IDisposable
             bool ok;
             try
             {
-                await Cloud.MediaFiles.LocalPathAsync(item, ct);
-                ok = await ImageCodec.CreateThumbnailAsync(item, path, ct);
+                // Where the file is on this computer: a cloud item's fetched copy, or the file it was uploaded from.
+                ok = await ImageCodec.CreateThumbnailAsync(item, await Cloud.MediaFiles.LocalPathAsync(item, ct), path, ct);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
@@ -406,8 +419,9 @@ public sealed class Indexer : IDisposable
         // 360 photos: views all around, like the frames of a 360 video.
         foreach (var photo in batch.Where(i => !i.IsVideo && Fisheye360.IsDualFisheye(i.FullPath)))
         {
-            var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(photo.FullPath, 2048)), ct);
-            await Embed360Async(photo, [(0, lens0, lens1)], model, index, ct);
+            var local = await Cloud.MediaFiles.LocalPathAsync(photo, ct);
+            var (lens0, lens1) = await Task.Run(() => Fisheye360.SplitSideBySide(RgbImage.Load(local, 2048)), ct);
+            await Embed360Async(photo, local, [(0, lens0, lens1)], model, index, ct);
             _repo.SetAnalysisVersion(photo.Id, AnalysisVersion);
             Report(new IndexerStatus(IndexerPhase.Analysis, "Learning what is in the pictures, for the search", ++done, (int)stats.Total, false));
         }
@@ -470,7 +484,7 @@ public sealed class Indexer : IDisposable
     }
 
     /// <summary>A 360 item for the search: four views around at every moment, each one a row (the best one counts).</summary>
-    private async Task Embed360Async(MediaItem item, List<(int TimeMs, RgbImage Lens0, RgbImage Lens1)> moments, ISceneModel model,
+    private async Task Embed360Async(MediaItem item, string local, List<(int TimeMs, RgbImage Lens0, RgbImage Lens1)> moments, ISceneModel model,
         IVectorIndex index, CancellationToken ct)
     {
         var dir = Path.Combine(_paths.CacheDir, "views", item.Id.ToString());
@@ -479,8 +493,8 @@ public sealed class Indexer : IDisposable
         {
             var files = new List<(int TimeMs, string Path)>();
             foreach (var (time, lens0, lens1) in moments)
-                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100, Fisheye360.ModelOf(item.FullPath),
-                             item.IsVideo ? Fisheye360.LevelAt(item.FullPath, time / 1000.0) : null).ToList(), ct))
+                foreach (var (yaw, view) in await Task.Run(() => Fisheye360.ViewsAround(lens0, lens1, 4, 320, 320, 100, Fisheye360.ModelOf(local),
+                             item.IsVideo ? Fisheye360.LevelAt(local, time / 1000.0) : null).ToList(), ct))
                 {
                     var file = Path.Combine(dir, $"{time}_{(int)yaw}.jpg");
                     view.SaveJpeg(file, 85);
@@ -510,12 +524,11 @@ public sealed class Indexer : IDisposable
         {
             try
             {
-                var dual = duration > 0
-                    ? await FFmpeg.ExtractDualFramesAsync(await Cloud.MediaFiles.LocalPathAsync(video, ct), interval, 60, dir, 512, ct)
-                    : [];
+                var local = await Cloud.MediaFiles.LocalPathAsync(video, ct);
+                var dual = duration > 0 ? await FFmpeg.ExtractDualFramesAsync(local, interval, 60, dir, 512, ct) : [];
                 var moments = new List<(int, RgbImage, RgbImage)>();
                 foreach (var f in dual) moments.Add((f.TimeMs, RgbImage.Load(f.Lens0, 512), RgbImage.Load(f.Lens1, 512)));
-                await Embed360Async(video, moments, model, index, ct);
+                await Embed360Async(video, local, moments, model, index, ct);
             }
             finally
             {

@@ -19,6 +19,34 @@ public static class Catalog
     public sealed record FileFact(string S, string P, int K, long Size, long Mtime, string? Q, long Taken, int? W, int? H,
         long? D, double? Lat, double? Lon, string? Cam, bool? Tff);
 
+    private const string RowColumns = """
+        uid AS Uid, rel_path AS RelPath, kind AS Kind, size AS Size, mtime AS Mtime, quick_hash AS QuickHash, taken_at AS TakenAt,
+        width AS Width, height AS Height, duration_ms AS DurationMs, lat AS Lat, lon AS Lon, camera AS Camera,
+        taken_from_file AS TakenFromFile, missing AS Missing
+        """;
+
+    private static string Json(string folder, Row r) =>
+        JsonSerializer.Serialize(new FileFact(folder, r.RelPath, r.Kind, r.Size, r.Mtime, r.QuickHash, r.TakenAt, r.Width, r.Height,
+            r.DurationMs, r.Lat, r.Lon, r.Camera, r.TakenFromFile));
+
+    /// <summary>
+    /// Says one file of a folder that lives in the cloud is there (just put or moved there by this computer), inside
+    /// the change that did it. Nothing for a folder that is not shared, or a computer's own folder (its backup says).
+    /// </summary>
+    public static void Say(Database db, SqliteConnection c, IDbTransaction tx, long mediaId)
+    {
+        var uid = c.ExecuteScalar<string?>(
+            "SELECT s.uid FROM media m JOIN source s ON s.id=m.source_id WHERE m.id=@mediaId AND s.kind=@kind", new { mediaId, kind = SourceKinds.Cloud }, tx);
+        if (uid == null || FactStore.Get(c, tx, Keys.Folder(uid), "def") == null || FactStore.Get(c, tx, Keys.Folder(uid), "deleted") == "1")
+            return;
+        var r = c.QuerySingle<Row>($"SELECT {RowColumns} FROM media WHERE id=@mediaId", new { mediaId }, tx);
+        if (r.Uid == null || r.Missing) return;
+        var obj = Keys.Media(r.Uid);
+        var json = Json(uid, r);
+        if (FactStore.Get(c, tx, obj, "file") != json) db.Facts.Set(c, tx, obj, "file", json);
+        if (FactStore.Get(c, tx, obj, "gone") == "1") db.Facts.Set(c, tx, obj, "gone", "0");
+    }
+
     private sealed class Row
     {
         public string? Uid { get; init; }
@@ -53,12 +81,7 @@ public static class Catalog
         var said = c.Query<(string Obj, string Field, string? Value)>("""
             SELECT f.obj, f.field, f.value FROM media m JOIN fact f ON f.obj='m:'||m.uid WHERE m.source_id=@sourceId AND f.field IN ('file','gone')
             """, new { sourceId }, tx).ToDictionary(r => (r.Obj, r.Field), r => r.Value);
-        var rows = c.Query<Row>("""
-            SELECT uid AS Uid, rel_path AS RelPath, kind AS Kind, size AS Size, mtime AS Mtime, quick_hash AS QuickHash, taken_at AS TakenAt,
-                   width AS Width, height AS Height, duration_ms AS DurationMs, lat AS Lat, lon AS Lon, camera AS Camera,
-                   taken_from_file AS TakenFromFile, missing AS Missing
-            FROM media WHERE source_id=@sourceId
-            """, new { sourceId }, tx).ToList();
+        var rows = c.Query<Row>($"SELECT {RowColumns} FROM media WHERE source_id=@sourceId", new { sourceId }, tx).ToList();
         var count = 0;
         foreach (var r in rows)
         {
@@ -76,8 +99,7 @@ public static class Catalog
             }
             // Read here but not in the cloud yet (the backup did not take it): the others do not see it yet.
             if (inCloud != null && !inCloud.Contains(r.RelPath)) continue;
-            var json = JsonSerializer.Serialize(new FileFact(folder, r.RelPath, r.Kind, r.Size, r.Mtime, r.QuickHash, r.TakenAt, r.Width, r.Height,
-                r.DurationMs, r.Lat, r.Lon, r.Camera, r.TakenFromFile));
+            var json = Json(folder, r);
             if (said.GetValueOrDefault((obj, "file")) != json)
             {
                 db.Facts.Set(c, tx, obj, "file", json);
@@ -102,6 +124,15 @@ public static class Catalog
         if (source is not { } s || s.Kind != SourceKinds.Cloud) return null;
         var missing = FactStore.Get(c, tx, obj, "gone") == "1";
         var existing = c.ExecuteScalar<long?>("SELECT id FROM media WHERE source_id=@Id AND rel_path=@P", new { s.Id, f.P }, tx);
+        // Moved here from another place (in the cloud, by another computer): the row it had there follows, with its
+        // thumbnail and all that was found in it. A row made for the new place meanwhile, with nothing found yet, makes way.
+        if (!missing && Before(c, tx, mediaUid, existing) is { } before &&
+            (existing == null || c.ExecuteScalar<long>("SELECT people_version FROM media WHERE id=@existing", new { existing }, tx) == 0))
+        {
+            if (existing != null) c.Execute("DELETE FROM media WHERE id=@existing", new { existing }, tx);
+            c.Execute("UPDATE media SET source_id=@Id, rel_path=@P, missing=0 WHERE id=@before", new { s.Id, f.P, before }, tx);
+            existing = before;
+        }
         if (existing is { } id)
         {
             // A changed file is read again (thumbnail, analysis); the same one only follows the facts.
@@ -121,6 +152,15 @@ public static class Catalog
             VALUES(@Id, @P, @K, @Size, @Mtime, @Q, @Taken, @W, @H, @D, @Lat, @Lon, @Cam, @Tff) RETURNING id
             """, new { s.Id, f.P, f.K, f.Size, f.Mtime, f.Q, f.Taken, f.W, f.H, f.D, f.Lat, f.Lon, f.Cam, f.Tff }, tx);
     }
+
+    /// <summary>The row of the photo at the place it was moved from, when it is gone from there (said so, or not found).</summary>
+    private static long? Before(SqliteConnection c, IDbTransaction tx, string mediaUid, long? existing) =>
+        c.Query<(long Id, bool Missing, string Uid)>("""
+            SELECT m.id, m.missing, m.uid FROM fact o JOIN media m ON m.uid=substr(o.obj, 3)
+            WHERE o.field='moved' AND o.value=@mediaUid AND o.obj LIKE 'm:%'
+            """, new { mediaUid }, tx)
+            .Where(m => m.Id != existing && (m.Missing || FactStore.Get(c, tx, Keys.Media(m.Uid), "gone") == "1"))
+            .Select(m => (long?)m.Id).FirstOrDefault();
 
     /// <summary>The files said of a folder (it just came to this computer): placed all at once.</summary>
     public static List<long> PlaceFolder(SqliteConnection c, IDbTransaction tx, string folderUid)
