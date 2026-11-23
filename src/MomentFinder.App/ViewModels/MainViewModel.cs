@@ -92,7 +92,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _host = host;
         host.Indexer.Proxies360 = true;
         Thumbnails = new ThumbnailLoader(host.Indexer, host.Paths, host.Cloud.Streams);
-        People = new PeopleViewModel(host, () => Dispatcher.UIThread.Post(RebuildSidebar));
+        People = new PeopleViewModel(host, Thumbnails, () => Dispatcher.UIThread.Post(RebuildSidebar));
         host.Identity.Changed += () => Dispatcher.UIThread.Post(() =>
         {
             RebuildSidebar();

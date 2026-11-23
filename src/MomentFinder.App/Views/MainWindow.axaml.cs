@@ -195,8 +195,13 @@ public partial class MainWindow : Window
             {
                 case Key.Y: _vm.People.ReviewYesCommand.Execute(null); break;
                 case Key.N: _vm.People.ReviewNoCommand.Execute(null); break;
-                case Key.S or Key.Right: _vm.People.ReviewSkipCommand.Execute(null); break;
+                case Key.S: _vm.People.ReviewSkipCommand.Execute(null); break;
                 case Key.A: _vm.People.ReviewCrossAllCommand.Execute(null); break;
+                case Key.Left: _vm.People.ReviewMove(-1); break;
+                case Key.Right: _vm.People.ReviewMove(1); break;
+                case Key.Space or Key.X: _vm.People.ReviewToggleCurrent(); break;
+                case Key.W or Key.Enter: OpenReviewPhoto(); break;
+                case Key.O: _ = ReviewOtherAsync(_vm.People.ReviewCurrent); break;
                 default: return;
             }
             e.Handled = true;
@@ -650,17 +655,39 @@ public partial class MainWindow : Window
         if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.People.ReviewToggle(crop);
     }
 
-    private async void OnReviewOther(object? sender, RoutedEventArgs e)
+    /// <summary>The pointer came on a picture of the review: its whole photo is shown below.</summary>
+    private void OnReviewPointed(object? sender, PointerEventArgs e)
     {
-        if (_vm == null || (sender as Control)?.DataContext is not CropViewModel crop) return;
+        if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.People.ReviewPoint(crop);
+    }
+
+    /// <summary>A picture of the review came on screen: its crop is decoded (cut from the thumbnail when missing).</summary>
+    private void OnReviewCropShown(object? sender, VisualTreeAttachmentEventArgs e) =>
+        ((sender as Control)?.DataContext as CropViewModel)?.Show();
+
+    /// <summary>From a picture's menu, or for the picture shown below.</summary>
+    private async void OnReviewOther(object? sender, RoutedEventArgs e) =>
+        await ReviewOtherAsync((sender as Control)?.DataContext as CropViewModel ?? _vm?.People.ReviewCurrent);
+
+    private async Task ReviewOtherAsync(CropViewModel? crop)
+    {
+        if (_vm == null || crop == null) return;
         var name = await Dialogs.PromptNameAsync(this, "Who is it?", await _vm.People.AskReviewAsync(crop));
         if (name != null) _vm.People.ReviewOther(crop, name);
     }
 
-    /// <summary>The photo (or the video at that moment) with the boxes, when the picture alone is too small to tell.</summary>
+    /// <summary>The photo (or the video at that moment) with all its boxes: from a picture's menu, or the one shown below.</summary>
     private void OnReviewWholePhoto(object? sender, RoutedEventArgs e)
     {
         if (_vm != null && (sender as Control)?.DataContext is CropViewModel crop) _vm.OpenMedia(crop.MediaId, crop.TimeMs, showPeople: true);
+        else OpenReviewPhoto();
+    }
+
+    private void OnReviewPhotoDoubleTapped(object? sender, TappedEventArgs e) => OpenReviewPhoto();
+
+    private void OpenReviewPhoto()
+    {
+        if (_vm?.People.ReviewCurrentMoment is { } m) _vm.OpenMedia(m.MediaId, m.TimeMs, showPeople: true);
     }
 
     private void OnShowClusterPhotos(object? sender, RoutedEventArgs e)

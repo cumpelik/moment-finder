@@ -30,8 +30,9 @@ Faces are grouped; name a group once ("Who is this?") and the person
 is followed through the years (each confident match extends the person, so a child is recognized as it
 grows). Within one event (a ski day) people keep their clothes, so a skier in a helmet and goggles is
 recognized by the jacket, also through video tracks. What the analysis is unsure of goes to
-**Review suggestions**: the guesses for one person are shown together ("Is this Eva?"), you click the ones that
-are somebody else and answer for the rest at once. Somebody not named yet who looks like a named person (a brother,
+**Review suggestions**: the guesses for one person are shown together ("Is this Eva?") with the whole photo of the
+one you point at below them (when and where it was taken), you click the ones that are somebody else and answer for
+the rest at once. Somebody not named yet who looks like a named person (a brother,
 a sister) is not guessed photo by photo: the group is asked about once in "Who is this?".
 In the viewer, **Who is who** shows the boxes: click one to say who it is.
 

@@ -175,6 +175,14 @@ public sealed class MediaRepository
         return dated.Count;
     }
 
+    /// <summary>Of these photos and videos, the ones without a date of their own (dated by their file, folder or file name).</summary>
+    public HashSet<long> Undated(IReadOnlyCollection<long> mediaIds)
+    {
+        if (mediaIds.Count == 0) return [];
+        using var c = _db.Open();
+        return c.Query<long>("SELECT id FROM media WHERE taken_from_file=1 AND id IN @mediaIds", new { mediaIds }).ToHashSet();
+    }
+
     /// <summary>A row with the same content as a scanned file, and where it is (was).</summary>
     public sealed class SameFile
     {

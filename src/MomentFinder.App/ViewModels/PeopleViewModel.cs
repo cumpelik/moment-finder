@@ -28,6 +28,8 @@ public sealed partial class CropViewModel : ObservableObject
     [ObservableProperty] private bool _isSelected;
     /// <summary>In the review: the user said this one is not the person asked about.</summary>
     [ObservableProperty] private bool _isNot;
+    /// <summary>In the review: the one whose whole photo is shown below.</summary>
+    [ObservableProperty] private bool _isCurrent;
 
     public CropViewModel(long detectionId, long mediaId, DetectionKind kind)
     {
@@ -114,6 +116,7 @@ public sealed class FigureSection(string title, string count, List<CropViewModel
 public sealed partial class PeopleViewModel : ObservableObject
 {
     private readonly LibraryHost _host;
+    private readonly ThumbnailLoader _thumbnails;
     private readonly Action _changed;
     private Dictionary<long, string> _names = [];
 
@@ -201,12 +204,32 @@ public sealed partial class PeopleViewModel : ObservableObject
     [ObservableProperty] private bool _hasReviewKnown;
     [ObservableProperty] private string _reviewYesText = "Yes (Y)";
     [ObservableProperty] private string _reviewCrossAllText = "Cross out all (A)";
+
+    /// <summary>The picture whose whole photo is shown under the pictures of the question (pointed at, or moved to with the arrows).</summary>
+    [ObservableProperty] private CropViewModel? _reviewCurrent;
+    /// <summary>The whole photo (or the video at that moment): its thumbnail at once, the photo itself a moment later.</summary>
+    [ObservableProperty] private Bitmap? _reviewPhoto;
+    /// <summary>The size the photo is laid out in, and the box of the person in it, in the same units.</summary>
+    [ObservableProperty] private double _photoWidth = 1;
+    [ObservableProperty] private double _photoHeight = 1;
+    [ObservableProperty] private double _boxLeft;
+    [ObservableProperty] private double _boxTop;
+    [ObservableProperty] private double _boxWidth;
+    [ObservableProperty] private double _boxHeight;
+    [ObservableProperty] private double _boxStroke = 3;
+    [ObservableProperty] private bool _hasBox;
+    /// <summary>How the user turned the photo (degrees clockwise): it is shown upright, as in the viewer.</summary>
+    [ObservableProperty] private int _photoRotation;
+    [ObservableProperty] private string _photoWhen = "";
+    [ObservableProperty] private string _photoWhere = "";
+    [ObservableProperty] private string _photoLikeness = "";
     [ObservableProperty] private Person? _person;
     [ObservableProperty] private string _personSummary = "";
 
-    public PeopleViewModel(LibraryHost host, Action changed)
+    public PeopleViewModel(LibraryHost host, ThumbnailLoader thumbnails, Action changed)
     {
         _host = host;
+        _thumbnails = thumbnails;
         _changed = changed;
         host.Identity.Answered += gained =>
         {
@@ -380,8 +403,8 @@ public sealed partial class PeopleViewModel : ObservableObject
         public IEnumerable<long> Ids => Units.SelectMany(u => u).Select(d => d.Id);
     }
 
-    /// <summary>How many pictures one question shows: about a screen of them.</summary>
-    private const int PageSize = 30;
+    /// <summary>How many pictures one question shows: two rows of them, the whole photo of one below.</summary>
+    private const int PageSize = 24;
 
     private List<ReviewPage> _pages = [];
     private int _pageIndex;
@@ -402,6 +425,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         _page = null;
         HasReview = false;
         ReviewCrops = [];
+        ShowCurrent(null);
         HasReviewKnown = false;
         ReviewQuestion = "Looking for what to ask...";
         ReviewDetail = "";
@@ -476,6 +500,7 @@ public sealed partial class PeopleViewModel : ObservableObject
         if (_page is not { } page)
         {
             ReviewCrops = [];
+            ShowCurrent(null);
             ReviewKnown = [];
             HasReviewKnown = false;
             ReviewQuestion = _skipped ? "Nothing more to review right now." : "Nothing to review right now.";
@@ -486,22 +511,23 @@ public sealed partial class PeopleViewModel : ObservableObject
             return;
         }
         var name = _names.GetValueOrDefault(page.PersonId, "?");
-        var items = _host.Repo.Query(new Library.MediaFilter { Ids = page.Units.Select(u => u[0].MediaId).Distinct().ToList() }).ToDictionary(i => i.Id);
+        _pageItems = _host.Repo.Query(new Library.MediaFilter { Ids = page.Units.Select(u => u[0].MediaId).Distinct().ToList() }).ToDictionary(i => i.Id);
+        _undated = _host.Repo.Undated(_pageItems.Keys);
+        _units = [];
         var figures = page.Kind == DetectionKind.Body;
         ReviewCrops = new ObservableCollection<CropViewModel>(page.Units.Select(unit =>
         {
             var d = unit[0];
-            var item = items.GetValueOrDefault(d.MediaId);
             var crop = new CropViewModel(d.Id, d.MediaId, d.Kind)
             {
                 TimeMs = d.TimeMs,
                 DetectionIds = unit.Select(u => u.Id).ToList(),
-                Caption = (item == null ? "" : $"{item.FileName}, {item.Taken:d. M. yyyy}, ") + $"likeness {unit.Max(u => u.SuggestScore ?? 0):0.00}",
             };
+            _units[crop] = unit;
             crop.LoadLater(() => CropPath(d.Id), 160);
             return crop;
         }));
-        const string how = "Right click a picture to see its whole photo, or to say who else it is.";
+        const string how = "Point at a picture to see its whole photo below.";
         if (figures)
         {
             var day = DateTime.UnixEpoch.AddMilliseconds(page.Units.Max(u => u[0].TakenAt)).ToString("dddd d. MMMM yyyy", System.Globalization.CultureInfo.CurrentCulture);
@@ -513,6 +539,7 @@ public sealed partial class PeopleViewModel : ObservableObject
             ReviewQuestion = $"Is this {name}?";
             ReviewDetail = $"Click the pictures that are somebody else, then answer for the rest. {how}";
         }
+        ShowCurrent(ReviewCrops.FirstOrDefault());
         ShowKnown(page, name);
         ShowYesText();
         ShowProgress();
@@ -562,7 +589,131 @@ public sealed partial class PeopleViewModel : ObservableObject
     {
         crop.IsNot = !crop.IsNot;
         ShowYesText();
+        ShowCurrent(crop);
     }
+
+    /// <summary>The picture shown below changes: pointed at with the mouse.</summary>
+    public void ReviewPoint(CropViewModel crop) => ShowCurrent(crop);
+
+    /// <summary>The arrows move the picture shown below (step: -1, 1; a row up or down: the row's length).</summary>
+    public void ReviewMove(int step)
+    {
+        if (ReviewCrops.Count == 0) return;
+        var at = ReviewCurrent == null ? -1 : ReviewCrops.IndexOf(ReviewCurrent);
+        ShowCurrent(ReviewCrops[Math.Clamp(at + step, 0, ReviewCrops.Count - 1)]);
+    }
+
+    /// <summary>The space bar: the picture shown below is not the person (or, again, it is).</summary>
+    public void ReviewToggleCurrent()
+    {
+        if (ReviewCurrent is { } crop) ReviewToggle(crop);
+    }
+
+    private Dictionary<long, Library.MediaItem> _pageItems = [];
+    private HashSet<long> _undated = [];
+    private Dictionary<CropViewModel, List<DetectionRow>> _units = [];
+    private CancellationTokenSource? _photoCts;
+    /// <summary>The photo itself comes when the pointer stays on a picture this long (it may have to be downloaded).</summary>
+    private static readonly TimeSpan PhotoDelay = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// The whole photo of a picture of the question, with the person's box: what the crop alone does not tell (who
+    /// stands around, where, when). The thumbnail shows at once, the photo itself replaces it when the pointer stays.
+    /// </summary>
+    private void ShowCurrent(CropViewModel? crop)
+    {
+        if (crop == ReviewCurrent && crop != null) return;
+        if (ReviewCurrent != null) ReviewCurrent.IsCurrent = false;
+        ReviewCurrent = crop;
+        _photoCts?.Cancel();
+        _photoCts = null;
+        if (crop == null || !_units.TryGetValue(crop, out var unit) || _pageItems.GetValueOrDefault(crop.MediaId) is not { } item)
+        {
+            ReviewPhoto = null;
+            HasBox = false;
+            PhotoWhen = PhotoWhere = PhotoLikeness = "";
+            return;
+        }
+        crop.IsCurrent = true;
+        var d = unit[0];
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        // Dated by its folder or file (no date of its own): the day, not a made-up hour.
+        var dated = !_undated.Contains(item.Id);
+        PhotoWhen = item.Taken.ToString(dated ? "dddd d. MMMM yyyy, H:mm" : "dddd d. MMMM yyyy", culture) +
+                    (item.IsVideo ? $", at {TimeSpan.FromMilliseconds(d.TimeMs):m\\:ss} of the video" : "");
+        var folder = Path.GetDirectoryName(item.RelPath.Replace('\\', '/'))?.Replace('\\', '/');
+        PhotoWhere = string.IsNullOrEmpty(folder) ? item.FileName : $"{item.FileName}  \u00b7  {folder}";
+        PhotoLikeness = $"Likeness {unit.Max(u => u.SuggestScore ?? 0):0.00}";
+        PhotoRotation = item.Rotation;
+        ReviewPhoto = null;
+        HasBox = false;
+        var cts = _photoCts = new CancellationTokenSource();
+        _ = LoadPhotoAsync(item, d, cts.Token);
+    }
+
+    private async Task LoadPhotoAsync(Library.MediaItem item, DetectionRow d, CancellationToken ct)
+    {
+        try
+        {
+            // A 360 video: its thumbnail is another view, the box would be somewhere else; the frame of the moment is shown without it.
+            var box = !Media.Fisheye360.IsDualFisheye(item.RelPath);
+            var thumb = item.IsVideo
+                ? await _thumbnails.LoadAsync(item, d.TimeMs, ct)
+                : _thumbnails.ExistingPath(item.Id) is { } path ? await Task.Run(() => DecodeFile(path), ct) : null;
+            if (ct.IsCancellationRequested) return;
+            if (thumb != null) ShowPhoto(thumb, d, box);
+            if (item.IsVideo) return;
+            await Task.Delay(PhotoDelay, ct);
+            var (w, h) = PhotoSize;
+            var full = await Task.Run(async () =>
+                Media.ImageCodec.DecodeForDisplay(await Cloud.MediaFiles.LocalPathAsync(item, ct, waited: true), w, h), ct);
+            if (!ct.IsCancellationRequested) ShowPhoto(ToBitmap(full), d, box);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception e) when (e is IOException or Cloud.RcloneException or ImageMagick.MagickException or InvalidOperationException)
+        {
+            // Not to be had now (offline, a broken file): the thumbnail stays, or the crop says enough.
+        }
+    }
+
+    /// <summary>How big the photo is decoded: about the size it gets on the screen.</summary>
+    public (int Width, int Height) PhotoSize { get; set; } = (1400, 900);
+
+    private void ShowPhoto(Bitmap bitmap, DetectionRow d, bool box)
+    {
+        ReviewPhoto = bitmap;
+        PhotoWidth = bitmap.Size.Width;
+        PhotoHeight = bitmap.Size.Height;
+        BoxLeft = d.X * PhotoWidth;
+        BoxTop = d.Y * PhotoHeight;
+        BoxWidth = d.W * PhotoWidth;
+        BoxHeight = d.H * PhotoHeight;
+        // The same line whatever size the photo is laid out in.
+        BoxStroke = Math.Max(2, PhotoWidth / 300);
+        HasBox = box;
+    }
+
+    private static Bitmap? DecodeFile(string path)
+    {
+        using var s = File.OpenRead(path);
+        return new Bitmap(s);
+    }
+
+    private static Bitmap ToBitmap(Media.DecodedImage d)
+    {
+        var bitmap = new Avalonia.Media.Imaging.WriteableBitmap(new Avalonia.PixelSize(d.Width, d.Height), new Avalonia.Vector(96, 96),
+            Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque);
+        using var fb = bitmap.Lock();
+        var rowBytes = d.Width * 4;
+        for (var y = 0; y < d.Height; y++)
+            System.Runtime.InteropServices.Marshal.Copy(d.Bgra, y * rowBytes, fb.Address + y * fb.RowBytes, rowBytes);
+        return bitmap;
+    }
+
+    /// <summary>The photo of the picture shown below, to open in the viewer (with the boxes).</summary>
+    public (long MediaId, int TimeMs)? ReviewCurrentMoment => ReviewCurrent is { } c ? (c.MediaId, c.TimeMs) : null;
 
     /// <summary>Not the person: a figure of a video on its whole track, and never guessed for it again.</summary>
     private void RejectUnits(IEnumerable<CropViewModel> crops, long personId)
@@ -606,7 +757,9 @@ public sealed partial class PeopleViewModel : ObservableObject
         if (person.Id != page.PersonId) RejectUnits([crop], page.PersonId);
         _host.People.Confirm(crop.DetectionIds, person.Id);
         _passed.UnionWith(crop.DetectionIds);
+        var at = ReviewCrops.IndexOf(crop);
         ReviewCrops.Remove(crop);
+        if (ReviewCurrent == crop) ShowCurrent(ReviewCrops.Count == 0 ? null : ReviewCrops[Math.Min(at, ReviewCrops.Count - 1)]);
         if (ReviewCrops.Count == 0)
         {
             Next(answered: true);

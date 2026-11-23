@@ -646,7 +646,7 @@
                 </ScrollViewer>
             </DockPanel>
 
-            <!-- Review: the guesses for one person together, answered at once -->
+            <!-- Review: the guesses for one person together, answered at once; the whole photo of one of them below -->
             <DockPanel Grid.Row="2" IsVisible="{Binding IsReviewMode}" Margin="20,12,20,12">
                 <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
                     <TextBlock Text="{Binding People.ReviewQuestion}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" TextWrapping="Wrap" />
@@ -662,51 +662,78 @@
                     <Button Command="{Binding People.ReviewSkipCommand}" MinWidth="110" HorizontalContentAlignment="Center"
                             ToolTip.Tip="Asked again when you open the review the next time">Skip (S)</Button>
                 </StackPanel>
-                <!-- The person as known already, to compare with -->
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,10,0,0"
-                            IsVisible="{Binding People.HasReviewKnown}">
-                    <TextBlock Text="{Binding People.ReviewKnownText}" Classes="muted" VerticalAlignment="Center" />
-                    <ItemsControl ItemsSource="{Binding People.ReviewKnown}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal" Spacing="6" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="vm:CropViewModel">
-                                <Border CornerRadius="4" ClipToBounds="True">
-                                    <Image Source="{Binding Image}" Height="84" Stretch="Uniform" />
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" Margin="0,12,0,0" IsVisible="{Binding People.HasReview}">
-                    <ItemsRepeater ItemsSource="{Binding People.ReviewCrops}" ElementPrepared="OnCropPrepared" ElementClearing="OnCropClearing">
-                        <ItemsRepeater.Layout>
-                            <UniformGridLayout MinItemWidth="142" MinItemHeight="162" ItemsJustification="Center" />
-                        </ItemsRepeater.Layout>
-                        <ItemsRepeater.ItemTemplate>
-                            <DataTemplate DataType="vm:CropViewModel">
-                                <Border Classes="tile" Margin="0,0,6,6" Tapped="OnReviewTapped" ToolTip.Tip="{Binding Caption}">
-                                    <Border.ContextMenu>
-                                        <ContextMenu>
-                                            <MenuItem Header="It is somebody else..." Click="OnReviewOther" />
-                                            <MenuItem Header="Show the whole photo" Click="OnReviewWholePhoto" />
-                                        </ContextMenu>
-                                    </Border.ContextMenu>
-                                    <Panel>
-                                        <Image Source="{Binding Image}" Width="130" Height="150" Stretch="Uniform" />
-                                        <!-- Not the person: dimmed and crossed -->
-                                        <Border Background="#99101216" IsVisible="{Binding IsNot}">
-                                            <mi:MaterialIcon Kind="Close" Width="64" Height="64" Foreground="#EF4444" />
-                                        </Border>
-                                    </Panel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsRepeater.ItemTemplate>
-                    </ItemsRepeater>
-                </ScrollViewer>
+                <!-- The pictures of the question: pointing at one shows its whole photo below, a click crosses it out -->
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding People.ReviewCrops}" Margin="0,12,0,0" HorizontalAlignment="Center"
+                              IsVisible="{Binding People.HasReview}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel HorizontalAlignment="Center" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:CropViewModel">
+                            <Border Classes="tile" Classes.selected="{Binding IsCurrent}" Margin="0,0,6,6" Tapped="OnReviewTapped"
+                                    PointerEntered="OnReviewPointed" AttachedToVisualTree="OnReviewCropShown">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="It is somebody else... (O)" Click="OnReviewOther" />
+                                        <MenuItem Header="Open the photo (W)" Click="OnReviewWholePhoto" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <Panel>
+                                    <Image Source="{Binding Image}" Width="96" Height="112" Stretch="Uniform" />
+                                    <!-- Not the person: dimmed and crossed -->
+                                    <Border Background="#99101216" IsVisible="{Binding IsNot}">
+                                        <mi:MaterialIcon Kind="Close" Width="52" Height="52" Foreground="#EF4444" />
+                                    </Border>
+                                </Panel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <!-- The whole photo of the picture pointed at, with the box of the person; when and where beside it -->
+                <Grid ColumnDefinitions="*,Auto" Margin="0,6,0,0" IsVisible="{Binding People.HasReview}">
+                    <LayoutTransformControl LayoutTransform="{Binding People.PhotoRotation, Converter={x:Static views:Turn.ToTransform}}"
+                                            DoubleTapped="OnReviewPhotoDoubleTapped" ToolTip.Tip="Double click: open the photo with all its people">
+                        <Viewbox Stretch="Uniform">
+                            <Panel Width="{Binding People.PhotoWidth}" Height="{Binding People.PhotoHeight}">
+                                <Image Source="{Binding People.ReviewPhoto}" />
+                                <Canvas IsVisible="{Binding People.HasBox}">
+                                    <Rectangle Canvas.Left="{Binding People.BoxLeft}" Canvas.Top="{Binding People.BoxTop}"
+                                               Width="{Binding People.BoxWidth}" Height="{Binding People.BoxHeight}"
+                                               Stroke="#F59E0B" StrokeThickness="{Binding People.BoxStroke}" />
+                                </Canvas>
+                            </Panel>
+                        </Viewbox>
+                    </LayoutTransformControl>
+                    <StackPanel Grid.Column="1" Width="300" Spacing="6" Margin="16,0,0,0">
+                        <TextBlock Text="{Binding People.PhotoWhen}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding People.PhotoWhere}" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding People.PhotoLikeness}" Classes="muted small" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+                            <Button Click="OnReviewWholePhoto" ToolTip.Tip="The photo (or the video at that moment) with all its people">Open (W)</Button>
+                            <Button Click="OnReviewOther" ToolTip.Tip="Say who it is instead">Somebody else... (O)</Button>
+                        </StackPanel>
+                        <TextBlock Classes="muted small" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Text="Arrows move to another picture, Space crosses it out." />
+                        <!-- The person as known already, to compare with -->
+                        <TextBlock Text="{Binding People.ReviewKnownText}" Classes="muted" Margin="0,14,0,0" IsVisible="{Binding People.HasReviewKnown}" />
+                        <ItemsControl ItemsSource="{Binding People.ReviewKnown}" IsVisible="{Binding People.HasReviewKnown}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:CropViewModel">
+                                    <Border CornerRadius="4" ClipToBounds="True" Margin="0,0,6,6">
+                                        <Image Source="{Binding Image}" Height="84" Stretch="Uniform" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
             </DockPanel>
 
             <!-- One person's faces and figures -->
