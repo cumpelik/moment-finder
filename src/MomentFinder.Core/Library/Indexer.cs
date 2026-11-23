@@ -503,26 +503,41 @@ public sealed class Indexer : IDisposable
     private async Task<bool> PeopleBatchAsync(CancellationToken ct)
     {
         if (_people is not { } people) return false;
-        var batch = _repo.PendingPeople(PeopleVersion, 8);
+        var batch = _repo.PendingPeople(PeopleVersion, 24);
         if (batch.Count == 0) return false;
         var stats = _repo.Stats(AnalysisVersion);
         var done = (int)stats.PeopleAnalyzed;
-        foreach (var item in batch)
+        // The cloud files of the batch come a few at once while the model looks at the ones before. One after another,
+        // a photo took seconds over its single connection and the model waited for each.
+        using var ahead = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var fetched = batch.Select(item => FetchAheadAsync(item, ahead.Token)).ToList();
+        try
         {
-            if (_paused) break;
-            try
+            for (var i = 0; i < batch.Count; i++)
             {
-                await people.AnalyzeAsync(item, ct);
+                var item = batch[i];
+                if (_paused) break;
+                await fetched[i];
+                try
+                {
+                    await people.AnalyzeAsync(item, ct);
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    // Unreadable file: it stays without people, the rest goes on.
+                }
+                _repo.SetPeopleVersion(item.Id, PeopleVersion);
+                PeopleFound?.Invoke(item.Id);
+                Report(new IndexerStatus(IndexerPhase.People, "Looking for people in the pictures", ++done, (int)stats.Total, false));
+                // Match from time to time, so names spread while a large library is still being analyzed.
+                if (++_sinceIdentity >= 300) _identityDirty = true;
             }
-            catch (Exception e) when (e is not OperationCanceledException)
-            {
-                // Unreadable file: it stays without people, the rest goes on.
-            }
-            _repo.SetPeopleVersion(item.Id, PeopleVersion);
-            PeopleFound?.Invoke(item.Id);
-            Report(new IndexerStatus(IndexerPhase.People, "Looking for people in the pictures", ++done, (int)stats.Total, false));
-            // Match from time to time, so names spread while a large library is still being analyzed.
-            if (++_sinceIdentity >= 300) _identityDirty = true;
+        }
+        finally
+        {
+            // Paused or stopped: what was not needed yet stops coming.
+            ahead.Cancel();
+            await Task.WhenAll(fetched);
         }
         _identityDirty = true;
         if (_sinceIdentity >= 300 && _identity != null)
@@ -534,6 +549,22 @@ public sealed class Indexer : IDisposable
             _lastIdentity = DateTime.UtcNow;
         }
         return true;
+    }
+
+    /// <summary>
+    /// A cloud file brought to this computer before its analysis needs it (MediaFiles lets a few come at once). Never
+    /// fails: a file that does not come is met again by the analysis, which then leaves it without people.
+    /// </summary>
+    private static async Task FetchAheadAsync(MediaItem item, CancellationToken ct)
+    {
+        if (Cloud.MediaFiles.LocalNow(item) != null) return;
+        try
+        {
+            await Cloud.MediaFiles.LocalPathAsync(item, ct);
+        }
+        catch (Exception)
+        {
+        }
     }
 
     /// <summary>A 360 item for the search: four views around at every moment, each one a row (the best one counts).</summary>
