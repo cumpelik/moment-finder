@@ -35,9 +35,12 @@ public static class CropFallback
             if (det.Rotation != 0) image.Rotate(det.Rotation);
             image.Quality = 82;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            image.Write(path, MagickFormat.Jpeg);
+            // Written aside and moved: a card shown twice quickly cuts it twice at once, and nobody reads half a file.
+            var part = $"{path}.{Guid.NewGuid():N}.part";
+            image.Write(part, MagickFormat.Jpeg);
+            File.Move(part, path, true);
         }
-        catch (MagickException)
+        catch (Exception e) when (e is MagickException or IOException or UnauthorizedAccessException)
         {
         }
         return path;

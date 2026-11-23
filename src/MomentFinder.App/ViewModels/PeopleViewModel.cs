@@ -59,12 +59,15 @@ public sealed partial class CropViewModel : ObservableObject
     }
 
     // ---- in a gallery of thousands: decoded only while on screen, off the UI thread ----
-    private string? _path;
+    private Func<string>? _path;
     private int _width;
     private int _version;
 
-    /// <summary>Where the picture is; it is decoded when the card comes on screen (Show).</summary>
-    public void LoadLater(string path, int width)
+    /// <summary>
+    /// Where the picture is; it is found (a missing crop is cut from the thumbnail) and decoded when the card comes on
+    /// screen (Show), in the background: thousands of cards would stop the window for seconds.
+    /// </summary>
+    public void LoadLater(Func<string> path, int width)
     {
         _path = path;
         _width = width;
@@ -75,7 +78,7 @@ public sealed partial class CropViewModel : ObservableObject
         if (Image != null || _path is not { } path) return;
         var version = ++_version;
         var width = _width;
-        _ = Task.Run(() => Decode(path, width)).ContinueWith(t =>
+        _ = Task.Run(() => Decode(path(), width)).ContinueWith(t =>
         {
             if (version == _version && t.Result is { } bitmap) Image = bitmap;
         }, TaskScheduler.FromCurrentSynchronizationContext());
@@ -173,7 +176,7 @@ public sealed partial class PeopleViewModel : ObservableObject
                         f.Tracks > 1 ? $"{f.Tracks} times in {item?.FileName}" :
                         item == null ? "" : item.IsVideo ? $"{item.FileName} {TimeSpan.FromMilliseconds(f.TimeMs):m\\:ss}" : item.FileName,
                 };
-                crop.LoadLater(CropPath(f.CoverId), 160);
+                crop.LoadLater(() => CropPath(f.CoverId), 160);
                 return crop;
             }).ToList();
             built.Add(new FigureSection(title(g), Format.Count(cards.Count, "person", "people"), cards));
@@ -300,7 +303,7 @@ public sealed partial class PeopleViewModel : ObservableObject
                 Count = c.Media,
                 Caption = c.Media == 1 ? "1 photo" : $"{c.Media} photos",
             };
-            crop.LoadLater(CropPath(c.CoverId), 160);
+            crop.LoadLater(() => CropPath(c.CoverId), 160);
             return crop;
         }));
         _figures = figures;
@@ -495,7 +498,7 @@ public sealed partial class PeopleViewModel : ObservableObject
                 DetectionIds = unit.Select(u => u.Id).ToList(),
                 Caption = (item == null ? "" : $"{item.FileName}, {item.Taken:d. M. yyyy}, ") + $"likeness {unit.Max(u => u.SuggestScore ?? 0):0.00}",
             };
-            crop.LoadLater(CropPath(d.Id), 160);
+            crop.LoadLater(() => CropPath(d.Id), 160);
             return crop;
         }));
         const string how = "Right click a picture to see its whole photo, or to say who else it is.";
@@ -650,7 +653,7 @@ public sealed partial class PeopleViewModel : ObservableObject
                     _ => "",
                 },
             };
-            crop.LoadLater(CropPath(d.Id), 120);
+            crop.LoadLater(() => CropPath(d.Id), 120);
             crops.Add(crop);
         }
         PersonCrops = new ObservableCollection<CropViewModel>(crops);
